@@ -1,12 +1,13 @@
 ﻿using System.Text;
+using ProLang.FrontEnd;
 
 namespace ProLang
 {
     internal class Program
     {
-        static void Main(string[] args)
+        static void Main()
         {
-           using var result = new Source("\\Documents\\code.txt");
+           using var result = new Source(@"C:\Users\Kyle.rotich\Documents\code.txt");
 
             var currentChar = result.CurrentChar();
 
