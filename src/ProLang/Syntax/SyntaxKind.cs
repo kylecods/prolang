@@ -6,6 +6,7 @@ public enum SyntaxKind
     
     //tokens
     EofToken,
+    WhitespaceToken,
     NumberToken,
     StringToken,
     PlusToken,
@@ -16,6 +17,10 @@ public enum SyntaxKind
     SemiColonToken,
     
     //keywords
-    LetKeyword
+    LetKeyword,
+    
+    //expressions
+    BinaryExpression,
+    NumberExpression,
     
 }
