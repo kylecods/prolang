@@ -1,6 +1,6 @@
 ﻿using ProLang.Syntax;
 
-namespace ProLang.Parser;
+namespace ProLang.Parse;
 
 internal sealed class Lexer
 {
@@ -55,6 +55,8 @@ internal sealed class Lexer
             '*' => new SyntaxToken(SyntaxKind.StarToken,_position++,"*",null!),
             '=' => new SyntaxToken(SyntaxKind.EqualsToken,_position++,"=",null!),
             ';' => new SyntaxToken(SyntaxKind.SemiColonToken,_position++,";",null!),
+            '(' => new SyntaxToken(SyntaxKind.LeftParenthesisToken,_position++,"(", null!),
+            ')' => new SyntaxToken(SyntaxKind.RightParenthesisToken, _position++, ")", null!),
             _ => new SyntaxToken(SyntaxKind.BadToken,_position++,_text.Substring(_position -1, 1),null!)
         };
 

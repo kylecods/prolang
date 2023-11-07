@@ -10,7 +10,7 @@ internal sealed class SyntaxToken : SyntaxNode
         Value = value;
     }
     
-    public override SyntaxKind Kind { get; set; }
+    public override SyntaxKind Kind { get;  }
     
     public int Position { get; set; }
     

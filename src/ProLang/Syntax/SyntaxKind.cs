@@ -15,6 +15,8 @@ public enum SyntaxKind
     SlashToken,
     EqualsToken,
     SemiColonToken,
+    LeftParenthesisToken,
+    RightParenthesisToken,
     
     //keywords
     LetKeyword,
@@ -22,5 +24,6 @@ public enum SyntaxKind
     //expressions
     BinaryExpression,
     NumberExpression,
+    ParethensisExpression,
     
 }
