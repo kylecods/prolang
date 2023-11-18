@@ -1,5 +1,3 @@
 ﻿namespace ProLang.Syntax;
 
- abstract class ExpressionSyntax : SyntaxNode
-{
-}
+internal abstract class ExpressionSyntax : SyntaxNode;

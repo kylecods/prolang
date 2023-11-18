@@ -4,7 +4,7 @@ namespace ProLang.Syntax;
 
 internal sealed class SyntaxTree
 {
-    public SyntaxTree(IEnumerable<string> diagnostics, ExpressionSyntax root, SyntaxToken eofToken)
+    public SyntaxTree(IEnumerable<string> diagnostics, SyntaxNode root, SyntaxToken eofToken)
     {
         Diagnostics = diagnostics.ToArray();
         Root = root;
@@ -13,7 +13,7 @@ internal sealed class SyntaxTree
     
     public IReadOnlyList<string> Diagnostics { get; }
     
-    public ExpressionSyntax Root { get; }
+    public SyntaxNode Root { get; }
     
     public SyntaxToken EndOfFileToken { get; }
 

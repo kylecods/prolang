@@ -7,7 +7,7 @@ class Program
 {
     static void Main(string[] args)
     {
-        var syntaxTree = SyntaxTree.Parse("(1+2) * (4/2) + (4-3)");
+        var syntaxTree = SyntaxTree.Parse("let a = 1+2");
 
         if (!syntaxTree.Diagnostics.Any())
         {

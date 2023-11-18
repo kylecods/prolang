@@ -8,7 +8,7 @@ public enum SyntaxKind
     EofToken,
     WhitespaceToken,
     NumberToken,
-    StringToken,
+    IdentifierToken,
     PlusToken,
     MinusToken,
     StarToken,
@@ -25,5 +25,8 @@ public enum SyntaxKind
     BinaryExpression,
     NumberExpression,
     ParethensisExpression,
+    
+    //statements
+    VariableDeclaration,
     
 }

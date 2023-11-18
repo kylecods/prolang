@@ -73,10 +73,20 @@ internal sealed class Parser
 
     public SyntaxTree Parse()
     {
-        var expression = ParseTerm();
+        SyntaxNode node;
+        
+        if (Current.Kind == SyntaxKind.LetKeyword)
+        {
+            node = VariableStatement();
+        }
+        else
+        {
+            node = ParseTerm();
+        }
+        
         var eofToken = Match(SyntaxKind.EofToken);
 
-        return new SyntaxTree(_diagnostics, expression, eofToken);
+        return new SyntaxTree(_diagnostics, node, eofToken);
     }
 
     private ExpressionSyntax ParseTerm()
@@ -124,5 +134,15 @@ internal sealed class Parser
         var numberToken = Match(SyntaxKind.NumberToken);
 
         return new NumberExpressionSyntax(numberToken);
+    }
+
+    private StatementSyntax VariableStatement()
+    {
+        var letKeyword = Match(SyntaxKind.LetKeyword);
+        var identifier = Match(SyntaxKind.IdentifierToken);
+        var equalsToken = Match(SyntaxKind.EqualsToken);
+        var expression = ParseTerm();
+
+        return new VariableStatementSyntax(letKeyword,identifier,equalsToken,expression);
     }
 }
