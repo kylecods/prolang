@@ -35,6 +35,27 @@ internal sealed class Lexer
         {
             var start = _position;
 
+            while (char.IsDigit(Current))
+            {
+                Next();
+            }
+
+            var length = _position - start;
+
+            var text = _text.Substring(start, length);
+
+            if (!int.TryParse(text, out var value))
+            {
+                _diagnostics.Add($"The number {_text} is not a valid Int32");
+            }
+
+            return new SyntaxToken(SyntaxKind.NumberToken, start, text, value);
+        }
+
+        if (char.IsWhiteSpace(Current))
+        {
+            var start = _position;
+
             while (char.IsWhiteSpace(Current))
             {
                 Next();
