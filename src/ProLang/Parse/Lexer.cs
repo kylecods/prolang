@@ -17,7 +17,21 @@ internal sealed class Lexer
 
     public IEnumerable<string> Diagnostics => _diagnostics;
 
-    private char Current => _position >= _text.Length ? '\0' : _text[_position];
+    private char Current => Peek(0);
+
+    private char LookAhead => Peek(1);
+
+    private char Peek(int offset)
+    {
+        var index = _position + offset;
+
+        if (index >= _text.Length)
+        {
+            return '\0';
+        }
+
+        return _text[index];
+    }
 
     private void Next()
     {
@@ -83,8 +97,10 @@ internal sealed class Lexer
 
             var result = text switch
             {
-                "let" => new SyntaxToken(SyntaxKind.LetKeyword, start, text, text),
-                _ => new SyntaxToken(SyntaxKind.IdentifierToken, start, text, text)
+                "let" => new SyntaxToken(SyntaxKind.LetKeyword, start, text, null!),
+                "false" => new SyntaxToken(SyntaxKind.FalseKeyword,start,text,null!),
+                "true" => new SyntaxToken(SyntaxKind.TrueKeyword,start,text,null!),
+                _ => new SyntaxToken(SyntaxKind.IdentifierToken, start, text, null!)
             };
 
             return result;
@@ -97,10 +113,17 @@ internal sealed class Lexer
             '-' => new SyntaxToken(SyntaxKind.MinusToken,_position++,"-",null!),
             '/' => new SyntaxToken(SyntaxKind.SlashToken,_position++,"/",null!),
             '*' => new SyntaxToken(SyntaxKind.StarToken,_position++,"*",null!),
-            '=' => new SyntaxToken(SyntaxKind.EqualsToken,_position++,"=",null!),
+            '=' => LookAhead != '=' ? new SyntaxToken(SyntaxKind.EqualsToken,_position++,"=",null!) 
+                : new SyntaxToken(SyntaxKind.EqualsEqualsToken,_position+=2,"==",null!),
             ';' => new SyntaxToken(SyntaxKind.SemiColonToken,_position++,";",null!),
             '(' => new SyntaxToken(SyntaxKind.LeftParenthesisToken,_position++,"(", null!),
             ')' => new SyntaxToken(SyntaxKind.RightParenthesisToken, _position++, ")", null!),
+            '&' => LookAhead == '&' ? new SyntaxToken(SyntaxKind.AmpersandAmpersandToken,_position +=2, "&&", null!)
+                : new SyntaxToken(SyntaxKind.BadToken,_position++,_text.Substring(_position -1, 1),null!),
+            '|' => LookAhead == '|' ? new SyntaxToken(SyntaxKind.PipePipeToken,_position +=2, "||", null!) 
+                : new SyntaxToken(SyntaxKind.BadToken,_position++,_text.Substring(_position -1, 1),null!),
+            '!' => LookAhead == '=' ? new SyntaxToken(SyntaxKind.BangEqualsToken,_position +=2, "!=", null!) 
+                : new SyntaxToken(SyntaxKind.BangToken,_position ++, "!=", null!),
             _ => new SyntaxToken(SyntaxKind.BadToken,_position++,_text.Substring(_position -1, 1),null!)
         };
 

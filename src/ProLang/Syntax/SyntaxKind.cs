@@ -17,14 +17,23 @@ public enum SyntaxKind
     SemiColonToken,
     LeftParenthesisToken,
     RightParenthesisToken,
+    BangToken,
+    AmpersandAmpersandToken,
+    EqualsEqualsToken,
+    PipePipeToken,
+    BangEqualsToken,
     
     //keywords
     LetKeyword,
+    FalseKeyword,
+    TrueKeyword,
     
     //expressions
     BinaryExpression,
     NumberExpression,
     ParethensisExpression,
+    LiteralExpression,
+    UnaryExpression,
     
     //statements
     VariableDeclaration,

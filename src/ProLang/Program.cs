@@ -3,11 +3,11 @@ using ProLang.Utils;
 
 namespace ProLang;
 
-class Program
+internal class Program
 {
-    static void Main(string[] args)
+    private static void Main(string[] args)
     {
-        var syntaxTree = SyntaxTree.Parse("let a = 1+2");
+        var syntaxTree = SyntaxTree.Parse("let a = true");
 
         if (!syntaxTree.Diagnostics.Any())
         {
