@@ -22,11 +22,19 @@ public enum SyntaxKind
     EqualsEqualsToken,
     PipePipeToken,
     BangEqualsToken,
+    PlusEqualsToken,
+    MinusEqualsToken,
+    SlashEqualsToken,
+    StarEqualsToken,
+    HatToken,
+    HatEqualsToken,
     
     //keywords
     LetKeyword,
     FalseKeyword,
     TrueKeyword,
+    WhileKeyword,
+    ForKeyword,
     
     //expressions
     BinaryExpression,

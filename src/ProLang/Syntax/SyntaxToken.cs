@@ -1,4 +1,7 @@
-﻿namespace ProLang.Syntax;
+﻿using ProLang.Parse;
+using ProLang.Text;
+
+namespace ProLang.Syntax;
 
 internal sealed class SyntaxToken : SyntaxNode
 {
@@ -18,8 +21,6 @@ internal sealed class SyntaxToken : SyntaxNode
     
     public object Value { get; set; }
 
-    public override IEnumerable<SyntaxNode> GetChildren()
-    {
-        return Enumerable.Empty<SyntaxNode>();
-    }
+    public override TextSpan Span => new TextSpan(Position, Text?.Length ?? 0);
+
 }

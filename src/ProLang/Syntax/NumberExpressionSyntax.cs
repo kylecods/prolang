@@ -11,8 +11,4 @@ internal sealed class NumberExpressionSyntax : ExpressionSyntax
     
     public SyntaxToken NumberToken { get; }
     
-    public override IEnumerable<SyntaxNode> GetChildren()
-    {
-        yield return NumberToken;
-    }
 }

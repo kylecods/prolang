@@ -1,16 +1,20 @@
-﻿using ProLang.Syntax;
+﻿using System.Collections.Immutable;
+using ProLang.Syntax;
+using ProLang.Text;
 
 namespace ProLang.Parse;
 
 internal sealed class Parser
 {
-    private readonly SyntaxToken[] _tokens;
+    private DiagnosticBag _diagnostics = new();
+    
+    private readonly SourceText _text;
 
-    private List<string> _diagnostics = new();
+    private readonly ImmutableArray<SyntaxToken> _tokens;
 
     private int _position;
 
-    public Parser(string text)
+    public Parser(SourceText text)
     {
         var tokens = new List<SyntaxToken>();
 
@@ -19,7 +23,7 @@ internal sealed class Parser
         SyntaxToken token;
         do
         {
-            token = lexer.NextToken();
+            token = lexer.Lex();
 
             if (token.Kind != SyntaxKind.WhitespaceToken && token.Kind != SyntaxKind.BadToken)
             {
@@ -27,13 +31,15 @@ internal sealed class Parser
             }
         } while (token.Kind != SyntaxKind.EofToken);
 
-        _tokens = tokens.ToArray();
+        _tokens = tokens.ToImmutableArray();
+        
+        _text = text;
         
         _diagnostics.AddRange(lexer.Diagnostics);
 
     }
 
-    public IEnumerable<string> Diagnostics => _diagnostics;
+    public DiagnosticBag Diagnostics => _diagnostics;
 
     private SyntaxToken Peek(int offset)
     {
@@ -61,7 +67,7 @@ internal sealed class Parser
     {
         if (Current.Kind == kind) return NextToken();
         
-        _diagnostics.Add($"ERROR: Unexpected token <{Current.Kind}>, expected <{kind}>");
+        _diagnostics.ReportUnexpectedToken(Current.Span,Current.Kind,kind);
 
         return new SyntaxToken(kind, Current.Position, null!, null!);
     }
@@ -81,7 +87,7 @@ internal sealed class Parser
         
         var eofToken = Match(SyntaxKind.EofToken);
 
-        return new SyntaxTree(_diagnostics, node, eofToken);
+        return new SyntaxTree(_text,_diagnostics.ToImmutableArray(), node, eofToken);
     }
 
     private ExpressionSyntax ParseExpression(int parentPrecedence = 0)

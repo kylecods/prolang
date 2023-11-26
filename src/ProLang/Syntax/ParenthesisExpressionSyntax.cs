@@ -17,10 +17,4 @@ internal sealed class ParenthesisExpressionSyntax : ExpressionSyntax
     public ExpressionSyntax Expression { get; }
     public SyntaxToken CloseParenthesisToken { get; }
     
-    public override IEnumerable<SyntaxNode> GetChildren()
-    {
-        yield return OpenParenthesisToken;
-        yield return Expression;
-        yield return CloseParenthesisToken;
-    }
 }

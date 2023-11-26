@@ -14,11 +14,5 @@ internal sealed class VariableStatementSyntax : StatementSyntax
     public SyntaxToken Identifier { get; }
     public SyntaxToken EqualsToken { get; }
     public ExpressionSyntax Expression { get; }
-    public override IEnumerable<SyntaxNode> GetChildren()
-    {
-        yield return Keyword;
-        yield return Identifier;
-        yield return EqualsToken;
-        yield return Expression;
-    }
+
 }
