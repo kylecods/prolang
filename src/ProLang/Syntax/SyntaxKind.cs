@@ -28,6 +28,8 @@ public enum SyntaxKind
     StarEqualsToken,
     HatToken,
     HatEqualsToken,
+    LeftAngleBracketToken,
+    RightAngleBracketToken,
     
     //keywords
     LetKeyword,
@@ -45,5 +47,6 @@ public enum SyntaxKind
     
     //statements
     VariableDeclaration,
+    HtmlStatement,
     
 }

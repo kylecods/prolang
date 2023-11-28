@@ -68,6 +68,14 @@ internal sealed class Lexer
                 _kind = SyntaxKind.StarToken;
                 _position++;
                 break;
+            case '<':
+                _kind = SyntaxKind.LeftAngleBracketToken;
+                _position++;
+                break;
+            case '>':
+                _kind = SyntaxKind.RightAngleBracketToken;
+                _position++;
+                break;
             case '=':
                 _position++;
                 if (Current != '=')
