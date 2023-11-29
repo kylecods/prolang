@@ -74,40 +74,29 @@ internal sealed class Parser
 
     public SyntaxTree Parse()
     {
-        SyntaxNode node;
-        
-        if (Current.Kind == SyntaxKind.LetKeyword)
-        {
-            node = VariableStatement();
-        }
-        else if (Current.Kind == SyntaxKind.LeftAngleBracketToken)
-        {
-            node = ParseHtmlStatement();
-        }
-        else
-        {
-            node = ParseExpression();
-        }
-        
+        var globalStatement = ParseGlobalDeclaration();
         var eofToken = Match(SyntaxKind.EofToken);
 
-        return new SyntaxTree(_text,_diagnostics.ToImmutableArray(), node, eofToken);
+        return new SyntaxTree(_text,_diagnostics.ToImmutableArray(), globalStatement, eofToken);
     }
 
-    private StatementSyntax ParseHtmlStatement()
+    private GlobalDeclarationSyntax ParseGlobalDeclaration()
     {
-        var openLeftAngle = Match(SyntaxKind.LeftAngleBracketToken);
-        var openHtmlKeyword = Match(SyntaxKind.IdentifierToken);
-        var openRightAngle = Match(SyntaxKind.RightAngleBracketToken);
+        var statement = ParseDeclarations();
 
-        var statements = ImmutableArray.CreateBuilder<StatementSyntax>();
-        
-        while (Current.Kind != SyntaxKind.EofToken &&
-               Current.Kind != SyntaxKind.LeftAngleBracketToken)
+        return new GlobalDeclarationSyntax(statement);
+    }
+
+    private ImmutableArray<DeclarationSyntax> ParseDeclarations()
+    {
+        var statements = ImmutableArray.CreateBuilder<DeclarationSyntax>();
+
+        while (Current.Kind != SyntaxKind.EofToken)
         {
             var startToken = Current;
 
-            var statement = VariableStatement();
+            var statement = ParseDeclaration();
+            
             statements.Add(statement);
 
             if (Current == startToken)
@@ -115,18 +104,112 @@ internal sealed class Parser
                 NextToken();
             }
         }
-        var closeLeftAngle = Match(SyntaxKind.LeftAngleBracketToken);
-        var slashToken = Match(SyntaxKind.SlashToken);
-        var closeHtmlKeyword = Match(SyntaxKind.IdentifierToken);
-        var closeRightAngle = Match(SyntaxKind.RightAngleBracketToken);
 
-        return new HtmlStatementSyntax(openLeftAngle, openHtmlKeyword, openRightAngle, statements.ToImmutable(),
-            closeLeftAngle, slashToken, closeHtmlKeyword, closeRightAngle);
+        return statements.ToImmutable();
+    }
+
+    private DeclarationSyntax ParseDeclaration()
+    {
+        if (Current.Kind == SyntaxKind.LessThanToken)
+        {
+            return ParseHtmlDeclaration();
+        }
+
+        return ParseGlobalStatement();
+    }
+
+    private GlobalStatementSyntax ParseGlobalStatement()
+    {
+        var statement = ParseStatement();
+
+        return new GlobalStatementSyntax(statement);
+    }
+
+    private StatementSyntax ParseStatement()
+    {
+        var statement = Current.Kind switch
+        {
+            SyntaxKind.LetKeyword => ParseVariableStatement(),
+            SyntaxKind.LessThanToken => ParseHtmlStatement(),
+            _ => ParseExpressionStatement()
+        };
+        return statement;
+    }
+
+    private StatementSyntax ParseExpressionStatement()
+    {
+        var expression = ParseExpression();
+
+        return new ExpressionStatementSyntax(expression);
+    }
+    
+    private HtmlDeclarationSyntax ParseHtmlDeclaration()
+    {
+        var nodes = ImmutableArray.CreateBuilder<HtmlStatementSyntax>();
+
+        while (Current.Kind != SyntaxKind.EofToken)
+        {
+            var startToken = Current;
+            
+            var statement = ParseHtmlStatement();
+            
+            nodes.Add(statement);
+            
+            if (Current == startToken)
+            {
+                NextToken();
+            }
+        }
+        
+        return new HtmlDeclarationSyntax( nodes.ToImmutable());
+    }
+
+    private HtmlStatementSyntax ParseHtmlStatement()
+    {
+        var htmlStartTag = ParseHtmlStartTag();
+        
+        var statements = ImmutableArray.CreateBuilder<StatementSyntax>();
+
+        while (Current.Kind != SyntaxKind.EofToken && Current.Kind != SyntaxKind.OpenAngleForwardSlashToken)
+        {
+            var startToken = Current;
+            
+            var statement = ParseStatement();
+            
+            statements.Add(statement);
+            
+            if (Current == startToken)
+            {
+                NextToken();
+            }
+        }
+        
+        
+        var htmlEndTag = ParseHtmlEndTag();
+
+        return new HtmlStatementSyntax(htmlStartTag,statements.ToImmutable(), htmlEndTag);
+    }
+
+    private HtmlStartTagSyntax ParseHtmlStartTag()
+    {
+        var leftAngle = Match(SyntaxKind.LessThanToken);
+        var htmlKeyword = Match(SyntaxKind.IdentifierToken);
+        var rightAngle = Match(SyntaxKind.GreaterThanToken);
+        
+        return new HtmlStartTagSyntax(leftAngle,htmlKeyword,rightAngle);
+    }
+
+    private HtmlEndTagSyntax ParseHtmlEndTag()
+    {
+        var closeToken = Match(SyntaxKind.OpenAngleForwardSlashToken);
+        var htmlKeyword = Match(SyntaxKind.IdentifierToken);
+        var rightAngle = Match(SyntaxKind.GreaterThanToken);
+
+        return new HtmlEndTagSyntax(closeToken,htmlKeyword, rightAngle);
     }
 
     private ExpressionSyntax ParseExpression(int parentPrecedence = 0)
     {
-        
         ExpressionSyntax left;
 
         var unaryOperator = Current.Kind.GetUnaryOperatorPrecedence();
@@ -185,7 +268,7 @@ internal sealed class Parser
         }
     }
 
-    private StatementSyntax VariableStatement()
+    private StatementSyntax ParseVariableStatement()
     {
         var letKeyword = Match(SyntaxKind.LetKeyword);
         var identifier = Match(SyntaxKind.IdentifierToken);

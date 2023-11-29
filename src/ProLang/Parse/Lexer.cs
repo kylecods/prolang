@@ -61,19 +61,36 @@ internal sealed class Lexer
                 _position++;
                 break;
             case '/':
-                _kind = SyntaxKind.SlashToken;
                 _position++;
+                if (Current != '>')
+                {
+                    _kind = SyntaxKind.SlashToken;
+                }
+                else
+                {
+                    _position++;
+                    _kind = SyntaxKind.ForwardSlashCloseAngleToken;
+                }
                 break;
             case '*':
                 _kind = SyntaxKind.StarToken;
                 _position++;
                 break;
             case '<':
-                _kind = SyntaxKind.LeftAngleBracketToken;
                 _position++;
+                if (Current != '/')
+                {
+                    _kind = SyntaxKind.LessThanToken;
+                }
+                else
+                {
+                    _position++;
+                    _kind = SyntaxKind.OpenAngleForwardSlashToken;
+                }
+
                 break;
             case '>':
-                _kind = SyntaxKind.RightAngleBracketToken;
+                _kind = SyntaxKind.GreaterThanToken;
                 _position++;
                 break;
             case '=':
@@ -84,8 +101,8 @@ internal sealed class Lexer
                 }
                 else
                 {
-                    _position++;
                     _kind = SyntaxKind.EqualsEqualsToken;
+                    _position++;
                 }
                 break;
             case '(':

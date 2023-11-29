@@ -28,8 +28,12 @@ public enum SyntaxKind
     StarEqualsToken,
     HatToken,
     HatEqualsToken,
-    LeftAngleBracketToken,
-    RightAngleBracketToken,
+    LessThanToken,//Can be used as open angle '<'div..
+    GreaterThanToken,//Can be used as open angle ..div'>'
+    LessThanEqualToken,
+    GreaterThanEqualToken,
+    ForwardSlashCloseAngleToken, // <input '/>'
+    OpenAngleForwardSlashToken, //<div> '</' div>
     
     //keywords
     LetKeyword,
@@ -37,6 +41,7 @@ public enum SyntaxKind
     TrueKeyword,
     WhileKeyword,
     ForKeyword,
+    ScriptKeyword,
     
     //expressions
     BinaryExpression,
@@ -47,6 +52,16 @@ public enum SyntaxKind
     
     //statements
     VariableDeclaration,
+    ExpressionStatement,
     HtmlStatement,
+    
+    //nodes
+    GlobalDeclaration,
+    GlobalStatement,
+    HtmlDeclaration,
+    
+    //groups
+    HtmlStartTag,
+    HtmlEndTag,
     
 }

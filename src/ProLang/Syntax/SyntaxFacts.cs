@@ -86,10 +86,18 @@ internal static class SyntaxFacts
                 return "let";
             case SyntaxKind.TrueKeyword:
                 return "true";
-            case SyntaxKind.LeftAngleBracketToken:
+            case SyntaxKind.LessThanToken:
                 return "<";
-            case SyntaxKind.RightAngleBracketToken:
+            case SyntaxKind.GreaterThanToken:
                 return ">";
+            case SyntaxKind.OpenAngleForwardSlashToken:
+                return "</";
+            case SyntaxKind.ForwardSlashCloseAngleToken:
+                return "/>";
+            case SyntaxKind.GreaterThanEqualToken:
+                return ">=";
+            case SyntaxKind.LessThanEqualToken:
+                return "<=";
             default:
                 return null;
         }
