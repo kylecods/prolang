@@ -8,13 +8,11 @@ internal class Program
 {
     private static void Main(string[] args)
     {
-        var line = args[0];
+        var fileName = args[0];
 
-        var textBuilder = new StringBuilder();
+        var content = File.ReadAllText(fileName);
 
-        textBuilder.AppendLine(line);
-
-        var text = textBuilder.ToString();
+        var text = SourceText.From(content);
         
         var syntaxTree = SyntaxTree.Parse(text);
 
@@ -57,7 +55,5 @@ internal class Program
             }
             Console.WriteLine();
         }
-
-        textBuilder.Clear();
     }
 }
