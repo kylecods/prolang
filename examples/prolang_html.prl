@@ -1,0 +1,5 @@
+<div>
+    <p> 
+        ${ "String from ProLang to Html!!" } 
+    </p>
+</div>

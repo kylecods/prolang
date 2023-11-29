@@ -5,35 +5,47 @@ public enum SyntaxKind
     BadToken,
     
     //tokens
-    EofToken,
-    WhitespaceToken,
-    NumberToken,
-    IdentifierToken,
-    PlusToken,
-    MinusToken,
-    StarToken,
-    SlashToken,
-    EqualsToken,
-    SemiColonToken,
-    LeftParenthesisToken,
-    RightParenthesisToken,
-    BangToken,
-    AmpersandAmpersandToken,
-    EqualsEqualsToken,
-    PipePipeToken,
-    BangEqualsToken,
-    PlusEqualsToken,
-    MinusEqualsToken,
-    SlashEqualsToken,
-    StarEqualsToken,
-    HatToken,
-    HatEqualsToken,
-    LessThanToken,//Can be used as open angle '<'div..
-    GreaterThanToken,//Can be used as open angle ..div'>'
-    LessThanEqualToken,
-    GreaterThanEqualToken,
+    EofToken, // '\0'
+    WhitespaceToken,// '\t', '\r', ' '
+    NumberToken,// '1'
+    StringToken,//"test"
+    IdentifierToken,//foo
+    
+    PlusToken,// '+'
+    MinusToken,// '-'
+    StarToken,// '*'
+    SlashToken,// '/'
+    BangToken,// '!'
+    EqualsToken,// '='
+    SemiColonToken,// ';'
+    
+    LeftParenthesisToken,// '('
+    RightParenthesisToken,// ')'
+    LeftCurlyToken,// '{'
+    RightCurlyToken,// '}'
+    HatToken, // '^'
+    LessThanToken,//Can be used as open angle in html '<'div..
+    GreaterThanToken,//Can be used as open angle in html ..div'>'
+    DollarToken,// '$"
+    
+    AmpersandAmpersandToken, // '&&'
+    PipePipeToken, // '||'
+    
+    EqualsEqualsToken,// '=='
+    LessThanEqualToken,// '<='
+    GreaterThanEqualToken,// '>='
+    
+    BangEqualsToken, // '!='
+    PlusEqualsToken, // '+='
+    MinusEqualsToken,// '-='
+    SlashEqualsToken,// '/='
+    StarEqualsToken,// '*='
+    HatEqualsToken,// '^='
+    
+    //html tokens
     ForwardSlashCloseAngleToken, // <input '/>'
     OpenAngleForwardSlashToken, //<div> '</' div>
+    DollarCurlyToken,// '${'
     
     //keywords
     LetKeyword,
@@ -41,6 +53,8 @@ public enum SyntaxKind
     TrueKeyword,
     WhileKeyword,
     ForKeyword,
+    
+    //html keywords
     ScriptKeyword,
     
     //expressions
@@ -49,18 +63,20 @@ public enum SyntaxKind
     ParethensisExpression,
     LiteralExpression,
     UnaryExpression,
+    AssignmentExpression,
     
     //statements
     VariableDeclaration,
     ExpressionStatement,
     HtmlStatement,
+    ProLangBlockStatement,
     
     //nodes
     GlobalDeclaration,
     GlobalStatement,
     HtmlDeclaration,
     
-    //groups
+    //html groups
     HtmlStartTag,
     HtmlEndTag,
     

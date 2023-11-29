@@ -1,13 +1,19 @@
-<script>
-let a = 5
+let a = 1
+
+let b = 1 + 2
+
+let c = 3 - 2
+
+let d = 2 * 2
+
+let e = 4 / 2
 
 let f = true
-</script>
 
-<div>	
-  <div>1+2</div>
-  <p></p>
-</div>
+let g = false
 
+let l = (2+2)*4
+
+let k = "Hello world!"
 
 

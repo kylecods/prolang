@@ -1,4 +1,5 @@
-﻿using ProLang.Syntax;
+﻿using System.Text;
+using ProLang.Syntax;
 using ProLang.Text;
 
 namespace ProLang.Parse;
@@ -147,6 +148,30 @@ internal sealed class Lexer
             case '\n': case '\r':
                 ReadWhiteSpace();
                 break;
+            case '$' :
+                _position++;
+                if (Current != '{')
+                {
+                    _kind = SyntaxKind.DollarToken;
+                }
+                else
+                {
+                    _kind = SyntaxKind.DollarCurlyToken;
+                    _position++;
+                }
+                break;
+            case '{':
+                _kind = SyntaxKind.LeftCurlyToken;
+                _position++;
+                break;
+            case '}':
+                _kind = SyntaxKind.RightCurlyToken;
+                _position++;
+                break;
+            case '"':
+                ReadString();
+                break;
+            
             default:
                 if (char.IsLetter(Current))
                 {
@@ -173,6 +198,28 @@ internal sealed class Lexer
         }
 
         return new SyntaxToken(_kind,_position,text,_value);
+    }
+
+    private void ReadString()
+    {
+        _position++;
+
+        var sb = new StringBuilder();
+
+        while (true)
+        {
+            if (Current == '"')
+            {
+                _position++;
+                break;
+            }
+
+            sb.Append(Current);
+            _position++;
+        }
+
+        _kind = SyntaxKind.StringToken;
+        _value = sb.ToString();
     }
 
     private void ReadWhiteSpace()

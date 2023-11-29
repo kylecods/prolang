@@ -120,12 +120,12 @@ internal sealed class Parser
 
     private GlobalStatementSyntax ParseGlobalStatement()
     {
-        var statement = ParseStatement();
+        var statement = ParseAnyStatement();
 
         return new GlobalStatementSyntax(statement);
     }
 
-    private StatementSyntax ParseStatement()
+    private StatementSyntax ParseAnyStatement()
     {
         var statement = Current.Kind switch
         {
@@ -174,7 +174,7 @@ internal sealed class Parser
         {
             var startToken = Current;
             
-            var statement = ParseStatement();
+            var statement = ParseProLangHtmlCompatibleStatement();
             
             statements.Add(statement);
             
@@ -208,7 +208,12 @@ internal sealed class Parser
         return new HtmlEndTagSyntax(closeToken,htmlKeyword, rightAngle);
     }
 
-    private ExpressionSyntax ParseExpression(int parentPrecedence = 0)
+    private ExpressionSyntax ParseExpression()
+    {
+        return ParseAssignmentExpression();
+    }
+
+    private ExpressionSyntax ParseBinaryExpression(int parentPrecedence = 0)
     {
         ExpressionSyntax left;
 
@@ -218,7 +223,7 @@ internal sealed class Parser
         {
             var operatorToken = NextToken();
 
-            var operand = ParseExpression(unaryOperator);
+            var operand = ParseBinaryExpression(unaryOperator);
 
             left = new UnaryExpressionSyntax(operatorToken, operand);
         }
@@ -233,12 +238,34 @@ internal sealed class Parser
             if (precedence == 0 || precedence <= parentPrecedence)
                 break;
             var operatorToken = NextToken();
-            var right = ParseExpression(precedence);
+            var right = ParseBinaryExpression(precedence);
 
             left = new BinaryExpressionSyntax(left, operatorToken, right);
         }
 
         return left;
+    }
+
+    private ExpressionSyntax ParseAssignmentExpression()
+    {
+        if (Peek(0).Kind == SyntaxKind.IdentifierToken)
+        {
+            switch (Peek(1).Kind)
+            {
+                case SyntaxKind.PlusEqualsToken:
+                case SyntaxKind.MinusEqualsToken:
+                case SyntaxKind.StarEqualsToken:
+                case SyntaxKind.SlashEqualsToken:
+                case SyntaxKind.EqualsToken:
+                    var identifierToken = NextToken();
+                    var operatorToken = NextToken();
+                    var expression = ParseAssignmentExpression();
+                    return new AssignmentExpressionSyntax(identifierToken, operatorToken, expression);
+                    
+            }
+        }
+
+        return ParseBinaryExpression();
     }
 
     private ExpressionSyntax ParsePrimaryExpression()
@@ -248,24 +275,47 @@ internal sealed class Parser
             case SyntaxKind.TrueKeyword:
             case SyntaxKind.FalseKeyword:
             {
-                var keyword = NextToken();
-
-                var value = keyword.Kind == SyntaxKind.FalseKeyword;
-
-                return new LiteralExpressionSyntax(keyword, value);
+                return ParseBooleanLiteral();
             }
             case SyntaxKind.LeftParenthesisToken:
             {
-                var left = NextToken();
-                var expression = ParseExpression();
-                var right = Match(SyntaxKind.RightParenthesisToken);
-
-                return new ParenthesisExpressionSyntax(left, expression, right);
+                return ParseParenthesizedExpression();
             }
+            case SyntaxKind.NumberToken:
+                return ParseNumberLiteral(); 
             default:
-                var numberToken = Match(SyntaxKind.NumberToken);
-                return new LiteralExpressionSyntax(numberToken);
+                return ParseStringLiteral();
         }
+    }
+    
+    private ExpressionSyntax ParseStringLiteral()
+    {
+        var numberToken = Match(SyntaxKind.StringToken);
+        return new LiteralExpressionSyntax(numberToken);
+    }
+
+    private ExpressionSyntax ParseNumberLiteral()
+    {
+        var numberToken = Match(SyntaxKind.NumberToken);
+        return new LiteralExpressionSyntax(numberToken);
+    }
+
+    private ExpressionSyntax ParseParenthesizedExpression()
+    {
+        var left = Match(SyntaxKind.LeftParenthesisToken);
+        var expression = ParseExpression();
+        var right = Match(SyntaxKind.RightParenthesisToken);
+
+        return new ParenthesisExpressionSyntax(left, expression, right);
+    }
+
+    private ExpressionSyntax ParseBooleanLiteral()
+    {
+        var isFalse = Current.Kind == SyntaxKind.FalseKeyword;
+
+        var keywordToken = isFalse ? Match(SyntaxKind.FalseKeyword) : Match(SyntaxKind.TrueKeyword);
+
+        return new LiteralExpressionSyntax(keywordToken, isFalse);
     }
 
     private StatementSyntax ParseVariableStatement()
@@ -276,5 +326,53 @@ internal sealed class Parser
         var expression = ParseExpression();
 
         return new VariableStatementSyntax(letKeyword,identifier,equalsToken,expression);
+    }
+
+    private StatementSyntax ParseProLangBlockStatement()
+    {
+        var openCurlyToken = Match(SyntaxKind.DollarCurlyToken);
+
+        var proLangStatements = ImmutableArray.CreateBuilder<StatementSyntax>();
+
+        while (Current.Kind != SyntaxKind.EofToken && Current.Kind != SyntaxKind.RightCurlyToken)
+        {
+            var startToken = Current;
+            //we want to only parse ProLang syntax here
+            var proLangStatement = ParseProLangStatement();
+            
+            proLangStatements.Add(proLangStatement);
+
+            if (Current == startToken)
+            {
+                NextToken();
+            }
+            
+        }
+
+        var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
+
+        return new ProLangBlockStatementSyntax(openCurlyToken, proLangStatements.ToImmutable(), closeCurlyToken);
+    }
+
+    private StatementSyntax ParseProLangStatement()
+    {
+        var statement = Current.Kind switch
+        {
+            SyntaxKind.LetKeyword => ParseVariableStatement(),
+            _ => ParseExpressionStatement()
+        };
+        return statement;
+        
+    }
+
+    private StatementSyntax ParseProLangHtmlCompatibleStatement()
+    {
+        var statement = Current.Kind switch
+        {
+            SyntaxKind.DollarCurlyToken => ParseProLangBlockStatement(),
+            SyntaxKind.LessThanToken => ParseHtmlStatement(),
+            _ => ParseExpressionStatement()
+        };
+        return statement;
     }
 }

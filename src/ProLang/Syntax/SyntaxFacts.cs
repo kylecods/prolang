@@ -98,6 +98,14 @@ internal static class SyntaxFacts
                 return ">=";
             case SyntaxKind.LessThanEqualToken:
                 return "<=";
+            case SyntaxKind.DollarToken:
+                return "$";
+            case SyntaxKind.DollarCurlyToken:
+                return "${";
+            case SyntaxKind.LeftCurlyToken:
+                return "{";
+            case SyntaxKind.RightCurlyToken:
+                return "}";
             default:
                 return null;
         }
@@ -117,6 +125,8 @@ internal static class SyntaxFacts
                 return SyntaxKind.WhileKeyword;
             case "for":
                 return SyntaxKind.ForKeyword;
+            case "script":
+                return SyntaxKind.ScriptKeyword;
             default:
                 return SyntaxKind.IdentifierToken;
          }
