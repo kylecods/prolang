@@ -6,27 +6,27 @@ namespace ProLang.Syntax;
 
 internal sealed class SyntaxTree
 {
-    public SyntaxTree(SourceText text,ImmutableArray<Diagnostic> diagnostics, SyntaxNode root, SyntaxToken eofToken)
+    private SyntaxTree(SourceText text)
     {
+        var parser = new Parser(text);
+        var root = parser.ParseGlobalDeclaration();
+        
         Text = text;
-        Diagnostics = diagnostics;
+        Diagnostics = parser.Diagnostics.ToImmutableArray();;
         Root = root;
-        EndOfFileToken = eofToken;
     }
     
     public ImmutableArray<Diagnostic> Diagnostics { get; }
     
     public SourceText Text { get; }
     
-    public SyntaxNode Root { get; }
+    public static GlobalDeclarationSyntax Root { get; private set; }
     
     public SyntaxToken EndOfFileToken { get; }
 
     public static SyntaxTree Parse(SourceText text)
     {
-        var parser = new Parser(text);
-
-        return parser.Parse();
+        return new SyntaxTree(text);
     }
 
     public static SyntaxTree Parse(string text)

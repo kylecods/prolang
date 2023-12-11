@@ -61,4 +61,10 @@ internal sealed class DiagnosticBag : IEnumerable<Diagnostic>
         var message = $"Variable '{name}' does not exist";
         Report(span,message);
     }
+
+    public void ReportVariableAlreadyDeclared(TextSpan span, string name)
+    {
+        var message = $"Variable '{name}' is already declared";
+        Report(span,message);
+    }
 }

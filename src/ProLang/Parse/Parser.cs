@@ -71,20 +71,15 @@ internal sealed class Parser
 
         return new SyntaxToken(kind, Current.Position, null!, null!);
     }
-
-    public SyntaxTree Parse()
-    {
-        var globalStatement = ParseGlobalDeclaration();
-        var eofToken = Match(SyntaxKind.EofToken);
-
-        return new SyntaxTree(_text,_diagnostics.ToImmutableArray(), globalStatement, eofToken);
-    }
-
-    private GlobalDeclarationSyntax ParseGlobalDeclaration()
+    
+    public GlobalDeclarationSyntax ParseGlobalDeclaration()
     {
         var statement = ParseDeclarations();
+        
+        var eofToken = Match(SyntaxKind.EofToken);
 
-        return new GlobalDeclarationSyntax(statement);
+
+        return new GlobalDeclarationSyntax(statement,eofToken);
     }
 
     private ImmutableArray<DeclarationSyntax> ParseDeclarations()
@@ -283,11 +278,20 @@ internal sealed class Parser
             }
             case SyntaxKind.NumberToken:
                 return ParseNumberLiteral(); 
+            case SyntaxKind.IdentifierToken:
+                return ParseNameExpression();
             default:
                 return ParseStringLiteral();
         }
     }
-    
+
+    private ExpressionSyntax ParseNameExpression()
+    {
+        var identifierToken = Match(SyntaxKind.IdentifierToken);
+
+        return new NameExpressionSyntax(identifierToken);
+    }
+
     private ExpressionSyntax ParseStringLiteral()
     {
         var numberToken = Match(SyntaxKind.StringToken);

@@ -64,6 +64,7 @@ public enum SyntaxKind
     LiteralExpression,
     UnaryExpression,
     AssignmentExpression,
+    NameExpression,
     
     //statements
     VariableDeclaration,

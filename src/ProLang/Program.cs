@@ -18,7 +18,7 @@ internal class Program
 
         if (!syntaxTree.Diagnostics.Any())
         {
-            syntaxTree.Root.WriteTo(Console.Out);
+            // syntaxTree.Root.WriteTo(Console.Out);
         }
         else
         {
