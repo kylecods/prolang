@@ -1,5 +1,4 @@
 ﻿using System.Collections.Immutable;
-using System.ComponentModel;
 using ProLang.Parse;
 using ProLang.Symbols;
 using ProLang.Syntax;
@@ -9,6 +8,8 @@ namespace ProLang.Intermediate;
 internal sealed class Binder
 {
     private BoundScope _scope;
+    
+    private readonly Dictionary<VariableSymbol, object> _variables;
     
     private readonly DiagnosticBag _diagnostics = new ();
 
@@ -135,6 +136,12 @@ internal sealed class Binder
     {
         switch (syntax.Kind)
         {
+            case SyntaxKind.ParethensisExpression:
+                return BindParenthesizedExpression((ParenthesisExpressionSyntax)syntax);
+            case SyntaxKind.NameExpression:
+                return BindNameExpression((NameExpressionSyntax)syntax);
+            case SyntaxKind.AssignmentExpression:
+                return BindAssignmentExpression((AssignmentExpressionSyntax)syntax);
             case SyntaxKind.LiteralExpression:
                 return BindLiteralExpression((LiteralExpressionSyntax)syntax);
             case SyntaxKind.UnaryExpression:
@@ -146,65 +153,78 @@ internal sealed class Binder
         }
     }
 
+    private BoundExpression BindAssignmentExpression(AssignmentExpressionSyntax syntax)
+    {
+        var name = syntax.IdentifierToken.Text;
+        var boundExpression = BindExpression(syntax.Expression);
+
+        if (!_scope.TryLookup(name, out var variable))
+        {
+            _diagnostics.ReportUndefinedName(syntax.IdentifierToken.Span, name);
+            return boundExpression;
+        }
+        
+        if (boundExpression.Type != variable.Type)
+        {
+            //TODO: _diagnostics.ReportCannotConvert(syntax.Expression.Span, boundExpression.Type, variable.Type);
+            return boundExpression;
+        }
+
+        return new BoundAssignmentExpression(variable, boundExpression);
+    }
+
+    private BoundExpression BindParenthesizedExpression(ParenthesisExpressionSyntax syntax)
+    {
+        return BindExpression(syntax.Expression);
+    }
+
     private BoundExpression BindBinaryExpression(BinaryExpressionSyntax syntax)
     {
         var boundLeft = BindExpression(syntax.Left);
         var boundRight = BindExpression(syntax.Right);
-        var boundOperatorKind = BindBinaryOperatorKind(syntax.OperatorToken.Kind, boundLeft.Type,boundRight.Type);
-        return new BoundBinaryExpression(boundLeft, boundOperatorKind, boundRight);
-    }
-
-    private BoundBinaryOperatorKind? BindBinaryOperatorKind(SyntaxKind operatorTokenKind, Type boundLeftType, Type boundRightType)
-    {
-        if (boundLeftType != typeof(int) || boundRightType != typeof(int))
+        var boundOperator = BoundBinaryOperator.Bind(syntax.OperatorToken.Kind, boundLeft.Type,boundRight.Type);
+        
+        if (boundOperator == null)
         {
-            return null;
+            _diagnostics.ReportUndefinedBinaryOperator(syntax.OperatorToken.Span,syntax.OperatorToken.Text,boundLeft.Type, boundRight.Type);
+            return boundLeft;
         }
-
-        switch (operatorTokenKind)
-        {
-            case SyntaxKind.PlusToken:
-                return BoundBinaryOperatorKind.Addition;
-            case SyntaxKind.MinusToken:
-                return BoundBinaryOperatorKind.Subtraction;
-            case SyntaxKind.StarToken:
-                return BoundBinaryOperatorKind.Multiplication;
-            case SyntaxKind.SlashToken:
-                return BoundBinaryOperatorKind.Division;
-            default:
-                throw new Exception($"Unexpected binary operator {operatorTokenKind}");
-        }
+        
+        return new BoundBinaryExpression(boundLeft, boundOperator, boundRight);
     }
 
     private BoundExpression BindUnaryExpression(UnaryExpressionSyntax syntax)
     {
         var boundOperand = BindExpression(syntax.Operand);
-        var boundOperatorKind = BindUnaryOperatorKind(syntax.OperatorToken.Kind, boundOperand.Type);
-
-        return new BoundUnaryExpression(boundOperatorKind, boundOperand);
-    }
-
-    private BoundUnaryOperatorKind? BindUnaryOperatorKind(SyntaxKind operatorTokenKind, Type type)
-    {
-        if (type != typeof(int))
+        var boundOperator = BoundUnaryOperator.Bind(syntax.Operand.Kind,boundOperand.Type);
+        
+        if (boundOperator == null)
         {
-            return null;
+           _diagnostics.ReportUndefinedUnaryOperator(syntax.OperatorToken.Span,syntax.OperatorToken.Text,boundOperand.Type);
+            return boundOperand;
         }
 
-        switch (operatorTokenKind)
-        {
-            case SyntaxKind.PlusToken:
-                return BoundUnaryOperatorKind.Identity;
-            case SyntaxKind.MinusToken:
-                return BoundUnaryOperatorKind.Negation;
-            default:
-                throw new Exception($"Unknown unary operator {operatorTokenKind}");
-        }
+        return new BoundUnaryExpression(boundOperator, boundOperand);
     }
 
     private BoundExpression BindLiteralExpression(LiteralExpressionSyntax syntax)
     {
-        var value = syntax.LiteralToken.Value ?? 0;
+        var value = syntax.Value ?? 0;
         return new BoundLiteralExpression(value);
     }
+    
+    private BoundExpression BindNameExpression(NameExpressionSyntax syntax)
+    {
+        var name = syntax.IdentifierToken.Text;
+
+        if (!_scope.TryLookup(name, out var variable))
+        {
+            _diagnostics.ReportUndefinedName(syntax.IdentifierToken.Span, name);
+            return new BoundLiteralExpression(0);
+        }
+
+        return new BoundVariableExpression(variable);
+    }
+
+
 }

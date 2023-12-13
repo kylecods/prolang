@@ -2,7 +2,7 @@
 
 namespace ProLang.Syntax;
 
-internal class GlobalDeclarationSyntax : SyntaxNode
+public sealed class GlobalDeclarationSyntax : SyntaxNode
 {
     public GlobalDeclarationSyntax(ImmutableArray<DeclarationSyntax> declarations, SyntaxToken eofToken)
     {

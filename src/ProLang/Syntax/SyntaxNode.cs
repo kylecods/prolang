@@ -3,7 +3,7 @@ using ProLang.Text;
 
 namespace ProLang.Syntax;
 
-internal abstract class SyntaxNode
+public abstract class SyntaxNode
 {
     public abstract SyntaxKind Kind { get; }
 

@@ -4,7 +4,7 @@ using ProLang.Text;
 
 namespace ProLang.Syntax;
 
-internal sealed class SyntaxTree
+public sealed class SyntaxTree
 {
     private SyntaxTree(SourceText text)
     {
@@ -20,10 +20,8 @@ internal sealed class SyntaxTree
     
     public SourceText Text { get; }
     
-    public static GlobalDeclarationSyntax Root { get; private set; }
+    public GlobalDeclarationSyntax Root { get; }
     
-    public SyntaxToken EndOfFileToken { get; }
-
     public static SyntaxTree Parse(SourceText text)
     {
         return new SyntaxTree(text);

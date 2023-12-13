@@ -3,7 +3,7 @@ using ProLang.Text;
 
 namespace ProLang.Syntax;
 
-internal sealed class SyntaxToken : SyntaxNode
+public sealed class SyntaxToken : SyntaxNode
 {
     public SyntaxToken(SyntaxKind kind, int position, string text, object value)
     {

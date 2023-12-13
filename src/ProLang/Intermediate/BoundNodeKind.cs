@@ -10,5 +10,7 @@ internal enum  BoundNodeKind
     //expressions
     BoundLiteralExpression,
     BoundUnaryExpression,
-    BoundBinaryExpression
+    BoundBinaryExpression,
+    BoundVariableExpression,
+    BoundAssignmentExpression,
 }

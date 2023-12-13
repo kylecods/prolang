@@ -1,21 +1,25 @@
-﻿using ProLang.Intermediate;
+﻿using System.Collections.Immutable;
+using ProLang.Intermediate;
+using ProLang.Interpreter;
+using ProLang.Parse;
+using ProLang.Symbols;
 using ProLang.Syntax;
 
 namespace ProLang.Compiler;
 
-internal sealed class Compilation
+public sealed class Compilation
 {
     private BoundGlobalScope _globalScope;
 
-    public Compilation(SyntaxTree tree) : this(null!,tree)
+    public Compilation(SyntaxTree syntaxTree) : this(null,syntaxTree)
     {
-        Tree = tree;
+        SyntaxTree = syntaxTree;
     }
 
-    private Compilation(Compilation previous, SyntaxTree tree)
+    private Compilation(Compilation previous, SyntaxTree syntaxTree)
     {
         Previous = previous;
-        Tree = tree;
+        SyntaxTree = syntaxTree;
     }
 
     internal BoundGlobalScope GlobalScope
@@ -24,7 +28,7 @@ internal sealed class Compilation
         {
             if (_globalScope == null)
             {
-                var globalScope = Binder.BindGlobalScope(Previous.GlobalScope, SyntaxTree.Root);
+                var globalScope = Binder.BindGlobalScope(Previous?.GlobalScope, SyntaxTree.Root);
 
                 Interlocked.CompareExchange(ref _globalScope, globalScope, null);
             }
@@ -38,6 +42,25 @@ internal sealed class Compilation
         return new Compilation(this, syntaxTree);
     }
 
+    public IEnumerable<EvaluationResult> Evaluate(Dictionary<VariableSymbol, object> variables)
+    {
+        var diagnostics = SyntaxTree.Diagnostics.Concat(GlobalScope.Diagnostics).ToImmutableArray();
+
+        if (diagnostics.Any())
+        {
+            yield return new EvaluationResult(diagnostics, null!);
+        }
+
+        foreach (var statement in GlobalScope.Statements )
+        {
+            var evaluator = new Evaluator(statement, variables);
+            var value = evaluator.Evaluate();
+
+            yield return new EvaluationResult(Array.Empty<Diagnostic>(), value);
+        }
+        
+    }
+
     public Compilation Previous { get; }
-    public SyntaxTree Tree { get; }
+    public SyntaxTree SyntaxTree { get; }
 }
