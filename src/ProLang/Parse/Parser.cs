@@ -126,9 +126,36 @@ internal sealed class Parser
         {
             SyntaxKind.LetKeyword => ParseVariableStatement(),
             SyntaxKind.LessThanToken => ParseHtmlStatement(),
+            SyntaxKind.LeftCurlyToken => ParseBlockStatement(),
             _ => ParseExpressionStatement()
         };
         return statement;
+    }
+
+    private StatementSyntax ParseBlockStatement()
+    {
+        var openCurlyToken = Match(SyntaxKind.LeftCurlyToken);
+
+        var proLangStatements = ImmutableArray.CreateBuilder<StatementSyntax>();
+
+        while (Current.Kind != SyntaxKind.EofToken && Current.Kind != SyntaxKind.RightCurlyToken)
+        {
+            var startToken = Current;
+            
+            var proLangStatement = ParseProLangStatement();
+            
+            proLangStatements.Add(proLangStatement);
+
+            if (Current == startToken)
+            {
+                NextToken();
+            }
+            
+        }
+
+        var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
+
+        return new BlockStatementSyntax(openCurlyToken,proLangStatements.ToImmutable(),closeCurlyToken);
     }
 
     private StatementSyntax ParseExpressionStatement()
@@ -315,11 +342,11 @@ internal sealed class Parser
 
     private ExpressionSyntax ParseBooleanLiteral()
     {
-        var isFalse = Current.Kind == SyntaxKind.FalseKeyword;
+        var isTrue = Current.Kind == SyntaxKind.TrueKeyword;
 
-        var keywordToken = isFalse ? Match(SyntaxKind.FalseKeyword) : Match(SyntaxKind.TrueKeyword);
+        var keywordToken = isTrue ? Match(SyntaxKind.TrueKeyword) : Match(SyntaxKind.FalseKeyword);
 
-        return new LiteralExpressionSyntax(keywordToken, isFalse);
+        return new LiteralExpressionSyntax(keywordToken, isTrue);
     }
 
     private StatementSyntax ParseVariableStatement()
@@ -355,7 +382,7 @@ internal sealed class Parser
 
         var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
 
-        return new ProLangBlockStatementSyntax(openCurlyToken, proLangStatements.ToImmutable(), closeCurlyToken);
+        return new HtmlProLangBlockStatementSyntax(openCurlyToken, proLangStatements.ToImmutable(), closeCurlyToken);
     }
 
     private StatementSyntax ParseProLangStatement()
@@ -363,6 +390,7 @@ internal sealed class Parser
         var statement = Current.Kind switch
         {
             SyntaxKind.LetKeyword => ParseVariableStatement(),
+            SyntaxKind.LeftCurlyToken => ParseBlockStatement(),
             _ => ParseExpressionStatement()
         };
         return statement;

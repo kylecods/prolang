@@ -26,6 +26,11 @@ internal static class SyntaxFacts
             case SyntaxKind.PlusToken:
             case SyntaxKind.MinusToken:
                 return 4;
+            
+            case SyntaxKind.LessThanToken:
+            case SyntaxKind.LessThanEqualToken:
+            case SyntaxKind.GreaterThanToken:
+            case SyntaxKind.GreaterThanEqualToken:
             case SyntaxKind.BangEqualsToken:
             case SyntaxKind.EqualsEqualsToken:
                 return 3;

@@ -76,9 +76,9 @@ internal sealed class Binder
     {
         switch (syntax.Kind)
         {
-            case SyntaxKind.ProLangBlockStatement:
+            case SyntaxKind.BlockStatement:
             {
-                return BindProLangBlockStatement((ProLangBlockStatementSyntax)syntax);
+                return BindProLangBlockStatement((BlockStatementSyntax)syntax);
             }
             case SyntaxKind.VariableDeclaration:
             {
@@ -116,7 +116,7 @@ internal sealed class Binder
         return new BoundVariableDeclaration(variable, initializer);
     }
 
-    private BoundStatement BindProLangBlockStatement(ProLangBlockStatementSyntax syntax)
+    private BoundStatement BindProLangBlockStatement(BlockStatementSyntax syntax)
     {
         var statements = ImmutableArray.CreateBuilder<BoundStatement>();
         _scope = new BoundScope(_scope);
@@ -166,7 +166,7 @@ internal sealed class Binder
         
         if (boundExpression.Type != variable.Type)
         {
-            //TODO: _diagnostics.ReportCannotConvert(syntax.Expression.Span, boundExpression.Type, variable.Type);
+            _diagnostics.ReportCannotConvert(syntax.Expression.Span, boundExpression.Type, variable.Type);
             return boundExpression;
         }
 

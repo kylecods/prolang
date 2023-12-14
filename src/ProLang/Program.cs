@@ -23,11 +23,12 @@ internal class Program
 
         if (!syntaxTree.Diagnostics.Any())
         {
+            // syntaxTree.Root.WriteTo(Console.Out);
             
                 var compilation = previous == null ? new Compilation(syntaxTree) : previous.ContinueWith(syntaxTree);
-
+                
                 var results = compilation.Evaluate(variables);
-
+                
                 foreach (var result in results)
                 {
                     if (!result.Diagnostics.Any())
@@ -47,14 +48,14 @@ internal class Program
                             var character = diagnostic.Span.Start - errorLine.Start + 1;
                             Console.WriteLine();
                             Console.ForegroundColor = ConsoleColor.Red;
-
+                
                             Console.Write($"({lineNumber}, {character}): ");
                             Console.WriteLine(diagnostic);
                             Console.ResetColor();
-
+                
                             var prefixSpan = TextSpan.FromBounds(errorLine.Start, diagnostic.Span.Start);
                             var suffixSpan = TextSpan.FromBounds(diagnostic.Span.End, errorLine.End);
-
+                
                             var prefix = syntaxTree.Text.ToString(prefixSpan);
                             var error = syntaxTree.Text.ToString(diagnostic.Span);
                             var suffix = syntaxTree.Text.ToString(suffixSpan);

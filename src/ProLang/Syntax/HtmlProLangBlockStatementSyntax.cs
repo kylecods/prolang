@@ -2,9 +2,9 @@
 
 namespace ProLang.Syntax;
 
-internal sealed class ProLangBlockStatementSyntax : StatementSyntax
+internal sealed class HtmlProLangBlockStatementSyntax : StatementSyntax
 {
-    public ProLangBlockStatementSyntax(SyntaxToken openToken, ImmutableArray<StatementSyntax> statements, SyntaxToken closeToken)
+    public HtmlProLangBlockStatementSyntax(SyntaxToken openToken, ImmutableArray<StatementSyntax> statements, SyntaxToken closeToken)
     {
         OpenToken = openToken;
         Statements = statements;

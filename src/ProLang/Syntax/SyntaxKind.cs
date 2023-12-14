@@ -71,6 +71,8 @@ public enum SyntaxKind
     ExpressionStatement,
     HtmlStatement,
     ProLangBlockStatement,
+    BlockStatement,
+    
     
     //nodes
     GlobalDeclaration,
