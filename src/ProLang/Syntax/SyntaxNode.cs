@@ -17,7 +17,10 @@ public abstract class SyntaxNode
             {
                 var child = (SyntaxNode)property.GetValue(this)!;
                 
-                yield return child;
+                if (child != null)
+                {
+                    yield return child;
+                }
             }
             else if(typeof(IEnumerable<SyntaxNode>).IsAssignableFrom(property.PropertyType))
             {
@@ -25,7 +28,11 @@ public abstract class SyntaxNode
 
                 foreach (var child in children)
                 {
-                    yield return child;
+                    if (child != null)
+                    {
+                        yield return child;
+                    }
+                    
                 }
             }
         }

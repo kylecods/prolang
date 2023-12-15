@@ -127,9 +127,53 @@ internal sealed class Parser
             SyntaxKind.LetKeyword => ParseVariableStatement(),
             SyntaxKind.LessThanToken => ParseHtmlStatement(),
             SyntaxKind.LeftCurlyToken => ParseBlockStatement(),
+            SyntaxKind.IfKeyword => ParseIfStatement(),
             _ => ParseExpressionStatement()
         };
         return statement;
+    }
+
+    private StatementSyntax ParseIfStatement()
+    {
+        var ifKeyword = Match(SyntaxKind.IfKeyword);
+        var openToken = Match(SyntaxKind.LeftParenthesisToken);
+        var condition = ParseExpression();
+        var closeToken = Match(SyntaxKind.RightParenthesisToken);
+        var blockStatement = ParseBlockStatement();
+        var elIfClause = ParseElIfClause();
+        var elseClause = ParseElseClause();
+
+        return new IfStatementSyntax(ifKeyword, openToken, condition, closeToken, blockStatement, elIfClause, elseClause);
+    }
+
+    private ElseClauseSyntax? ParseElseClause()
+    {
+        if (Current.Kind != SyntaxKind.ElseKeyword)
+        {
+            return null;
+        }
+
+        var elseKeyword = Match(SyntaxKind.ElseKeyword);
+
+        var blockStatement = ParseBlockStatement();
+
+        return new ElseClauseSyntax(elseKeyword, blockStatement);
+    }
+
+    private ElseIfClauseSyntax? ParseElIfClause()
+    {
+        if (Current.Kind != SyntaxKind.ElIfKeyword)
+        {
+            return null;
+        }
+
+        var elseIfKeyword = Match(SyntaxKind.ElIfKeyword);
+
+        var condition = ParseExpression();
+
+        var blockStatement = ParseBlockStatement();
+
+        return new ElseIfClauseSyntax(elseIfKeyword, condition, blockStatement);
     }
 
     private StatementSyntax ParseBlockStatement()

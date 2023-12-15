@@ -19,7 +19,10 @@ let k = "Hello world!"
 {
     let m = 2
 
-    let m = 4 == 4
+    let n = 4 < s4
 }
 
+let o = 2 >= 2
+
+o
 

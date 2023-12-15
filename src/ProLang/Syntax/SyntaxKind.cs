@@ -18,6 +18,7 @@ public enum SyntaxKind
     BangToken,// '!'
     EqualsToken,// '='
     SemiColonToken,// ';'
+    PercentageToken,// '%'
     
     LeftParenthesisToken,// '('
     RightParenthesisToken,// ')'
@@ -53,6 +54,9 @@ public enum SyntaxKind
     TrueKeyword,
     WhileKeyword,
     ForKeyword,
+    IfKeyword,
+    ElIfKeyword,
+    ElseKeyword,
     
     //html keywords
     ScriptKeyword,
@@ -72,6 +76,9 @@ public enum SyntaxKind
     HtmlStatement,
     ProLangBlockStatement,
     BlockStatement,
+    IfStatement,
+    ElseClause,
+    ElseIfClause,
     
     
     //nodes

@@ -54,12 +54,28 @@ internal sealed class Lexer
                 _kind = SyntaxKind.EofToken;
                 break;
             case '+':
-                _kind = SyntaxKind.PlusToken;
                 _position++;
+                if (Current != '=')
+                {
+                    _kind = SyntaxKind.PlusToken;
+                }
+                else
+                {
+                    _position++;
+                    _kind = SyntaxKind.PlusEqualsToken;
+                }
                 break;
             case '-':
-                _kind = SyntaxKind.MinusToken;
                 _position++;
+                if (Current != '=')
+                {
+                    _kind = SyntaxKind.MinusToken;
+                }
+                else
+                {
+                    _position++;
+                    _kind = SyntaxKind.MinusEqualsToken;
+                }
                 break;
             case '/':
                 _position++;
@@ -74,25 +90,51 @@ internal sealed class Lexer
                 }
                 break;
             case '*':
-                _kind = SyntaxKind.StarToken;
                 _position++;
-                break;
-            case '<':
-                _position++;
-                if (Current != '/')
+                if (Current != '=')
                 {
-                    _kind = SyntaxKind.LessThanToken;
+                    _kind = SyntaxKind.StarToken;
                 }
                 else
                 {
                     _position++;
+                    _kind = SyntaxKind.StarEqualsToken;
+                }
+                break;
+            case '%':
+                _kind = SyntaxKind.PercentageToken;
+                _position++;
+                break;
+            case '<':
+                if (LookAhead == '/')
+                {
                     _kind = SyntaxKind.OpenAngleForwardSlashToken;
+                    _position+=2;
+
+                }else if (LookAhead == '=')
+                {
+                    _kind = SyntaxKind.LessThanEqualToken;
+                    _position+=2;
+                }
+                else
+                {
+                    _position++;
+                    _kind = SyntaxKind.LessThanToken;
                 }
 
                 break;
             case '>':
-                _kind = SyntaxKind.GreaterThanToken;
                 _position++;
+                if (Current != '=')
+                {
+                    _kind = SyntaxKind.GreaterThanToken;
+                }
+                else
+                {
+                    _kind = SyntaxKind.GreaterThanEqualToken;
+                    _position++;
+                    
+                }
                 break;
             case '=':
                 _position++;

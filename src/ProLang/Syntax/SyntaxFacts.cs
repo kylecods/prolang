@@ -132,6 +132,12 @@ internal static class SyntaxFacts
                 return SyntaxKind.ForKeyword;
             case "script":
                 return SyntaxKind.ScriptKeyword;
+            case "if":
+                return SyntaxKind.IfKeyword;
+            case "elif":
+                return SyntaxKind.ElIfKeyword;
+            case "else":
+                return SyntaxKind.ElseKeyword;
             default:
                 return SyntaxKind.IdentifierToken;
          }
