@@ -6,6 +6,8 @@ internal enum  BoundNodeKind
     VariableDeclaration,
     BlockStatement,
     ExpressionStatement,
+    IfStatement,
+    ElIfStatement,
     
     //expressions
     BoundLiteralExpression,

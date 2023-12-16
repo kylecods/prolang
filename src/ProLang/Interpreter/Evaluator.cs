@@ -35,9 +35,34 @@ internal sealed class Evaluator
             case BoundNodeKind.ExpressionStatement:
                 EvaluateExpressionStatement((BoundExpressionStatement)node);
                 break;
+            case BoundNodeKind.IfStatement:
+                EvaluateIfStatement((BoundIfStatement)node);
+                break;
             default:
                 throw new Exception($"Unexpected node {node.Kind}");
                 
+        }
+    }
+
+    private void EvaluateIfStatement(BoundIfStatement node)
+    {
+        var condition = (bool)EvaluateExpression(node.Condition);
+        
+        if (condition)
+        {
+            EvaluateStatement(node.Body);
+        }else if (node.ElseIfStatement != null)
+        {
+            var nodeElseIfStatement = (BoundElIfStatement)node.ElseIfStatement;
+            
+            var elIfCondition = (bool)EvaluateExpression(nodeElseIfStatement.Condition);
+
+            // we evaluate the else statement if elif condition fails
+            EvaluateStatement(elIfCondition ? nodeElseIfStatement.Body : node.ElseStatement!);
+            
+        }else if (node.ElseStatement != null)
+        {
+            EvaluateStatement(node.ElseStatement);
         }
     }
 

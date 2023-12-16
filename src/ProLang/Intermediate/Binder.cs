@@ -88,9 +88,40 @@ internal sealed class Binder
             {
                 return BindExpressionSyntax((ExpressionStatementSyntax)syntax);
             }
+            case SyntaxKind.IfStatement:
+            {
+                return BindIfStatementSyntax((IfStatementSyntax)syntax);
+            }
             default:
                 throw new Exception($"Unexpected syntax {syntax.Kind}");
         }
+    }
+
+    private BoundStatement BindIfStatementSyntax(IfStatementSyntax syntax)
+    {
+        var condition = BindExpression(syntax.Condition,typeof(bool));
+        var body = BindProLangBlockStatement((BlockStatementSyntax)syntax.Statement);
+        var elseIfStatement = syntax.ElseIf == null ? null : BindElIfStatement(syntax.ElseIf);
+        var elseStatement = syntax.Else == null ? null : BindStatement(syntax.Else.Body);
+
+        return new BoundIfStatement(condition, body,elseIfStatement, elseStatement);
+    }
+
+    private BoundStatement? BindElIfStatement(ElseIfClauseSyntax syntax)
+    {
+        var condition = BindExpression(syntax.Condition, typeof(bool));
+        var body = BindProLangBlockStatement((BlockStatementSyntax)syntax.Body);
+
+        return new BoundElIfStatement(condition, body);
+    }
+
+    private BoundExpression BindExpression(ExpressionSyntax syntax, Type targetType)
+    {
+        var result = BindExpression(syntax);
+        if (result.Type != targetType)
+            _diagnostics.ReportCannotConvert(syntax.Span, result.Type, targetType);
+
+        return result;
     }
 
     private BoundStatement BindExpressionSyntax(ExpressionStatementSyntax syntax)
