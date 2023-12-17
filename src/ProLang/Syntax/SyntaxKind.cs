@@ -57,6 +57,7 @@ public enum SyntaxKind
     IfKeyword,
     ElIfKeyword,
     ElseKeyword,
+    ToKeyword,
     
     //html keywords
     ScriptKeyword,
@@ -80,6 +81,7 @@ public enum SyntaxKind
     WhileStatement,
     ElseClause,
     ElseIfClause,
+    ForStatement,
     
     
     //nodes

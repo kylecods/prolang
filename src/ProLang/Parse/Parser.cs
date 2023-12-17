@@ -129,6 +129,7 @@ internal sealed class Parser
             SyntaxKind.LeftCurlyToken => ParseBlockStatement(),
             SyntaxKind.IfKeyword => ParseIfStatement(),
             SyntaxKind.WhileKeyword => ParseWhileStatement(),
+            SyntaxKind.ForKeyword => ParseForStatement(),
             _ => ParseExpressionStatement()
         };
         return statement;
@@ -438,10 +439,27 @@ internal sealed class Parser
             SyntaxKind.LeftCurlyToken => ParseBlockStatement(),
             SyntaxKind.IfKeyword => ParseIfStatement(),
             SyntaxKind.WhileKeyword => ParseWhileStatement(),
+            SyntaxKind.ForKeyword => ParseForStatement(),
             _ => ParseExpressionStatement()
         };
         return statement;
         
+    }
+
+    private StatementSyntax ParseForStatement()
+    {
+        var forKeyword = Match(SyntaxKind.ForKeyword);
+        var openToken = Match(SyntaxKind.LeftParenthesisToken);
+        var identifier = Match(SyntaxKind.IdentifierToken);
+        var equalToken = Match(SyntaxKind.EqualsToken);
+        var lowerBound = ParseExpression();
+        var toKeyword = Match(SyntaxKind.ToKeyword);
+        var upBound = ParseExpression();
+        var closeToken = Match(SyntaxKind.RightParenthesisToken);
+        var body = ParseBlockStatement();
+
+        return new ForStatementSyntax(forKeyword, openToken, identifier, equalToken, lowerBound, toKeyword, upBound,closeToken,
+            body);
     }
 
     private StatementSyntax ParseWhileStatement()

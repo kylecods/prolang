@@ -121,6 +121,8 @@ internal static class SyntaxFacts
                 return "else";
             case SyntaxKind.ForKeyword:
                 return "for";
+            case SyntaxKind.ToKeyword:
+                return "to";
             default:
                 return null;
         }
@@ -148,6 +150,8 @@ internal static class SyntaxFacts
                 return SyntaxKind.ElIfKeyword;
             case "else":
                 return SyntaxKind.ElseKeyword;
+            case "to":
+                return SyntaxKind.ToKeyword;
             default:
                 return SyntaxKind.IdentifierToken;
          }

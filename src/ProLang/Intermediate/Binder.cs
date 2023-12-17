@@ -96,9 +96,33 @@ internal sealed class Binder
             {
                 return BindWhileStatementSyntax((WhileStatementSyntax)syntax);
             }
+            case SyntaxKind.ForStatement:
+            {
+                return BindForStatementSyntax((ForStatementSyntax)syntax);
+            }
             default:
                 throw new Exception($"Unexpected syntax {syntax.Kind}");
         }
+    }
+
+    private BoundStatement BindForStatementSyntax(ForStatementSyntax syntax)
+    {
+        var lowerBound = BindExpression(syntax.LowerBound, typeof(bool));
+        var upperBound = BindExpression(syntax.UpBound, typeof(bool));
+
+        _scope = new BoundScope(_scope);
+
+        var name = syntax.Identifier.Text;
+        var variable = new VariableSymbol(name, true, typeof(int));
+
+        if (!_scope.TryDeclare(variable))
+        {
+            _diagnostics.ReportVariableAlreadyDeclared(syntax.Identifier.Span,name);
+        }
+
+        var body = BindProLangBlockStatement((BlockStatementSyntax)syntax.Body);
+
+        return new BoundForStatement(variable, lowerBound, upperBound, body);
     }
 
     private BoundStatement BindWhileStatementSyntax(WhileStatementSyntax syntax)
