@@ -8,6 +8,7 @@ internal enum  BoundNodeKind
     ExpressionStatement,
     IfStatement,
     ElIfStatement,
+    WhileStatement,
     
     //expressions
     BoundLiteralExpression,

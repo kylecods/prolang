@@ -16,14 +16,7 @@ internal sealed class BoundScope
 
     public bool TryDeclare(VariableSymbol variable)
     {
-        if (_variables.ContainsKey(variable.Name))
-        {
-            return false;
-        }
-        
-        _variables.Add(variable.Name,variable);
-
-        return true;
+        return _variables.TryAdd(variable.Name, variable);
     }
 
     public bool TryLookup(string name, out VariableSymbol variable)

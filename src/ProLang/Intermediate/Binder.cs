@@ -92,9 +92,21 @@ internal sealed class Binder
             {
                 return BindIfStatementSyntax((IfStatementSyntax)syntax);
             }
+            case SyntaxKind.WhileStatement:
+            {
+                return BindWhileStatementSyntax((WhileStatementSyntax)syntax);
+            }
             default:
                 throw new Exception($"Unexpected syntax {syntax.Kind}");
         }
+    }
+
+    private BoundStatement BindWhileStatementSyntax(WhileStatementSyntax syntax)
+    {
+        var condition = BindExpression(syntax.Condition,typeof(bool));
+        var body = BindProLangBlockStatement((BlockStatementSyntax)syntax.Body);
+
+        return new BoundWhileStatement(condition, body);
     }
 
     private BoundStatement BindIfStatementSyntax(IfStatementSyntax syntax)
@@ -247,6 +259,11 @@ internal sealed class Binder
     private BoundExpression BindNameExpression(NameExpressionSyntax syntax)
     {
         var name = syntax.IdentifierToken.Text;
+        
+        if (string.IsNullOrEmpty(name))
+        {
+            return new BoundLiteralExpression(0);
+        }
 
         if (!_scope.TryLookup(name, out var variable))
         {

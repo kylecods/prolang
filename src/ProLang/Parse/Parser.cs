@@ -128,6 +128,7 @@ internal sealed class Parser
             SyntaxKind.LessThanToken => ParseHtmlStatement(),
             SyntaxKind.LeftCurlyToken => ParseBlockStatement(),
             SyntaxKind.IfKeyword => ParseIfStatement(),
+            SyntaxKind.WhileKeyword => ParseWhileStatement(),
             _ => ParseExpressionStatement()
         };
         return statement;
@@ -435,10 +436,24 @@ internal sealed class Parser
         {
             SyntaxKind.LetKeyword => ParseVariableStatement(),
             SyntaxKind.LeftCurlyToken => ParseBlockStatement(),
+            SyntaxKind.IfKeyword => ParseIfStatement(),
+            SyntaxKind.WhileKeyword => ParseWhileStatement(),
             _ => ParseExpressionStatement()
         };
         return statement;
         
+    }
+
+    private StatementSyntax ParseWhileStatement()
+    {
+        var whileKeyword = Match(SyntaxKind.WhileKeyword);
+        var openToken = Match(SyntaxKind.LeftParenthesisToken);
+        var condition = ParseExpression();
+        var closeToken = Match(SyntaxKind.RightParenthesisToken);
+
+        var blockStatement = ParseBlockStatement();
+
+        return new WhileStatementSyntax(whileKeyword, openToken, condition, closeToken, blockStatement);
     }
 
     private StatementSyntax ParseProLangHtmlCompatibleStatement()

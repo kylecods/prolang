@@ -111,6 +111,16 @@ internal static class SyntaxFacts
                 return "{";
             case SyntaxKind.RightCurlyToken:
                 return "}";
+            case SyntaxKind.IfKeyword:
+                return "if";
+            case SyntaxKind.ElIfKeyword:
+                return "elif";
+            case SyntaxKind.WhileKeyword:
+                return "while";
+            case SyntaxKind.ElseKeyword:
+                return "else";
+            case SyntaxKind.ForKeyword:
+                return "for";
             default:
                 return null;
         }
