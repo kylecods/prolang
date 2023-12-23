@@ -14,4 +14,6 @@ public sealed class VariableSymbol
     public bool IsReadOnly { get; }
     
     public Type Type { get; }
+
+    public override string ToString() => Name;
 }

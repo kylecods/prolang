@@ -10,6 +10,9 @@ internal enum  BoundNodeKind
     ElIfStatement,
     WhileStatement,
     ForStatement,
+    LabelStatement,
+    GotoStatement,
+    ConditionalGotoStatement,
     
     //expressions
     BoundLiteralExpression,

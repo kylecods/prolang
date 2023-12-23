@@ -8,9 +8,7 @@ namespace ProLang.Intermediate;
 internal sealed class Binder
 {
     private BoundScope _scope;
-    
-    private readonly Dictionary<VariableSymbol, object> _variables;
-    
+
     private readonly DiagnosticBag _diagnostics = new ();
 
     public Binder(BoundScope parent)

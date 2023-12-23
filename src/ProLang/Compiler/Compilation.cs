@@ -1,6 +1,7 @@
 ﻿using System.Collections.Immutable;
 using ProLang.Intermediate;
 using ProLang.Interpreter;
+using ProLang.Lowering;
 using ProLang.Parse;
 using ProLang.Symbols;
 using ProLang.Syntax;
@@ -42,23 +43,34 @@ public sealed class Compilation
         return new Compilation(this, syntaxTree);
     }
 
-    public IEnumerable<EvaluationResult> Evaluate(Dictionary<VariableSymbol, object> variables)
+    public EvaluationResult Evaluate(Dictionary<VariableSymbol, object> variables)
     {
         var diagnostics = SyntaxTree.Diagnostics.Concat(GlobalScope.Diagnostics).ToImmutableArray();
 
         if (diagnostics.Any())
-        {
-            yield return new EvaluationResult(diagnostics, null!);
+        { 
+            return new EvaluationResult(diagnostics, null!);
         }
 
-        foreach (var statement in GlobalScope.Statements )
-        {
-            var evaluator = new Evaluator(statement, variables);
-            var value = evaluator.Evaluate();
+        var statement = GetStatement();
+        var evaluator = new Evaluator(statement, variables);
+        var value = evaluator.Evaluate();
 
-            yield return new EvaluationResult(Array.Empty<Diagnostic>(), value);
-        }
-        
+        return new EvaluationResult(ImmutableArray<Diagnostic>.Empty, value);
+
+    }
+    
+    public void EmitTree(TextWriter writer)
+    {
+        var statement = GetStatement();
+        statement.WriteTo(writer);
+    }
+
+    private BoundBlockStatement GetStatement()
+    {
+        var result = GlobalScope.Statements[0];
+
+        return Lowerer.Lower(result);
     }
 
     public Compilation Previous { get; }
