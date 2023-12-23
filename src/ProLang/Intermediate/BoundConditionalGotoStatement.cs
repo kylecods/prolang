@@ -4,11 +4,11 @@ namespace ProLang.Intermediate;
 
 internal sealed class BoundConditionalGotoStatement : BoundStatement
 {
-    public BoundConditionalGotoStatement(LabelSymbol label, BoundExpression condition, bool jumpIfFalse)
+    public BoundConditionalGotoStatement(LabelSymbol label, BoundExpression condition, bool jumpIfTrue = true)
     {
         Label = label;
         Condition = condition;
-        JumpIfFalse = jumpIfFalse;
+        JumpIfTrue = jumpIfTrue;
     }
 
     public override BoundNodeKind Kind => BoundNodeKind.ConditionalGotoStatement;
@@ -17,5 +17,5 @@ internal sealed class BoundConditionalGotoStatement : BoundStatement
     
     public BoundExpression Condition { get; }
     
-    public bool JumpIfFalse { get; }
+    public bool JumpIfTrue { get; }
 }

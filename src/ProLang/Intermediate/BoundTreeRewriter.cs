@@ -142,7 +142,7 @@ internal abstract class BoundTreeRewriter
             return node;
         }
 
-        return new BoundConditionalGotoStatement(node.Label, condition, node.JumpIfFalse);
+        return new BoundConditionalGotoStatement(node.Label, condition, node.JumpIfTrue);
     }
     
     protected BoundStatement RewriteExpressionStatement(BoundExpressionStatement node)
