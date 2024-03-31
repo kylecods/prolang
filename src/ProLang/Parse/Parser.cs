@@ -356,8 +356,49 @@ internal sealed class Parser
             case SyntaxKind.IdentifierToken:
             default:
                 
-                return ParseNameExpression();
+                return ParseNameOrCallExpression();
         }
+    }
+
+    private ExpressionSyntax ParseNameOrCallExpression()
+    {
+        if (Peek(0).Kind == SyntaxKind.IdentifierToken && Peek(1).Kind == SyntaxKind.LeftParenthesisToken)
+        {
+            return ParseCallExpression();
+        }
+
+        return ParseNameExpression();
+    }
+
+    private ExpressionSyntax ParseCallExpression()
+    {
+        var identifier = Match(SyntaxKind.IdentifierToken);
+        var openParenthesisToken = Match(SyntaxKind.LeftParenthesisToken);
+        var arguments = ParseArguments();
+        var closeParenthesisToken = Match(SyntaxKind.RightParenthesisToken);
+
+        return new CallExpressionSyntax(identifier,openParenthesisToken ,arguments, closeParenthesisToken);
+    }
+
+    private SeparatedSyntaxList<ExpressionSyntax> ParseArguments()
+    {
+        var nodesAndSeparators = ImmutableArray.CreateBuilder<SyntaxNode>();
+
+        while (Current.Kind != SyntaxKind.RightParenthesisToken && Current.Kind != SyntaxKind.EofToken)
+        {
+            var expression = ParseExpression();
+            nodesAndSeparators.Add(expression);
+
+            if (Current.Kind != SyntaxKind.RightParenthesisToken)
+            {
+                var comma = Match(SyntaxKind.CommaToken);
+                nodesAndSeparators.Add(comma);
+            }
+            
+            
+        }
+
+        return new SeparatedSyntaxList<ExpressionSyntax>(nodesAndSeparators.ToImmutable());
     }
 
     private ExpressionSyntax ParseNameExpression()

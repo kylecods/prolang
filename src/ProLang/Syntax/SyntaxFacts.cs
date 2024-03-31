@@ -123,6 +123,8 @@ internal static class SyntaxFacts
                 return "for";
             case SyntaxKind.ToKeyword:
                 return "to";
+            case SyntaxKind.CommaToken:
+                return ",";
             default:
                 return null;
         }

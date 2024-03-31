@@ -55,6 +55,7 @@ internal sealed class BoundBinaryOperator
             new (SyntaxKind.AmpersandAmpersandToken, BoundBinaryOperatorKind.LogicalAnd, TypeSymbol.Bool),
             new (SyntaxKind.PipePipeToken, BoundBinaryOperatorKind.LogicalOr, TypeSymbol.Bool),
             
+            new(SyntaxKind.PlusToken,BoundBinaryOperatorKind.Addition,TypeSymbol.String)
             
             
         };

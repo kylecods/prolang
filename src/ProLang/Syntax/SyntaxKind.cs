@@ -22,6 +22,7 @@ public enum SyntaxKind
     TildeToken,//'~'
     AmpersandToken,//'&'
     PipeToken,//'|'
+    CommaToken,//','
 
     
     LeftParenthesisToken,// '('
@@ -74,6 +75,7 @@ public enum SyntaxKind
     UnaryExpression,
     AssignmentExpression,
     NameExpression,
+    CallExpression,
     
     //statements
     VariableDeclaration,

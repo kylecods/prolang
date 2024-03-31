@@ -232,6 +232,10 @@ internal sealed class Lexer
                 _kind = SyntaxKind.HatToken;
                 _position++;
                 break;
+            case ',':
+                _kind = SyntaxKind.CommaToken;
+                _position++;
+                break;
             
             default:
                 if (char.IsLetter(Current))

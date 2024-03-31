@@ -11,6 +11,8 @@ internal sealed class Evaluator
 
     private object _lastValue;
 
+    private Random? _random;
+
     public Evaluator(BoundBlockStatement root, Dictionary<VariableSymbol, object> variables)
     {
         _root = root;
@@ -122,7 +124,11 @@ internal sealed class Evaluator
         switch (binaryExpression.Op.Kind)
         {
             case BoundBinaryOperatorKind.Addition:
-                return (int)leftOperand + (int)rightOperand;
+                if (binaryExpression.Type == TypeSymbol.Int)
+                {
+                    return (int)leftOperand + (int)rightOperand;
+                }
+                return (string)leftOperand + (string)rightOperand;
             case BoundBinaryOperatorKind.Subtraction:
                 return (int)leftOperand - (int)rightOperand;
             case BoundBinaryOperatorKind.Multiplication:
@@ -188,8 +194,63 @@ internal sealed class Evaluator
                 return EvaluateUnaryExpression((BoundUnaryExpression)node);
             case BoundNodeKind.BoundBinaryExpression:
                 return EvaluateBinaryExpression((BoundBinaryExpression)node);
+            case BoundNodeKind.BoundCallExpression:
+                return EvaluateCallExpression((BoundCallExpression)node);
+            case BoundNodeKind.BoundConversionExpression:
+                return EvaluateConversionExpression((BoundConversionExpression)node);
             default:
                 throw new Exception($"Unexpected node {node.Kind}");
         }
+    }
+    
+    private object EvaluateCallExpression(BoundCallExpression node)
+    {
+        if (node.Function == BuiltInFunctions.ReadInput)
+        {
+            return Console.ReadLine()!;
+        }
+
+        if(node.Function == BuiltInFunctions.Print)
+        {
+            var message = (string)EvaluateExpression(node.Arguments[0]);
+            Console.WriteLine(message);
+            return null!;
+        }
+        if (node.Function == BuiltInFunctions.Random)
+        {
+            var max = (int)EvaluateExpression(node.Arguments[0]);
+            
+            if (_random == null)
+            {
+                _random = new Random();
+            }
+
+            return _random.Next(max);
+        }
+        
+        throw new Exception($"Unexpected function {node.Function}");
+        
+    }
+    
+    private object EvaluateConversionExpression(BoundConversionExpression node)
+    {
+        var value = EvaluateExpression(node.Expression);
+
+        if (node.Type == TypeSymbol.Bool)
+        {
+            return Convert.ToBoolean(value);
+        }
+
+        if (node.Type == TypeSymbol.Int)
+        {
+            return Convert.ToInt32(value);
+        }
+
+        if (node.Type == TypeSymbol.String)
+        {
+            return Convert.ToString(value)!;
+        }
+
+        throw new Exception($"Unexpected type {node.Type}");
     }
 }
