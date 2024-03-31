@@ -19,12 +19,12 @@ internal sealed class Evaluator
 
     public object Evaluate()
     {
-        var labelToIndex = new Dictionary<LabelSymbol, int>();
+        var labelToIndex = new Dictionary<BoundLabel, int>();
         for (int i = 0; i < _root.Statements.Length; i++)
         {
             if (_root.Statements[i] is BoundLabelStatement l)
             {
-                labelToIndex.Add(l.Label, i + 1);
+                labelToIndex.Add(l.BoundLabel, i + 1);
             }
         }
 
@@ -45,13 +45,13 @@ internal sealed class Evaluator
                     break;
                 case BoundNodeKind.GotoStatement:
                     var gs = (BoundGotoStatement)s;
-                    index = labelToIndex[gs.Label];
+                    index = labelToIndex[gs.BoundLabel];
                     break;
                 case BoundNodeKind.ConditionalGotoStatement:
                     var cgs = (BoundConditionalGotoStatement)s;
                     var condition = (bool)EvaluateExpression(cgs.Condition);
                     if (condition == cgs.JumpIfTrue)
-                        index = labelToIndex[cgs.Label];
+                        index = labelToIndex[cgs.BoundLabel];
                     else
                         index++;
                     break;
@@ -147,6 +147,28 @@ internal sealed class Evaluator
                 return (int)leftOperand < (int)rightOperand;
             case BoundBinaryOperatorKind.LessEqual:
                 return (int)leftOperand <= (int)rightOperand;
+            case BoundBinaryOperatorKind.BitwiseAnd:
+                if (binaryExpression.Type == TypeSymbol.Int)
+                {
+                    return (int)leftOperand & (int)rightOperand;
+                }
+                
+                return (bool)leftOperand & (bool)rightOperand;
+                
+            case BoundBinaryOperatorKind.BitwiseOr:
+                if (binaryExpression.Type == TypeSymbol.Int)
+                {
+                    return (int)leftOperand | (int)rightOperand;
+                }
+
+                return (bool)leftOperand | (bool)rightOperand;
+            case BoundBinaryOperatorKind.BitwiseXor:
+                if (binaryExpression.Type == TypeSymbol.Int)
+                {
+                    return (int)leftOperand ^ (int)rightOperand;
+                }
+
+                return (bool)leftOperand ^ (bool)rightOperand;
             default:
                 throw new Exception($"Unexpected binary operator {binaryExpression.Op}");
         }

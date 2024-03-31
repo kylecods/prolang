@@ -11,10 +11,10 @@ internal sealed class Lowerer : BoundTreeRewriter
     
     private Lowerer(){}
 
-    private LabelSymbol GenerateLabel()
+    private BoundLabel GenerateLabel()
     {
         var name = $"Label{++_labelCount}";
-        return new LabelSymbol(name);
+        return new BoundLabel(name);
     }
 
     public static BoundBlockStatement Lower(BoundStatement statement)
@@ -128,12 +128,12 @@ internal sealed class Lowerer : BoundTreeRewriter
 
         var variableExpression = new BoundVariableExpression(node.Variable);
         
-        var upperBoundSymbol = new VariableSymbol("upperBound", true, typeof(int));
+        var upperBoundSymbol = new VariableSymbol("upperBound", true, TypeSymbol.Int);
         
         var upperBoundDeclaration = new BoundVariableDeclaration(upperBoundSymbol, node.UpperBound);
 
         var condition = new BoundBinaryExpression(variableExpression,
-            BoundBinaryOperator.Bind(SyntaxKind.LessThanEqualToken, typeof(int), typeof(int))!,
+            BoundBinaryOperator.Bind(SyntaxKind.LessThanEqualToken, TypeSymbol.Int, TypeSymbol.Int)!,
             new BoundVariableExpression(upperBoundSymbol)
         );
         var increment = new BoundExpressionStatement(
@@ -141,7 +141,7 @@ internal sealed class Lowerer : BoundTreeRewriter
                 node.Variable,
                 new BoundBinaryExpression(
                     variableExpression,
-                    BoundBinaryOperator.Bind(SyntaxKind.PlusToken, typeof(int), typeof(int))!,
+                    BoundBinaryOperator.Bind(SyntaxKind.PlusToken, TypeSymbol.Int, TypeSymbol.Int)!,
                     new BoundLiteralExpression(1)
                 )
             )

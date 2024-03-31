@@ -1,15 +1,16 @@
-﻿using ProLang.Syntax;
+﻿using ProLang.Symbols;
+using ProLang.Syntax;
 
 namespace ProLang.Intermediate;
 
 internal sealed class BoundUnaryOperator
 {
-    private BoundUnaryOperator(SyntaxKind syntaxKind, BoundUnaryOperatorKind kind, Type operandType)
+    private BoundUnaryOperator(SyntaxKind syntaxKind, BoundUnaryOperatorKind kind, TypeSymbol operandType)
         : this(syntaxKind, kind, operandType, operandType)
     {
     }
 
-    private BoundUnaryOperator(SyntaxKind syntaxKind, BoundUnaryOperatorKind kind, Type operandType, Type resultType)
+    private BoundUnaryOperator(SyntaxKind syntaxKind, BoundUnaryOperatorKind kind, TypeSymbol operandType, TypeSymbol resultType)
     {
         SyntaxKind = syntaxKind;
         Kind = kind;
@@ -19,18 +20,19 @@ internal sealed class BoundUnaryOperator
     
     public SyntaxKind SyntaxKind { get; }
     public BoundUnaryOperatorKind Kind { get; }
-    public Type OperandType { get; }
-    public Type Type { get; }
+    public TypeSymbol OperandType { get; }
+    public TypeSymbol Type { get; }
     
     private static BoundUnaryOperator[] _operators =
     {
-        new BoundUnaryOperator(SyntaxKind.BangToken, BoundUnaryOperatorKind.LogicalNegation, typeof(bool)),
+        new (SyntaxKind.BangToken, BoundUnaryOperatorKind.LogicalNegation, TypeSymbol.Bool),
 
-        new BoundUnaryOperator(SyntaxKind.PlusToken, BoundUnaryOperatorKind.Identity, typeof(int)),
-        new BoundUnaryOperator(SyntaxKind.MinusToken, BoundUnaryOperatorKind.Negation, typeof(int)),
+        new (SyntaxKind.PlusToken, BoundUnaryOperatorKind.Identity, TypeSymbol.Int),
+        new (SyntaxKind.MinusToken, BoundUnaryOperatorKind.Negation, TypeSymbol.Int),
+        new(SyntaxKind.TildeToken, BoundUnaryOperatorKind.OnesComplement,TypeSymbol.Int),
     };
 
-    public static BoundUnaryOperator Bind(SyntaxKind syntaxKind, Type operandType)
+    public static BoundUnaryOperator? Bind(SyntaxKind syntaxKind, TypeSymbol operandType)
     {
         foreach (var op in _operators)
         {

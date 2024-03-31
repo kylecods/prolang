@@ -18,7 +18,11 @@ public enum SyntaxKind
     BangToken,// '!'
     EqualsToken,// '='
     SemiColonToken,// ';'
-    PercentageToken,// '%'
+    PercentageToken,// '%',
+    TildeToken,//'~'
+    AmpersandToken,//'&'
+    PipeToken,//'|'
+
     
     LeftParenthesisToken,// '('
     RightParenthesisToken,// ')'
@@ -92,5 +96,4 @@ public enum SyntaxKind
     //html groups
     HtmlStartTag,
     HtmlEndTag,
-    
 }

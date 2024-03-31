@@ -1,4 +1,5 @@
 ﻿using System.Text;
+using ProLang.Symbols;
 using ProLang.Syntax;
 using ProLang.Text;
 
@@ -157,17 +158,27 @@ internal sealed class Lexer
                 _position++;
                 break;
             case '&':
-                if (LookAhead == '&')
+                _position++;
+                if (Current != '&')
+                {
+                    _kind = SyntaxKind.AmpersandToken;
+                }
+                else
                 {
                     _kind = SyntaxKind.AmpersandAmpersandToken;
-                    _position += 2;
+                    _position++;
                 }
                 break;
             case '|':
-                if (LookAhead == '|')
+                _position++;
+                if (Current != '|')
+                {
+                    _kind = SyntaxKind.PipeToken;
+                }
+                else
                 {
                     _kind = SyntaxKind.PipePipeToken;
-                    _position += 2;
+                    _position++;
                 }
                 break;
             case '!':
@@ -213,6 +224,14 @@ internal sealed class Lexer
             case '"':
                 ReadString();
                 break;
+            case '~':
+                _kind = SyntaxKind.TildeToken;
+                _position++;
+                break;
+            case '^':
+                _kind = SyntaxKind.HatToken;
+                _position++;
+                break;
             
             default:
                 if (char.IsLetter(Current))
@@ -248,16 +267,36 @@ internal sealed class Lexer
 
         var sb = new StringBuilder();
 
-        while (true)
-        {
-            if (Current == '"')
-            {
-                _position++;
-                break;
-            }
+        var done = false;
 
-            sb.Append(Current);
-            _position++;
+        while (!done)
+        {
+            switch (Current)
+            {
+                case '\0':
+                case '\r':
+                case '\n':
+                    var span = new TextSpan(_start, 1);
+                    _diagnostics.ReportUnterminatedString(span);
+                    done = true;
+                    break;
+                case '"':
+                    if (LookAhead == '"')
+                    {
+                        sb.Append(Current);
+                        _position += 2;
+                    }
+                    else
+                    {
+                        _position++;
+                        done = true;
+                    }
+                    break;
+                default:
+                    sb.Append(Current);
+                    _position++;
+                    break;
+            }
         }
 
         _kind = SyntaxKind.StringToken;
@@ -286,7 +325,7 @@ internal sealed class Lexer
 
         if (!int.TryParse(text, out var value))
         {
-            _diagnostics.ReportInvalidNumber(new TextSpan(_start,length),text,typeof(int));
+            _diagnostics.ReportInvalidNumber(new TextSpan(_start,length),text,TypeSymbol.Int);
         }
 
         _value = value;

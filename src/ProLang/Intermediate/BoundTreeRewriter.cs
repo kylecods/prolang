@@ -142,7 +142,7 @@ internal abstract class BoundTreeRewriter
             return node;
         }
 
-        return new BoundConditionalGotoStatement(node.Label, condition, node.JumpIfTrue);
+        return new BoundConditionalGotoStatement(node.BoundLabel, condition, node.JumpIfTrue);
     }
     
     protected BoundStatement RewriteExpressionStatement(BoundExpressionStatement node)
@@ -162,6 +162,8 @@ internal abstract class BoundTreeRewriter
     {
         switch (node.Kind)
         {
+            case BoundNodeKind.ErrorExpression:
+                return RewriteErrorExpression((BoundErrorExpression)node);
             case BoundNodeKind.BoundLiteralExpression:
                 return RewriteLiteralExpression((BoundLiteralExpression)node);
             case BoundNodeKind.BoundVariableExpression:
@@ -222,5 +224,10 @@ internal abstract class BoundTreeRewriter
         }
 
         return new BoundBinaryExpression(left, node.Op, right);
+    }
+    
+    protected virtual BoundExpression RewriteErrorExpression(BoundErrorExpression node)
+    {
+        return node;
     }
 }

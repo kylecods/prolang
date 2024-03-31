@@ -20,4 +20,5 @@ internal enum  BoundNodeKind
     BoundBinaryExpression,
     BoundVariableExpression,
     BoundAssignmentExpression,
+    ErrorExpression
 }

@@ -1,4 +1,6 @@
-﻿namespace ProLang.Intermediate;
+﻿using ProLang.Symbols;
+
+namespace ProLang.Intermediate;
 
 internal sealed class BoundBinaryExpression : BoundExpression
 {
@@ -10,7 +12,7 @@ internal sealed class BoundBinaryExpression : BoundExpression
     }
 
     public override BoundNodeKind Kind => BoundNodeKind.BoundBinaryExpression;
-    public override Type Type => Left.Type;
+    public override TypeSymbol Type => Left.Type;
     
     public BoundExpression Left { get; }
     

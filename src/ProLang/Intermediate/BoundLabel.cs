@@ -1,8 +1,8 @@
-﻿namespace ProLang.Symbols;
+﻿namespace ProLang.Intermediate;
 
-internal sealed class LabelSymbol
+internal sealed class BoundLabel
 {
-    internal LabelSymbol(string name)
+    internal BoundLabel(string name)
     {
         Name = name;
     }

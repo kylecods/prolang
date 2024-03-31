@@ -1,6 +1,8 @@
-﻿namespace ProLang.Intermediate;
+﻿using ProLang.Symbols;
+
+namespace ProLang.Intermediate;
 
 internal abstract class BoundExpression : BoundNode
 {
-    public abstract Type Type { get; }
+    public abstract TypeSymbol Type { get; }
 }

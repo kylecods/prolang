@@ -141,11 +141,11 @@ internal sealed class Parser
         var openToken = Match(SyntaxKind.LeftParenthesisToken);
         var condition = ParseExpression();
         var closeToken = Match(SyntaxKind.RightParenthesisToken);
-        var blockStatement = ParseBlockStatement();
+        var statement = ParseProLangStatement();// later we ll support html too
         var elIfClause = ParseElIfClause();
         var elseClause = ParseElseClause();
 
-        return new IfStatementSyntax(ifKeyword, openToken, condition, closeToken, blockStatement, elIfClause, elseClause);
+        return new IfStatementSyntax(ifKeyword, openToken, condition, closeToken, statement, elIfClause, elseClause);
     }
 
     private ElseClauseSyntax? ParseElseClause()
@@ -351,10 +351,12 @@ internal sealed class Parser
             }
             case SyntaxKind.NumberToken:
                 return ParseNumberLiteral(); 
-            case SyntaxKind.IdentifierToken:
-                return ParseNameExpression();
-            default:
+            case SyntaxKind.StringToken:
                 return ParseStringLiteral();
+            case SyntaxKind.IdentifierToken:
+            default:
+                
+                return ParseNameExpression();
         }
     }
 
@@ -367,8 +369,8 @@ internal sealed class Parser
 
     private ExpressionSyntax ParseStringLiteral()
     {
-        var numberToken = Match(SyntaxKind.StringToken);
-        return new LiteralExpressionSyntax(numberToken);
+        var stringToken = Match(SyntaxKind.StringToken);
+        return new LiteralExpressionSyntax(stringToken);
     }
 
     private ExpressionSyntax ParseNumberLiteral()
@@ -456,7 +458,7 @@ internal sealed class Parser
         var toKeyword = Match(SyntaxKind.ToKeyword);
         var upBound = ParseExpression();
         var closeToken = Match(SyntaxKind.RightParenthesisToken);
-        var body = ParseBlockStatement();
+        var body = ParseProLangStatement();
 
         return new ForStatementSyntax(forKeyword, openToken, identifier, equalToken, lowerBound, toKeyword, upBound,closeToken,
             body);
@@ -469,7 +471,7 @@ internal sealed class Parser
         var condition = ParseExpression();
         var closeToken = Match(SyntaxKind.RightParenthesisToken);
 
-        var blockStatement = ParseBlockStatement();
+        var blockStatement = ParseProLangStatement();
 
         return new WhileStatementSyntax(whileKeyword, openToken, condition, closeToken, blockStatement);
     }
