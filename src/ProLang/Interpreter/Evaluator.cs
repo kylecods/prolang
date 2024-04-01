@@ -5,35 +5,41 @@ namespace ProLang.Interpreter;
 
 internal sealed class Evaluator
 {
-    private readonly BoundBlockStatement _root;
-
-    private readonly Dictionary<VariableSymbol, object> _variables;
+    private readonly BoundProgram _program;
+    private readonly Dictionary<VariableSymbol, object> _globals;
+    private readonly Stack<Dictionary<VariableSymbol, object>> _locals = new();
 
     private object _lastValue;
 
     private Random? _random;
 
-    public Evaluator(BoundBlockStatement root, Dictionary<VariableSymbol, object> variables)
+    public Evaluator(BoundProgram program, Dictionary<VariableSymbol, object> variables)
     {
-        _root = root;
-        _variables = variables;
+        _program = program;
+        _globals = variables;
+        _locals.Push(new Dictionary<VariableSymbol, object>());
     }
 
     public object Evaluate()
     {
+        return EvaluateStatement(_program.Statement);
+    }
+
+    private object EvaluateStatement(BoundBlockStatement body)
+    {
         var labelToIndex = new Dictionary<BoundLabel, int>();
-        for (int i = 0; i < _root.Statements.Length; i++)
+        for (int i = 0; i < body.Statements.Length; i++)
         {
-            if (_root.Statements[i] is BoundLabelStatement l)
+            if (body.Statements[i] is BoundLabelStatement l)
             {
                 labelToIndex.Add(l.BoundLabel, i + 1);
             }
         }
 
         var index = 0;
-        while (index < _root.Statements.Length)
+        while (index < body.Statements.Length)
         {
-            var s = _root.Statements[index];
+            var s = body.Statements[index];
 
             switch (s.Kind)
             {
@@ -68,12 +74,14 @@ internal sealed class Evaluator
 
         return _lastValue;
     }
+
     private void EvaluateVariableDeclaration(BoundVariableDeclaration node)
     {
         var value = EvaluateExpression(node.Initializer);
-        _variables[node.Variable] = value;
-
+        
         _lastValue = value;
+
+        Assign(node.Variable, value);
     }
 
     private void EvaluateExpressionStatement(BoundExpressionStatement node)
@@ -88,13 +96,20 @@ internal sealed class Evaluator
 
     private object EvaluateVariableExpression(BoundVariableExpression variableExpression)
     {
-        return _variables[variableExpression.Variable];
+        if (variableExpression.Variable.Kind == SymbolKind.GlobalVariable)
+        {
+            return _globals[variableExpression.Variable];
+        }
+
+        var locals = _locals.Peek();
+
+        return locals[variableExpression.Variable];
     }
     private object EvaluateAssignmentExpression(BoundAssignmentExpression assignmentExpression)
     {
         var value = EvaluateExpression(assignmentExpression.Expression);
-        
-        _variables[assignmentExpression.Variable] = value;
+
+        Assign(assignmentExpression.Variable, value);
 
         return value;
     }
@@ -227,9 +242,29 @@ internal sealed class Evaluator
 
             return _random.Next(max);
         }
+
+
+        var locals = new Dictionary<VariableSymbol, object>();
+
+        for (int i = 0; i < node.Arguments.Length; i++)
+        {
+            var parameter = node.Function.Parameters[i];
+
+            var value = EvaluateExpression(node.Arguments[i]);
+            
+            locals.Add(parameter,value);
+        }
         
-        throw new Exception($"Unexpected function {node.Function}");
-        
+        _locals.Push(locals);
+
+        var statement = _program.Functions[node.Function];
+
+        var result = EvaluateStatement(statement);
+
+        _locals.Pop();
+
+        return result;
+
     }
     
     private object EvaluateConversionExpression(BoundConversionExpression node)
@@ -252,5 +287,19 @@ internal sealed class Evaluator
         }
 
         throw new Exception($"Unexpected type {node.Type}");
+    }
+
+    private void Assign(VariableSymbol variable, object value)
+    {
+        if (variable.Kind == SymbolKind.GlobalVariable)
+        {
+            _globals[variable] = value;
+        }
+        else
+        {
+            var locals = _locals.Peek();
+
+            locals[variable] = value;
+        }
     }
 }

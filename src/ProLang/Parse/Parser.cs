@@ -74,12 +74,11 @@ internal sealed class Parser
     
     public GlobalDeclarationSyntax ParseGlobalDeclaration()
     {
-        var statement = ParseDeclarations();
+        var declarations = ParseDeclarations();
         
         var eofToken = Match(SyntaxKind.EofToken);
-
-
-        return new GlobalDeclarationSyntax(statement,eofToken);
+        
+        return new GlobalDeclarationSyntax(declarations,eofToken);
     }
 
     private ImmutableArray<DeclarationSyntax> ParseDeclarations()
@@ -110,7 +109,72 @@ internal sealed class Parser
             return ParseHtmlDeclaration();
         }
 
+        if (Current.Kind == SyntaxKind.FunctionKeyword)
+        {
+            return ParseFunctionDeclaration();
+        }
+
         return ParseGlobalStatement();
+    }
+
+    private DeclarationSyntax ParseFunctionDeclaration()
+    {
+        var functionKeyword = Match(SyntaxKind.FunctionKeyword);
+        var identifier = Match(SyntaxKind.IdentifierToken);
+        var openParenthesisToken = Match(SyntaxKind.LeftParenthesisToken);
+        var parameters = ParseParameterList();
+
+        var closeParenthesisToken = Match(SyntaxKind.RightParenthesisToken);
+
+        var type = ParseOptionalTypeClause();
+        var body = ParseBlockStatement();
+
+        return new FunctionDeclarationSyntax(functionKeyword, identifier, openParenthesisToken, parameters,
+            closeParenthesisToken, type, (BlockStatementSyntax)body);
+    }
+    
+    private SeparatedSyntaxList<ParameterSyntax> ParseParameterList()
+    {
+        var nodesAndSeparators = ImmutableArray.CreateBuilder<SyntaxNode>();
+
+        while (Current.Kind != SyntaxKind.RightParenthesisToken && Current.Kind != SyntaxKind.EofToken)
+        {
+            var parameter = ParseParameter();
+            nodesAndSeparators.Add(parameter);
+
+            if (Current.Kind != SyntaxKind.RightParenthesisToken)
+            {
+                var comma = Match(SyntaxKind.CommaToken);
+                nodesAndSeparators.Add(comma);
+            }
+        }
+
+        return new SeparatedSyntaxList<ParameterSyntax>(nodesAndSeparators.ToImmutable());
+    }
+
+    private ParameterSyntax ParseParameter()
+    {
+        var identifier = Match(SyntaxKind.IdentifierToken);
+        var type = ParseTypeClause();
+        return new ParameterSyntax(identifier, type);
+    }
+
+    private TypeClauseSyntax? ParseOptionalTypeClause()
+    {
+        if (Current.Kind != SyntaxKind.ColonToken)
+        {
+            return null;
+        }
+
+        return ParseTypeClause();
+    }
+    
+    private TypeClauseSyntax ParseTypeClause()
+    {
+        var colonToken = Match(SyntaxKind.ColonToken);
+        var identifier = Match(SyntaxKind.IdentifierToken);
+
+        return new TypeClauseSyntax(colonToken, identifier);
     }
 
     private GlobalStatementSyntax ParseGlobalStatement()
@@ -442,10 +506,11 @@ internal sealed class Parser
     {
         var letKeyword = Match(SyntaxKind.LetKeyword);
         var identifier = Match(SyntaxKind.IdentifierToken);
+        var typeClause = ParseOptionalTypeClause();
         var equalsToken = Match(SyntaxKind.EqualsToken);
         var expression = ParseExpression();
 
-        return new VariableStatementSyntax(letKeyword,identifier,equalsToken,expression);
+        return new VariableStatementSyntax(letKeyword,identifier,typeClause,equalsToken,expression);
     }
 
     private StatementSyntax ParseProLangBlockStatement()

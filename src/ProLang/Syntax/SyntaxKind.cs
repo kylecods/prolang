@@ -23,6 +23,7 @@ public enum SyntaxKind
     AmpersandToken,//'&'
     PipeToken,//'|'
     CommaToken,//','
+    ColonToken,//':'
 
     
     LeftParenthesisToken,// '('
@@ -63,6 +64,7 @@ public enum SyntaxKind
     ElIfKeyword,
     ElseKeyword,
     ToKeyword,
+    FunctionKeyword,
     
     //html keywords
     ScriptKeyword,
@@ -94,6 +96,9 @@ public enum SyntaxKind
     GlobalDeclaration,
     GlobalStatement,
     HtmlDeclaration,
+    FunctionDeclaration,
+    TypeClause,
+    Parameter,
     
     //html groups
     HtmlStartTag,

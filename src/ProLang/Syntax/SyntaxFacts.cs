@@ -111,6 +111,10 @@ internal static class SyntaxFacts
                 return "{";
             case SyntaxKind.RightCurlyToken:
                 return "}";
+            case SyntaxKind.ColonToken:
+                return ":";
+            case SyntaxKind.CommaToken:
+                return ",";
             case SyntaxKind.IfKeyword:
                 return "if";
             case SyntaxKind.ElIfKeyword:
@@ -123,8 +127,8 @@ internal static class SyntaxFacts
                 return "for";
             case SyntaxKind.ToKeyword:
                 return "to";
-            case SyntaxKind.CommaToken:
-                return ",";
+            case SyntaxKind.FunctionKeyword:
+                return "func";
             default:
                 return null;
         }
@@ -154,6 +158,8 @@ internal static class SyntaxFacts
                 return SyntaxKind.ElseKeyword;
             case "to":
                 return SyntaxKind.ToKeyword;
+            case "func":
+                return SyntaxKind.FunctionKeyword;
             default:
                 return SyntaxKind.IdentifierToken;
          }

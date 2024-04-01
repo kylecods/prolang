@@ -90,7 +90,7 @@ internal sealed class ProLangRepl : Repl
 
         var syntaxTree = SyntaxTree.Parse(text);
 
-        if (syntaxTree.Diagnostics.Any())
+        if (syntaxTree.Root.Declarations.Last().GetLastToken().IsMissing)
         {
             return false;
         }

@@ -91,7 +91,7 @@ internal sealed class BoundScope
         return _variables.Values.ToImmutableArray();
     }
 
-    public ImmutableArray<FunctionSymbol> GetDeclatedFunctions()
+    public ImmutableArray<FunctionSymbol> GetDeclaredFunctions()
     {
         if (_functions == null)
         {
