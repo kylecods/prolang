@@ -43,7 +43,13 @@ internal sealed class BoundBinaryOperator
             new (SyntaxKind.HatToken, BoundBinaryOperatorKind.BitwiseXor,TypeSymbol.Bool),
             
             new (SyntaxKind.EqualsEqualsToken, BoundBinaryOperatorKind.Equals, TypeSymbol.Bool),
+            new (SyntaxKind.EqualsEqualsToken, BoundBinaryOperatorKind.Equals, TypeSymbol.Int,TypeSymbol.Bool),
+            new (SyntaxKind.EqualsEqualsToken, BoundBinaryOperatorKind.Equals, TypeSymbol.String,TypeSymbol.Bool),
+            
+            
             new (SyntaxKind.BangEqualsToken, BoundBinaryOperatorKind.NotEquals, TypeSymbol.Bool),
+            new (SyntaxKind.BangEqualsToken, BoundBinaryOperatorKind.NotEquals, TypeSymbol.Int,TypeSymbol.Bool),
+            new (SyntaxKind.BangEqualsToken, BoundBinaryOperatorKind.NotEquals, TypeSymbol.String,TypeSymbol.Bool),
             
             new (SyntaxKind.LessThanToken, BoundBinaryOperatorKind.LessThan, TypeSymbol.Int,TypeSymbol.Bool),
             new (SyntaxKind.LessThanEqualToken, BoundBinaryOperatorKind.LessEqual, TypeSymbol.Int,TypeSymbol.Bool),

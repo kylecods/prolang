@@ -1,10 +1,17 @@
 ﻿namespace ProLang.Intermediate;
 
-internal sealed class BoundWhileStatement(BoundExpression condition, BoundStatement body) : BoundStatement
+internal sealed class BoundWhileStatement : BoundLoopStatement
 {
+
+    public BoundWhileStatement(BoundExpression condition, BoundStatement body, BoundLabel breakLabel, BoundLabel continueLabel) : base(breakLabel, continueLabel)
+    {
+        Condition = condition;
+        Body = body;
+    }
+
     public override BoundNodeKind Kind => BoundNodeKind.WhileStatement;
 
-    public BoundExpression Condition => condition;
+    public BoundExpression Condition { get; }
 
-    public BoundStatement Body => body;
+    public BoundStatement Body { get; }
 }

@@ -8,7 +8,7 @@ internal sealed class BoundScope
     private Dictionary<string, VariableSymbol>? _variables;
     private Dictionary<string, FunctionSymbol>? _functions;
 
-    public BoundScope(BoundScope parent)
+    public BoundScope(BoundScope? parent)
     {
         Parent = parent;
     }

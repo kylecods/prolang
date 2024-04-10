@@ -65,6 +65,8 @@ public enum SyntaxKind
     ElseKeyword,
     ToKeyword,
     FunctionKeyword,
+    BreakKeyword,
+    ContinueKeyword,
     
     //html keywords
     ScriptKeyword,
@@ -90,6 +92,8 @@ public enum SyntaxKind
     ElseClause,
     ElseIfClause,
     ForStatement,
+    BreakStatement,
+    ContinueStatement,
     
     
     //nodes

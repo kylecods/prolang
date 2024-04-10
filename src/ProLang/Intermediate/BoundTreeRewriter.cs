@@ -106,7 +106,7 @@ internal abstract class BoundTreeRewriter
             return node;
         }
 
-        return new BoundForStatement(node.Variable, lowerBound, upperBound, body);
+        return new BoundForStatement(node.Variable, lowerBound, upperBound, body, node.BreakLabel,node.ContinueLabel);
     }
 
     protected virtual BoundStatement RewriteWhileStatement(BoundWhileStatement node)
@@ -120,7 +120,7 @@ internal abstract class BoundTreeRewriter
             return node;
         }
 
-        return new BoundWhileStatement(condition, body);
+        return new BoundWhileStatement(condition, body,node.BreakLabel,node.ContinueLabel);
     }
     
     protected virtual BoundStatement RewriteLabelStatement(BoundLabelStatement node)

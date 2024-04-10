@@ -129,6 +129,10 @@ internal static class SyntaxFacts
                 return "to";
             case SyntaxKind.FunctionKeyword:
                 return "func";
+            case SyntaxKind.BreakKeyword:
+                return "break";
+            case SyntaxKind.ContinueKeyword:
+                return "continue";
             default:
                 return null;
         }
@@ -160,6 +164,10 @@ internal static class SyntaxFacts
                 return SyntaxKind.ToKeyword;
             case "func":
                 return SyntaxKind.FunctionKeyword;
+            case "break":
+                return SyntaxKind.BreakKeyword;
+            case "continue":
+                return SyntaxKind.ContinueKeyword;
             default:
                 return SyntaxKind.IdentifierToken;
          }

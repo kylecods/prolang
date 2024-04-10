@@ -137,15 +137,21 @@ internal sealed class Parser
     {
         var nodesAndSeparators = ImmutableArray.CreateBuilder<SyntaxNode>();
 
-        while (Current.Kind != SyntaxKind.RightParenthesisToken && Current.Kind != SyntaxKind.EofToken)
+        var parseNextParameter = true;
+
+        while (parseNextParameter && Current.Kind != SyntaxKind.RightParenthesisToken && Current.Kind != SyntaxKind.EofToken)
         {
             var parameter = ParseParameter();
             nodesAndSeparators.Add(parameter);
 
-            if (Current.Kind != SyntaxKind.RightParenthesisToken)
+            if (Current.Kind == SyntaxKind.CommaToken)
             {
                 var comma = Match(SyntaxKind.CommaToken);
                 nodesAndSeparators.Add(comma);
+            }
+            else
+            {
+                parseNextParameter = false;
             }
         }
 
@@ -448,17 +454,22 @@ internal sealed class Parser
     {
         var nodesAndSeparators = ImmutableArray.CreateBuilder<SyntaxNode>();
 
-        while (Current.Kind != SyntaxKind.RightParenthesisToken && Current.Kind != SyntaxKind.EofToken)
+        var parseNextArgument = true;
+
+        while (parseNextArgument && Current.Kind != SyntaxKind.RightParenthesisToken && Current.Kind != SyntaxKind.EofToken)
         {
             var expression = ParseExpression();
             nodesAndSeparators.Add(expression);
 
-            if (Current.Kind != SyntaxKind.RightParenthesisToken)
+            if (Current.Kind == SyntaxKind.CommaToken)
             {
                 var comma = Match(SyntaxKind.CommaToken);
                 nodesAndSeparators.Add(comma);
             }
-            
+            else
+            {
+                parseNextArgument = false;
+            }
             
         }
 
@@ -548,10 +559,26 @@ internal sealed class Parser
             SyntaxKind.IfKeyword => ParseIfStatement(),
             SyntaxKind.WhileKeyword => ParseWhileStatement(),
             SyntaxKind.ForKeyword => ParseForStatement(),
+            SyntaxKind.ContinueKeyword => ParseContinueStatement(),
+            SyntaxKind.BreakKeyword => ParseBreakStatement(),
             _ => ParseExpressionStatement()
         };
         return statement;
         
+    }
+
+    private StatementSyntax ParseBreakStatement()
+    {
+        var keyword = Match(SyntaxKind.BreakKeyword);
+
+        return new BreakStatementSyntax(keyword);
+    }
+
+    private StatementSyntax ParseContinueStatement()
+    {
+        var keyword = Match(SyntaxKind.ContinueKeyword);
+
+        return new ContinueStatementSyntax(keyword);
     }
 
     private StatementSyntax ParseForStatement()

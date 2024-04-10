@@ -3,9 +3,9 @@ using ProLang.Symbols;
 
 namespace ProLang.Intermediate;
 
-internal sealed class BoundForStatement : BoundStatement
+internal sealed class BoundForStatement : BoundLoopStatement
 {
-    public BoundForStatement(VariableSymbol variable, BoundExpression lowerBound, BoundExpression upperBound, BoundStatement body)
+    public BoundForStatement(VariableSymbol variable, BoundExpression lowerBound, BoundExpression upperBound, BoundStatement body, BoundLabel breakLabel, BoundLabel continueLabel) : base(breakLabel, continueLabel)
     {
         Variable = variable;
         LowerBound = lowerBound;
