@@ -38,13 +38,14 @@ internal sealed class BoundBinaryOperator
             new (SyntaxKind.MinusToken, BoundBinaryOperatorKind.Subtraction, TypeSymbol.Int),
             new (SyntaxKind.StarToken, BoundBinaryOperatorKind.Multiplication, TypeSymbol.Int),
             new (SyntaxKind.SlashToken, BoundBinaryOperatorKind.Division, TypeSymbol.Int),
-            new (SyntaxKind.AmpersandToken,BoundBinaryOperatorKind.BitwiseAnd,TypeSymbol.Bool),
-            new(SyntaxKind.PipeToken, BoundBinaryOperatorKind.BitwiseOr, TypeSymbol.Bool),
-            new (SyntaxKind.HatToken, BoundBinaryOperatorKind.BitwiseXor,TypeSymbol.Bool),
+            new (SyntaxKind.AmpersandToken,BoundBinaryOperatorKind.BitwiseAnd,TypeSymbol.Int),
+            new(SyntaxKind.PipeToken, BoundBinaryOperatorKind.BitwiseOr, TypeSymbol.Int),
+            new (SyntaxKind.HatToken, BoundBinaryOperatorKind.BitwiseXor,TypeSymbol.Int),
             
-            new (SyntaxKind.EqualsEqualsToken, BoundBinaryOperatorKind.Equals, TypeSymbol.Bool),
             new (SyntaxKind.EqualsEqualsToken, BoundBinaryOperatorKind.Equals, TypeSymbol.Int,TypeSymbol.Bool),
             new (SyntaxKind.EqualsEqualsToken, BoundBinaryOperatorKind.Equals, TypeSymbol.String,TypeSymbol.Bool),
+            new (SyntaxKind.EqualsEqualsToken, BoundBinaryOperatorKind.Equals, TypeSymbol.Bool),
+
             
             
             new (SyntaxKind.BangEqualsToken, BoundBinaryOperatorKind.NotEquals, TypeSymbol.Bool),

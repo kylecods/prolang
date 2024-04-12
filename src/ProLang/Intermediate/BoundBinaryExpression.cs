@@ -12,7 +12,8 @@ internal sealed class BoundBinaryExpression : BoundExpression
     }
 
     public override BoundNodeKind Kind => BoundNodeKind.BoundBinaryExpression;
-    public override TypeSymbol Type => Left.Type;
+    
+    public override TypeSymbol Type => Op.Type;
     
     public BoundExpression Left { get; }
     
