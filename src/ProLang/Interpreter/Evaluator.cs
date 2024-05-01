@@ -243,6 +243,49 @@ internal sealed class Evaluator
             return _random.Next(max);
         }
 
+        if (node.Function == BuiltInFunctions.Min)
+        {
+            var arg1 = (int)EvaluateExpression(node.Arguments[0]);
+
+            var arg2 = (int)EvaluateExpression(node.Arguments[1]);
+
+            return Math.Min(arg1, arg2);
+        }
+        
+        if (node.Function == BuiltInFunctions.Max)
+        {
+            var arg1 = (int)EvaluateExpression(node.Arguments[0]);
+
+            var arg2 = (int)EvaluateExpression(node.Arguments[1]);
+
+            return Math.Max(arg1, arg2);
+        }
+
+        if (node.Function == BuiltInFunctions.FileExists)
+        {
+            var path = (string)EvaluateExpression(node.Arguments[0]);
+
+            return File.Exists(path);
+        }
+
+        if (node.Function == BuiltInFunctions.ReadFile)
+        {
+            var path = (string)EvaluateExpression(node.Arguments[0]);
+
+            return File.ReadAllText(path);
+        }
+        
+        if (node.Function == BuiltInFunctions.WriteFile)
+        {
+            var path = (string)EvaluateExpression(node.Arguments[0]);
+            
+            var contents = (string)EvaluateExpression(node.Arguments[1]);
+
+             File.WriteAllText(path,contents);
+
+             return null!;
+        }
+
 
         var locals = new Dictionary<VariableSymbol, object>();
 
