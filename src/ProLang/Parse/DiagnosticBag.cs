@@ -116,7 +116,7 @@ internal sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportUndefinedType(TextSpan span, string name)
     {
-        var message = $"Type '{name} doesn't exist'";
+        var message = $"Type '{name}' doesn't exist";
         Report(span,message);
     }
 
@@ -127,9 +127,9 @@ internal sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Report(span, message);
     }
 
-    public void XXX_ReportFunctionsAreUnsupported(TextSpan span)
+    public void ReportAllPathsMustReturn(TextSpan span)
     {
-        var message = "Functions with return values are unsupported.";
+        var message = "Not all code paths return a value.";
         Report(span,message);
     }
 
@@ -143,6 +143,26 @@ internal sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportInvalidBreakOrContinue(TextSpan span, string text)
     {
         var message = $"The keyword '{text}' can only be used inside of loops";
+        
+        Report(span,message);
+    }
+
+    public void ReportInvalidReturn(TextSpan span)
+    {
+        var message = "The 'return' keyword can only be used inside of functions";
+        Report(span,message);
+    }
+
+    public void ReportInvalidReturnExpression(TextSpan span, string functionName)
+    {
+        var message =
+            $"Since the function '{functionName}'  does not return a value the 'return' keyword cannot be followed by an expression.";
+        Report(span,message);
+    }
+
+    public void ReportMissingReturnExpression(TextSpan span, TypeSymbol returnType)
+    {
+        var message = $"An expression of type '{returnType}' expected.";
         
         Report(span,message);
     }

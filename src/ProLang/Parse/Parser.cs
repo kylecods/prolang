@@ -200,9 +200,25 @@ internal sealed class Parser
             SyntaxKind.IfKeyword => ParseIfStatement(),
             SyntaxKind.WhileKeyword => ParseWhileStatement(),
             SyntaxKind.ForKeyword => ParseForStatement(),
+            SyntaxKind.ReturnKeyword => ParseReturnStatement(),
             _ => ParseExpressionStatement()
         };
         return statement;
+    }
+
+    private StatementSyntax ParseReturnStatement()
+    {
+        var returnKeyword = Match(SyntaxKind.ReturnKeyword);
+        var keywordLine = _text.GetLineIndex(returnKeyword.Span.Start);
+        var currentLine = _text.GetLineIndex(Current.Span.Start);
+
+        var isEof = Current.Kind == SyntaxKind.EofToken;
+
+        var sameLine = !isEof && keywordLine == currentLine;
+
+        var expression = sameLine ? ParseExpression() : null;
+
+        return new ReturnStatementSyntax(returnKeyword, expression);
     }
 
     private StatementSyntax ParseIfStatement()
@@ -561,6 +577,7 @@ internal sealed class Parser
             SyntaxKind.ForKeyword => ParseForStatement(),
             SyntaxKind.ContinueKeyword => ParseContinueStatement(),
             SyntaxKind.BreakKeyword => ParseBreakStatement(),
+            SyntaxKind.ReturnKeyword => ParseReturnStatement(),
             _ => ParseExpressionStatement()
         };
         return statement;

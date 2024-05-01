@@ -9,7 +9,7 @@ internal sealed class Evaluator
     private readonly Dictionary<VariableSymbol, object> _globals;
     private readonly Stack<Dictionary<VariableSymbol, object>> _locals = new();
 
-    private object _lastValue;
+    private object? _lastValue;
 
     private Random? _random;
 
@@ -20,12 +20,12 @@ internal sealed class Evaluator
         _locals.Push(new Dictionary<VariableSymbol, object>());
     }
 
-    public object Evaluate()
+    public object? Evaluate()
     {
         return EvaluateStatement(_program.Statement);
     }
 
-    private object EvaluateStatement(BoundBlockStatement body)
+    private object? EvaluateStatement(BoundBlockStatement body)
     {
         var labelToIndex = new Dictionary<BoundLabel, int>();
         for (int i = 0; i < body.Statements.Length; i++)
@@ -66,6 +66,10 @@ internal sealed class Evaluator
                 case BoundNodeKind.LabelStatement:
                     index++;
                     break;
+                case BoundNodeKind.ReturnStatement:
+                    var rs = (BoundReturnStatement)s;
+                    _lastValue = rs.Expression == null ? null : EvaluateExpression(rs.Expression);
+                    return _lastValue;
                 default:
                     throw new Exception($"Unexpected node {s.Kind}");
             }
@@ -210,7 +214,7 @@ internal sealed class Evaluator
             case BoundNodeKind.BoundBinaryExpression:
                 return EvaluateBinaryExpression((BoundBinaryExpression)node);
             case BoundNodeKind.BoundCallExpression:
-                return EvaluateCallExpression((BoundCallExpression)node);
+                return EvaluateCallExpression((BoundCallExpression)node)!;
             case BoundNodeKind.BoundConversionExpression:
                 return EvaluateConversionExpression((BoundConversionExpression)node);
             default:
@@ -218,7 +222,7 @@ internal sealed class Evaluator
         }
     }
     
-    private object EvaluateCallExpression(BoundCallExpression node)
+    private object? EvaluateCallExpression(BoundCallExpression node)
     {
         if (node.Function == BuiltInFunctions.ReadInput)
         {
@@ -229,7 +233,7 @@ internal sealed class Evaluator
         {
             var message = (string)EvaluateExpression(node.Arguments[0]);
             Console.WriteLine(message);
-            return null!;
+            return null;
         }
         if (node.Function == BuiltInFunctions.Random)
         {
@@ -283,7 +287,7 @@ internal sealed class Evaluator
 
              File.WriteAllText(path,contents);
 
-             return null!;
+             return null;
         }
 
 

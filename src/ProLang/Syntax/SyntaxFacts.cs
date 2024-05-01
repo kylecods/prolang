@@ -133,6 +133,8 @@ internal static class SyntaxFacts
                 return "break";
             case SyntaxKind.ContinueKeyword:
                 return "continue";
+            case SyntaxKind.ReturnKeyword:
+                return "return";
             default:
                 return null;
         }
@@ -168,6 +170,8 @@ internal static class SyntaxFacts
                 return SyntaxKind.BreakKeyword;
             case "continue":
                 return SyntaxKind.ContinueKeyword;
+            case "return":
+                return SyntaxKind.ReturnKeyword;
             default:
                 return SyntaxKind.IdentifierToken;
          }

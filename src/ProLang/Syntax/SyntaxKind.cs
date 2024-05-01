@@ -67,6 +67,7 @@ public enum SyntaxKind
     FunctionKeyword,
     BreakKeyword,
     ContinueKeyword,
+    ReturnKeyword,
     
     //html keywords
     ScriptKeyword,
@@ -94,6 +95,7 @@ public enum SyntaxKind
     ForStatement,
     BreakStatement,
     ContinueStatement,
+    ReturnStatement,
     
     
     //nodes

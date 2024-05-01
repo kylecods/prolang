@@ -2,7 +2,7 @@
 
 internal enum  BoundNodeKind
 {
-    //staments
+    //statements
     VariableDeclaration,
     BlockStatement,
     ExpressionStatement,
@@ -13,6 +13,8 @@ internal enum  BoundNodeKind
     LabelStatement,
     GotoStatement,
     ConditionalGotoStatement,
+    ReturnStatement,
+
     
     //expressions
     BoundLiteralExpression,

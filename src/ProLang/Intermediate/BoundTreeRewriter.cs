@@ -22,6 +22,8 @@ internal abstract class BoundTreeRewriter
                 return RewriteLabelStatement((BoundLabelStatement)node);
             case BoundNodeKind.GotoStatement:
                 return RewriteGotoStatement((BoundGotoStatement)node);
+            case BoundNodeKind.ReturnStatement:
+                return RewriteReturnStatement((BoundReturnStatement)node);
             case BoundNodeKind.ConditionalGotoStatement:
                 return RewriteConditionalGotoStatement((BoundConditionalGotoStatement)node);
             case BoundNodeKind.ExpressionStatement:
@@ -30,7 +32,19 @@ internal abstract class BoundTreeRewriter
                 throw new Exception($"Unexpected node: {node.Kind}");
         }
     }
-    
+
+    private BoundStatement RewriteReturnStatement(BoundReturnStatement node)
+    {
+        var expression = node.Expression == null ? null : RewriteExpression(node.Expression);
+
+        if (expression == node.Expression)
+        {
+            return node;
+        }
+
+        return new BoundReturnStatement(expression);
+    }
+
     protected virtual BoundStatement RewriteBlockStatement(BoundBlockStatement node)
     {
         ImmutableArray<BoundStatement>.Builder builder = null!;
