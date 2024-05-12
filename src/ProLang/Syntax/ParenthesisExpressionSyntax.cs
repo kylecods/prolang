@@ -2,7 +2,8 @@
 
 internal sealed class ParenthesisExpressionSyntax : ExpressionSyntax
 {
-    public ParenthesisExpressionSyntax(SyntaxToken openParenthesisToken, ExpressionSyntax expression, SyntaxToken closeParenthesisToken)
+    public ParenthesisExpressionSyntax(SyntaxTree syntaxTree,SyntaxToken openParenthesisToken, ExpressionSyntax expression, SyntaxToken closeParenthesisToken)
+     : base(syntaxTree)
     {
         OpenParenthesisToken = openParenthesisToken;
 

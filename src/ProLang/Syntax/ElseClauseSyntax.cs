@@ -2,7 +2,7 @@
 
 internal class ElseClauseSyntax : SyntaxNode
 {
-    public ElseClauseSyntax(SyntaxToken elseKeyword, StatementSyntax body)
+    public ElseClauseSyntax(SyntaxTree syntaxTree,SyntaxToken elseKeyword, StatementSyntax body) : base(syntaxTree)
     {
         ElseKeyword = elseKeyword;
         

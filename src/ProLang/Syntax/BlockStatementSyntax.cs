@@ -4,7 +4,8 @@ namespace ProLang.Syntax;
 
 internal sealed class BlockStatementSyntax : StatementSyntax
 {
-    public BlockStatementSyntax(SyntaxToken leftCurly, ImmutableArray<StatementSyntax> statements, SyntaxToken rightCurly)
+    public BlockStatementSyntax(SyntaxTree syntaxTree,SyntaxToken leftCurly, ImmutableArray<StatementSyntax> statements, SyntaxToken rightCurly)
+    : base(syntaxTree)
     {
         LeftCurly = leftCurly;
         Statements = statements;

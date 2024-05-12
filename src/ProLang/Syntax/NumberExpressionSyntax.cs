@@ -2,7 +2,7 @@
 
 internal sealed class NumberExpressionSyntax : ExpressionSyntax
 {
-    public NumberExpressionSyntax(SyntaxToken numberToken)
+    public NumberExpressionSyntax(SyntaxTree syntaxTree,SyntaxToken numberToken) : base(syntaxTree)
     {
         NumberToken = numberToken;
     }

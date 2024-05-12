@@ -4,7 +4,8 @@ namespace ProLang.Syntax;
 
 internal class HtmlStatementSyntax : StatementSyntax
 {
-    public HtmlStatementSyntax(HtmlStartTagSyntax startTag, ImmutableArray<StatementSyntax> statements, HtmlEndTagSyntax endTag)
+    public HtmlStatementSyntax(SyntaxTree syntaxTree,HtmlStartTagSyntax startTag, ImmutableArray<StatementSyntax> statements, HtmlEndTagSyntax endTag)
+     : base(syntaxTree)
     {
         StartTag = startTag;
         

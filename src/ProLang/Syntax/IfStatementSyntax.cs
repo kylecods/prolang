@@ -2,7 +2,8 @@
 
 internal sealed class IfStatementSyntax : StatementSyntax
 {
-    public IfStatementSyntax(SyntaxToken ifKeyword, SyntaxToken openToken, ExpressionSyntax condition, SyntaxToken closeToken, StatementSyntax statement, ElseIfClauseSyntax? elseIf, ElseClauseSyntax? @else)
+    public IfStatementSyntax(SyntaxTree syntaxTree,SyntaxToken ifKeyword, SyntaxToken openToken, ExpressionSyntax condition, SyntaxToken closeToken, StatementSyntax statement, ElseIfClauseSyntax? elseIf, ElseClauseSyntax? @else)
+     : base(syntaxTree)
     {
         IfKeyword = ifKeyword;
         OpenToken = openToken;

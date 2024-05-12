@@ -2,7 +2,8 @@
 
 internal sealed class WhileStatementSyntax : StatementSyntax
 {
-    public WhileStatementSyntax(SyntaxToken whileKeyword, SyntaxToken openToken, ExpressionSyntax condition, SyntaxToken closeToken,StatementSyntax body)
+    public WhileStatementSyntax(SyntaxTree syntaxTree,SyntaxToken whileKeyword, SyntaxToken openToken, ExpressionSyntax condition, SyntaxToken closeToken,StatementSyntax body)
+     : base(syntaxTree)
     {
         WhileKeyword = whileKeyword;
         OpenToken = openToken;

@@ -4,7 +4,8 @@ namespace ProLang.Syntax;
 
 internal sealed class HtmlProLangBlockStatementSyntax : StatementSyntax
 {
-    public HtmlProLangBlockStatementSyntax(SyntaxToken openToken, ImmutableArray<StatementSyntax> statements, SyntaxToken closeToken)
+    public HtmlProLangBlockStatementSyntax(SyntaxTree syntaxTree,SyntaxToken openToken, ImmutableArray<StatementSyntax> statements, SyntaxToken closeToken)
+     : base(syntaxTree)
     {
         OpenToken = openToken;
         Statements = statements;

@@ -2,7 +2,7 @@
 
 internal class ElseIfClauseSyntax : SyntaxNode
 {
-    public ElseIfClauseSyntax(SyntaxToken elIfKeyword, ExpressionSyntax condition, StatementSyntax body)
+    public ElseIfClauseSyntax(SyntaxTree syntaxTree, SyntaxToken elIfKeyword, ExpressionSyntax condition, StatementSyntax body) : base(syntaxTree)
     {
         ElIfKeyword = elIfKeyword;
         

@@ -5,7 +5,16 @@ namespace ProLang.Syntax;
 
 public abstract class SyntaxNode
 {
+
+    public SyntaxNode(SyntaxTree syntaxTree)
+    {
+        SyntaxTree = syntaxTree;
+    }
+    
+    public SyntaxTree SyntaxTree { get; }
     public abstract SyntaxKind Kind { get; }
+
+    public TextLocation Location => new TextLocation(SyntaxTree.Text, Span);
 
     public IEnumerable<SyntaxNode> GetChildren()
     {

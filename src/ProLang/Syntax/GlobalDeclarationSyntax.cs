@@ -4,7 +4,7 @@ namespace ProLang.Syntax;
 
 public sealed class GlobalDeclarationSyntax : SyntaxNode
 {
-    public GlobalDeclarationSyntax(ImmutableArray<DeclarationSyntax> declarations, SyntaxToken eofToken)
+    public GlobalDeclarationSyntax(SyntaxTree syntaxTree,ImmutableArray<DeclarationSyntax> declarations, SyntaxToken eofToken) : base(syntaxTree)
     {
         Declarations = declarations;
         EofToken = eofToken;

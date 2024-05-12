@@ -2,7 +2,7 @@
 
 internal sealed class GlobalStatementSyntax : DeclarationSyntax
 {
-    public GlobalStatementSyntax(StatementSyntax statement)
+    public GlobalStatementSyntax(SyntaxTree syntaxTree,StatementSyntax statement) : base(syntaxTree)
     {
         Statement = statement;
     }

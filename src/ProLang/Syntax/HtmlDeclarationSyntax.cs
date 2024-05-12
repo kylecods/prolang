@@ -4,7 +4,7 @@ namespace ProLang.Syntax;
 
 internal sealed class HtmlDeclarationSyntax : DeclarationSyntax
 {
-    public HtmlDeclarationSyntax(ImmutableArray<HtmlStatementSyntax> htmlStatements)
+    public HtmlDeclarationSyntax(SyntaxTree syntaxTree,ImmutableArray<HtmlStatementSyntax> htmlStatements) : base(syntaxTree)
     {
         HtmlStatements = htmlStatements;
     }

@@ -2,7 +2,8 @@
 
 internal sealed class ForStatementSyntax : StatementSyntax
 {
-    public ForStatementSyntax(SyntaxToken forKeyword, SyntaxToken openToken, SyntaxToken identifier, SyntaxToken equalsToken, ExpressionSyntax lowerBound, SyntaxToken toKeyword, ExpressionSyntax upBound,  SyntaxToken closeToken, StatementSyntax body)
+    public ForStatementSyntax(SyntaxTree syntaxTree,SyntaxToken forKeyword, SyntaxToken openToken, SyntaxToken identifier, SyntaxToken equalsToken, ExpressionSyntax lowerBound, SyntaxToken toKeyword, ExpressionSyntax upBound,  SyntaxToken closeToken, StatementSyntax body)
+        : base(syntaxTree)
     {
         ForKeyword = forKeyword;
         OpenToken = openToken;

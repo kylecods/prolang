@@ -8,7 +8,8 @@ internal sealed class HtmlStartTagSyntax : StatementSyntax
 
     public SyntaxToken RightAngleToken { get; }
 
-    public HtmlStartTagSyntax(SyntaxToken leftAngleToken, SyntaxToken identifierToken, SyntaxToken rightAngleToken)
+    public HtmlStartTagSyntax(SyntaxTree syntaxTree,SyntaxToken leftAngleToken, SyntaxToken identifierToken, SyntaxToken rightAngleToken)
+     : base(syntaxTree)
     {
         LeftAngleToken = leftAngleToken;
         

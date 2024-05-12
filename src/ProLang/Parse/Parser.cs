@@ -14,11 +14,13 @@ internal sealed class Parser
 
     private int _position;
 
-    public Parser(SourceText text)
+    private readonly SyntaxTree _syntaxTree;
+
+    public Parser(SyntaxTree syntaxTree)
     {
         var tokens = new List<SyntaxToken>();
 
-        var lexer = new Lexer(text);
+        var lexer = new Lexer(syntaxTree);
 
         SyntaxToken token;
         do
@@ -32,8 +34,10 @@ internal sealed class Parser
         } while (token.Kind != SyntaxKind.EofToken);
 
         _tokens = tokens.ToImmutableArray();
+
+        _syntaxTree = syntaxTree;
         
-        _text = text;
+        _text = syntaxTree.Text;
         
         _diagnostics.AddRange(lexer.Diagnostics);
 
@@ -67,9 +71,9 @@ internal sealed class Parser
     {
         if (Current.Kind == kind) return NextToken();
         
-        _diagnostics.ReportUnexpectedToken(Current.Span,Current.Kind,kind);
+        _diagnostics.ReportUnexpectedToken(Current.Location,Current.Kind,kind);
 
-        return new SyntaxToken(kind, Current.Position, null!, null!);
+        return new SyntaxToken(_syntaxTree,kind, Current.Position, null!, null!);
     }
     
     public GlobalDeclarationSyntax ParseGlobalDeclaration()
@@ -78,7 +82,7 @@ internal sealed class Parser
         
         var eofToken = Match(SyntaxKind.EofToken);
         
-        return new GlobalDeclarationSyntax(declarations,eofToken);
+        return new GlobalDeclarationSyntax(_syntaxTree,declarations,eofToken);
     }
 
     private ImmutableArray<DeclarationSyntax> ParseDeclarations()
@@ -129,7 +133,7 @@ internal sealed class Parser
         var type = ParseOptionalTypeClause();
         var body = ParseBlockStatement();
 
-        return new FunctionDeclarationSyntax(functionKeyword, identifier, openParenthesisToken, parameters,
+        return new FunctionDeclarationSyntax(_syntaxTree,functionKeyword, identifier, openParenthesisToken, parameters,
             closeParenthesisToken, type, (BlockStatementSyntax)body);
     }
     
@@ -162,7 +166,7 @@ internal sealed class Parser
     {
         var identifier = Match(SyntaxKind.IdentifierToken);
         var type = ParseTypeClause();
-        return new ParameterSyntax(identifier, type);
+        return new ParameterSyntax(_syntaxTree,identifier, type);
     }
 
     private TypeClauseSyntax? ParseOptionalTypeClause()
@@ -180,14 +184,14 @@ internal sealed class Parser
         var colonToken = Match(SyntaxKind.ColonToken);
         var identifier = Match(SyntaxKind.IdentifierToken);
 
-        return new TypeClauseSyntax(colonToken, identifier);
+        return new TypeClauseSyntax(_syntaxTree,colonToken, identifier);
     }
 
     private GlobalStatementSyntax ParseGlobalStatement()
     {
-        var statement = ParseAnyStatement();
+        var statement = ParseProLangStatement();
 
-        return new GlobalStatementSyntax(statement);
+        return new GlobalStatementSyntax(_syntaxTree,statement);
     }
 
     private StatementSyntax ParseAnyStatement()
@@ -218,7 +222,7 @@ internal sealed class Parser
 
         var expression = sameLine ? ParseExpression() : null;
 
-        return new ReturnStatementSyntax(returnKeyword, expression);
+        return new ReturnStatementSyntax(_syntaxTree,returnKeyword, expression);
     }
 
     private StatementSyntax ParseIfStatement()
@@ -231,7 +235,7 @@ internal sealed class Parser
         var elIfClause = ParseElIfClause();
         var elseClause = ParseElseClause();
 
-        return new IfStatementSyntax(ifKeyword, openToken, condition, closeToken, statement, elIfClause, elseClause);
+        return new IfStatementSyntax(_syntaxTree,ifKeyword, openToken, condition, closeToken, statement, elIfClause, elseClause);
     }
 
     private ElseClauseSyntax? ParseElseClause()
@@ -245,7 +249,7 @@ internal sealed class Parser
 
         var blockStatement = ParseBlockStatement();
 
-        return new ElseClauseSyntax(elseKeyword, blockStatement);
+        return new ElseClauseSyntax(_syntaxTree,elseKeyword, blockStatement);
     }
 
     private ElseIfClauseSyntax? ParseElIfClause()
@@ -261,7 +265,7 @@ internal sealed class Parser
 
         var blockStatement = ParseBlockStatement();
 
-        return new ElseIfClauseSyntax(elseIfKeyword, condition, blockStatement);
+        return new ElseIfClauseSyntax(_syntaxTree,elseIfKeyword, condition, blockStatement);
     }
 
     private StatementSyntax ParseBlockStatement()
@@ -287,14 +291,14 @@ internal sealed class Parser
 
         var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
 
-        return new BlockStatementSyntax(openCurlyToken,proLangStatements.ToImmutable(),closeCurlyToken);
+        return new BlockStatementSyntax(_syntaxTree,openCurlyToken,proLangStatements.ToImmutable(),closeCurlyToken);
     }
 
     private StatementSyntax ParseExpressionStatement()
     {
         var expression = ParseExpression();
 
-        return new ExpressionStatementSyntax(expression);
+        return new ExpressionStatementSyntax(_syntaxTree,expression);
     }
     
     private HtmlDeclarationSyntax ParseHtmlDeclaration()
@@ -315,7 +319,7 @@ internal sealed class Parser
             }
         }
         
-        return new HtmlDeclarationSyntax( nodes.ToImmutable());
+        return new HtmlDeclarationSyntax(_syntaxTree, nodes.ToImmutable());
     }
 
     private HtmlStatementSyntax ParseHtmlStatement()
@@ -341,7 +345,7 @@ internal sealed class Parser
         
         var htmlEndTag = ParseHtmlEndTag();
 
-        return new HtmlStatementSyntax(htmlStartTag,statements.ToImmutable(), htmlEndTag);
+        return new HtmlStatementSyntax(_syntaxTree,htmlStartTag,statements.ToImmutable(), htmlEndTag);
     }
 
     private HtmlStartTagSyntax ParseHtmlStartTag()
@@ -350,7 +354,7 @@ internal sealed class Parser
         var htmlKeyword = Match(SyntaxKind.IdentifierToken);
         var rightAngle = Match(SyntaxKind.GreaterThanToken);
         
-        return new HtmlStartTagSyntax(leftAngle,htmlKeyword,rightAngle);
+        return new HtmlStartTagSyntax(_syntaxTree,leftAngle,htmlKeyword,rightAngle);
     }
 
     private HtmlEndTagSyntax ParseHtmlEndTag()
@@ -359,7 +363,7 @@ internal sealed class Parser
         var htmlKeyword = Match(SyntaxKind.IdentifierToken);
         var rightAngle = Match(SyntaxKind.GreaterThanToken);
 
-        return new HtmlEndTagSyntax(closeToken,htmlKeyword, rightAngle);
+        return new HtmlEndTagSyntax(_syntaxTree,closeToken,htmlKeyword, rightAngle);
     }
 
     private ExpressionSyntax ParseExpression()
@@ -379,7 +383,7 @@ internal sealed class Parser
 
             var operand = ParseBinaryExpression(unaryOperator);
 
-            left = new UnaryExpressionSyntax(operatorToken, operand);
+            left = new UnaryExpressionSyntax(_syntaxTree,operatorToken, operand);
         }
         else
         {
@@ -394,7 +398,7 @@ internal sealed class Parser
             var operatorToken = NextToken();
             var right = ParseBinaryExpression(precedence);
 
-            left = new BinaryExpressionSyntax(left, operatorToken, right);
+            left = new BinaryExpressionSyntax(_syntaxTree,left, operatorToken, right);
         }
 
         return left;
@@ -414,7 +418,7 @@ internal sealed class Parser
                     var identifierToken = NextToken();
                     var operatorToken = NextToken();
                     var expression = ParseAssignmentExpression();
-                    return new AssignmentExpressionSyntax(identifierToken, operatorToken, expression);
+                    return new AssignmentExpressionSyntax(_syntaxTree,identifierToken, operatorToken, expression);
                     
             }
         }
@@ -463,7 +467,7 @@ internal sealed class Parser
         var arguments = ParseArguments();
         var closeParenthesisToken = Match(SyntaxKind.RightParenthesisToken);
 
-        return new CallExpressionSyntax(identifier,openParenthesisToken ,arguments, closeParenthesisToken);
+        return new CallExpressionSyntax(_syntaxTree,identifier,openParenthesisToken ,arguments, closeParenthesisToken);
     }
 
     private SeparatedSyntaxList<ExpressionSyntax> ParseArguments()
@@ -496,19 +500,19 @@ internal sealed class Parser
     {
         var identifierToken = Match(SyntaxKind.IdentifierToken);
 
-        return new NameExpressionSyntax(identifierToken);
+        return new NameExpressionSyntax(_syntaxTree,identifierToken);
     }
 
     private ExpressionSyntax ParseStringLiteral()
     {
         var stringToken = Match(SyntaxKind.StringToken);
-        return new LiteralExpressionSyntax(stringToken);
+        return new LiteralExpressionSyntax(_syntaxTree,stringToken);
     }
 
     private ExpressionSyntax ParseNumberLiteral()
     {
         var numberToken = Match(SyntaxKind.NumberToken);
-        return new LiteralExpressionSyntax(numberToken);
+        return new LiteralExpressionSyntax(_syntaxTree,numberToken);
     }
 
     private ExpressionSyntax ParseParenthesizedExpression()
@@ -517,7 +521,7 @@ internal sealed class Parser
         var expression = ParseExpression();
         var right = Match(SyntaxKind.RightParenthesisToken);
 
-        return new ParenthesisExpressionSyntax(left, expression, right);
+        return new ParenthesisExpressionSyntax(_syntaxTree,left, expression, right);
     }
 
     private ExpressionSyntax ParseBooleanLiteral()
@@ -526,7 +530,7 @@ internal sealed class Parser
 
         var keywordToken = isTrue ? Match(SyntaxKind.TrueKeyword) : Match(SyntaxKind.FalseKeyword);
 
-        return new LiteralExpressionSyntax(keywordToken, isTrue);
+        return new LiteralExpressionSyntax(_syntaxTree,keywordToken, isTrue);
     }
 
     private StatementSyntax ParseVariableStatement()
@@ -537,7 +541,7 @@ internal sealed class Parser
         var equalsToken = Match(SyntaxKind.EqualsToken);
         var expression = ParseExpression();
 
-        return new VariableStatementSyntax(letKeyword,identifier,typeClause,equalsToken,expression);
+        return new VariableStatementSyntax(_syntaxTree,letKeyword,identifier,typeClause,equalsToken,expression);
     }
 
     private StatementSyntax ParseProLangBlockStatement()
@@ -563,7 +567,7 @@ internal sealed class Parser
 
         var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
 
-        return new HtmlProLangBlockStatementSyntax(openCurlyToken, proLangStatements.ToImmutable(), closeCurlyToken);
+        return new HtmlProLangBlockStatementSyntax(_syntaxTree,openCurlyToken, proLangStatements.ToImmutable(), closeCurlyToken);
     }
 
     private StatementSyntax ParseProLangStatement()
@@ -588,14 +592,14 @@ internal sealed class Parser
     {
         var keyword = Match(SyntaxKind.BreakKeyword);
 
-        return new BreakStatementSyntax(keyword);
+        return new BreakStatementSyntax(_syntaxTree,keyword);
     }
 
     private StatementSyntax ParseContinueStatement()
     {
         var keyword = Match(SyntaxKind.ContinueKeyword);
 
-        return new ContinueStatementSyntax(keyword);
+        return new ContinueStatementSyntax(_syntaxTree,keyword);
     }
 
     private StatementSyntax ParseForStatement()
@@ -610,7 +614,7 @@ internal sealed class Parser
         var closeToken = Match(SyntaxKind.RightParenthesisToken);
         var body = ParseProLangStatement();
 
-        return new ForStatementSyntax(forKeyword, openToken, identifier, equalToken, lowerBound, toKeyword, upBound,closeToken,
+        return new ForStatementSyntax(_syntaxTree,forKeyword, openToken, identifier, equalToken, lowerBound, toKeyword, upBound,closeToken,
             body);
     }
 
@@ -623,7 +627,7 @@ internal sealed class Parser
 
         var blockStatement = ParseProLangStatement();
 
-        return new WhileStatementSyntax(whileKeyword, openToken, condition, closeToken, blockStatement);
+        return new WhileStatementSyntax(_syntaxTree,whileKeyword, openToken, condition, closeToken, blockStatement);
     }
 
     private StatementSyntax ParseProLangHtmlCompatibleStatement()

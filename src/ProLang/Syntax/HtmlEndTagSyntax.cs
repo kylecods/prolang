@@ -8,7 +8,8 @@ internal sealed class HtmlEndTagSyntax : StatementSyntax
 
     public SyntaxToken RightAngleToken { get; }
 
-    public HtmlEndTagSyntax(SyntaxToken htmlCloseToken, SyntaxToken identifierToken, SyntaxToken rightAngleToken)
+    public HtmlEndTagSyntax(SyntaxTree syntaxTree,SyntaxToken htmlCloseToken, SyntaxToken identifierToken, SyntaxToken rightAngleToken)
+        :base(syntaxTree)
     {
         HtmlCloseToken = htmlCloseToken;
         
