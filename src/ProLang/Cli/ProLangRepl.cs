@@ -7,7 +7,7 @@ namespace ProLang.Cli;
 
 internal sealed class ProLangRepl : Repl
 {
-    private Compilation? _previous;
+    private ProLangCompilation? _previous;
     private bool _showTree;
     private bool _showProgram;
     private readonly Dictionary<VariableSymbol, object> _variables = new();
@@ -102,7 +102,7 @@ internal sealed class ProLangRepl : Repl
     {
         var syntaxTree = SyntaxTree.Parse(text);
 
-        var compilation = _previous == null! ? new Compilation(syntaxTree) : _previous.ContinueWith(syntaxTree);
+        var compilation = _previous == null! ? new ProLangCompilation(syntaxTree) : _previous.ContinueWith(syntaxTree);
 
         if (_showTree)
         {

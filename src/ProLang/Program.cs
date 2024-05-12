@@ -19,7 +19,7 @@ internal sealed class Program
         else
         {
             
-            var paths = GetFilePaths(["D:\\MOVEMENT\\DESKTOP\\PERSONAL\\ProLang\\examples"]);
+            var paths = GetFilePaths(args);
             var syntaxTrees = new List<SyntaxTree>();
 
             var hasErrors = false;
@@ -44,7 +44,7 @@ internal sealed class Program
             }
 
             //parse the source tree
-            var compilation = new Compilation(syntaxTrees.ToArray());
+            var compilation = new ProLangCompilation(syntaxTrees.ToArray());
             //run or interpret the content
             var result = compilation.Evaluate(new Dictionary<VariableSymbol, object>());
             if (!result.Diagnostics.Any())
