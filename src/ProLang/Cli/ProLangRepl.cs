@@ -7,10 +7,16 @@ namespace ProLang.Cli;
 
 internal sealed class ProLangRepl : Repl
 {
+    private static bool _loadingSubmission;
     private ProLangCompilation? _previous;
     private bool _showTree;
     private bool _showProgram;
     private readonly Dictionary<VariableSymbol, object> _variables = new();
+
+    public ProLangRepl()
+    {
+        LoadSubmissions();
+    }
 
     protected override void RenderLine(string line)
     {
@@ -25,14 +31,14 @@ internal sealed class ProLangRepl : Repl
             if (isKeyword)
             {
                 Console.ForegroundColor = ConsoleColor.Blue;
-            }else if (isIdentifier)
+            } else if (isIdentifier)
             {
                 Console.ForegroundColor = ConsoleColor.DarkYellow;
             }
             else if (isNumber)
             {
                 Console.ForegroundColor = ConsoleColor.Cyan;
-            }else if (isString)
+            } else if (isString)
             {
                 Console.ForegroundColor = ConsoleColor.Magenta;
             }
@@ -40,38 +46,101 @@ internal sealed class ProLangRepl : Repl
             {
                 Console.ForegroundColor = ConsoleColor.DarkGray;
             }
-            
+
             Console.Write(token.Text);
-            
+
             Console.ResetColor();
         }
     }
 
-    protected override void EvaluateMetaCommand(string input)
+    [MetaCommand("cls", "Clears the screen")]
+    private void EvaluateCls()
     {
-        switch (input)
+        Console.Clear();
+    }
+
+    [MetaCommand("reset", "Clears all previous submissions")]
+    private void EvaluateReset()
+    {
+        _previous = null;
+
+        _variables.Clear();
+        ClearSubmissions();
+    }
+
+    [MetaCommand("showTree", "Shows the parse tree")]
+    private void EvaluateShowTree()
+    {
+        _showTree = !_showTree;
+
+        Console.WriteLine(_showTree ? "Showing parse trees." : "Not showing parse trees.");
+    }
+
+    [MetaCommand("showProgram", "Shows the bound tree")]
+    private void EvaluateShowProgram()
+    {
+        _showProgram = !_showProgram;
+
+        Console.WriteLine(_showProgram ? "Showing bound tree" : "Not showing bound tree.");
+    }
+
+    [MetaCommand("load", "Loads a script file")]
+    private void EvaluateLoad(string path)
+    {
+        path = Path.GetFullPath(path);
+
+        if (!File.Exists(path))
         {
-            case "#showTree":
-                _showTree = !_showTree;
-                Console.WriteLine(_showTree ? "Showing parse trees": "Not showing parse trees.");
-                break;
-            case "#showProgram":
-                _showProgram = !_showProgram;
-                Console.WriteLine(_showProgram ? "Showing bound tree": "Not showing bound tree.");
-                break;
-            case "#cls":
-                Console.Clear();
-                break;
-            case "#reset":
-                _previous = null!;
-                _variables.Clear();
-                break;
-            default:
-                base.EvaluateMetaCommand(input);
-                break;
+            Console.ForegroundColor = ConsoleColor.Red;
+            Console.WriteLine($"error: file does not exist '{path}'");
+            Console.ResetColor();
+
+            return;
+        }
+
+        var text = File.ReadAllText(path);
+
+        EvaluateSubmission(text);
+    }
+
+    [MetaCommand("ls", "Lists all symbols")]
+    private void EvaluateLs()
+    {
+        if (_previous == null)
+        {
+            return;
+        }
+        var symbols = _previous.GetSymbols().OrderBy(s => s.Kind).ThenBy(s => s.Name);
+
+        foreach (var symbol in symbols)
+        {
+            symbol.WriteTo(Console.Out);
+            Console.WriteLine();
         }
     }
 
+    [MetaCommand("dump", "Shows bound tree of a given function")]
+    private void EvaluateDump(string functionName)
+    {
+        if (_previous == null)
+        {
+            return;
+        }
+
+        var symbol = _previous.GetSymbols().OfType<FunctionSymbol>().SingleOrDefault(f => f.Name == functionName);
+
+        if (symbol == null) 
+        {
+            Console.ForegroundColor= ConsoleColor.Red;
+            Console.WriteLine($"error: function '{functionName}' does not exist");
+            Console.ResetColor();
+            return;
+        }
+
+        _previous.EmitTree(symbol,Console.Out);
+    }
+
+   
     protected override bool IsCompleteSubmission(string text)
     {
         if (string.IsNullOrEmpty(text))
@@ -131,5 +200,68 @@ internal sealed class ProLangRepl : Repl
             
             Console.Out.WriteDiagnostics(result.Diagnostics);
         }
+    }
+
+    private static string GetSubmissionsDirectory()
+    {
+        var localAppData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+
+        var submissionsDirectory = Path.Combine(localAppData, "ProLang", "Sumbmissions");
+
+        return submissionsDirectory;
+    }
+    private void LoadSubmissions()
+    {
+        var submissionsDirectory = GetSubmissionsDirectory();
+
+        if (!Directory.Exists(submissionsDirectory))
+        {
+            return;
+        }
+
+        var files = Directory.GetFiles(submissionsDirectory).OrderBy(f => f).ToArray();
+
+        if (files.Length == 0) 
+        {
+            return;
+        }
+
+        Console.ForegroundColor= ConsoleColor.DarkGray;
+
+        Console.WriteLine($"Loaded {files.Length} submission(s)");
+        Console.ResetColor();
+
+        _loadingSubmission = true;
+
+        foreach (var file in files) 
+        { 
+            var text = File.ReadAllText(file);
+
+            EvaluateSubmission(text);
+        }
+
+        _loadingSubmission = false;
+    }
+
+    private static void ClearSubmissions()
+    {
+        Directory.Delete(GetSubmissionsDirectory(), true);
+    }
+
+    private static void SaveSubmission(string text)
+    {
+        if (_loadingSubmission) 
+        {
+            return;
+        }
+
+        var submissionsDirectory = GetSubmissionsDirectory();
+
+        Directory.CreateDirectory(submissionsDirectory);
+
+        var count = Directory.GetFiles(submissionsDirectory).Length;
+        var name = $"submission{count:0000}";
+        var fileName = Path.Combine(submissionsDirectory, name);
+        File.WriteAllText(fileName, text);
     }
 }

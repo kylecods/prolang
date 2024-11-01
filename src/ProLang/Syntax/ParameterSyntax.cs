@@ -1,6 +1,6 @@
 ﻿namespace ProLang.Syntax;
 
-internal sealed class ParameterSyntax : SyntaxNode
+public sealed class ParameterSyntax : SyntaxNode
 {
     public ParameterSyntax(SyntaxTree syntaxTree,SyntaxToken identifier, TypeClauseSyntax type) : base(syntaxTree)
     {

@@ -2,7 +2,7 @@
 
 namespace ProLang.Syntax;
 
-internal sealed class BlockStatementSyntax : StatementSyntax
+public sealed class BlockStatementSyntax : StatementSyntax
 {
     public BlockStatementSyntax(SyntaxTree syntaxTree,SyntaxToken leftCurly, ImmutableArray<StatementSyntax> statements, SyntaxToken rightCurly)
     : base(syntaxTree)

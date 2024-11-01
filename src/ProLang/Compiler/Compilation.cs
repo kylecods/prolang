@@ -1,8 +1,5 @@
 ﻿using System.Collections.Immutable;
 using ProLang.Intermediate;
-using ProLang.Interpreter;
-using ProLang.Parse;
-using ProLang.Symbols;
 using ProLang.Syntax;
 
 namespace ProLang.Compiler;
@@ -40,4 +37,5 @@ public abstract class Compilation
 
     public Compilation? Previous { get; }
     public ImmutableArray<SyntaxTree> SyntaxTrees { get; }
+
 }

@@ -78,8 +78,56 @@ public sealed class ProLangCompilation : Compilation
                 }
 
                 functionBody.Key.WriteTo(writer);
+                writer.WriteLine();
                 functionBody.Value.WriteTo(writer);
             }
         }
     }
+    public void EmitTree(FunctionSymbol symbol, TextWriter writer)
+    {
+        var program = Binder.BindProgram(GlobalScope);
+        if (!program.Functions.TryGetValue(symbol, out var body))
+        {
+            return;
+        }
+
+        symbol.WriteTo(writer);
+        writer.WriteLine();
+        body.WriteTo(writer);
+    }
+
+    public ImmutableArray<FunctionSymbol> Functions => GlobalScope.Functions;
+
+    public ImmutableArray<VariableSymbol> Variables => GlobalScope.Variables;
+
+    public IEnumerable<Symbol> GetSymbols()
+    {
+        var submission = this;
+
+        var seenSymbols = new HashSet<string>();
+
+        while (submission != null)
+        {
+
+            foreach (var function in submission.Functions)
+            {
+                if (seenSymbols.Add(function.Name))
+                {
+                    yield return function;
+                }
+            }
+
+            foreach (var variable in submission.Variables)
+            {
+                if (seenSymbols.Add(variable.Name))
+                {
+                    yield return variable;
+                }
+            }
+
+            submission = submission.Previous as ProLangCompilation;
+
+        }
+    }
+
 }

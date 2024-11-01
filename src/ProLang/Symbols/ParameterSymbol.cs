@@ -1,6 +1,6 @@
 ﻿namespace ProLang.Symbols;
 
-internal sealed class ParameterSymbol : LocalVariableSymbol
+public sealed class ParameterSymbol : LocalVariableSymbol
 {
     public ParameterSymbol(string name, TypeSymbol type) : base(name, true, type)
     {

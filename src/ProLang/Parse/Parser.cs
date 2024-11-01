@@ -4,7 +4,7 @@ using ProLang.Text;
 
 namespace ProLang.Parse;
 
-internal sealed class Parser
+public sealed class Parser
 {
     private DiagnosticBag _diagnostics = new();
     

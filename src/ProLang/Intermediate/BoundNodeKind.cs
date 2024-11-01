@@ -1,6 +1,6 @@
 ﻿namespace ProLang.Intermediate;
 
-internal enum  BoundNodeKind
+public enum  BoundNodeKind
 {
     //statements
     VariableDeclaration,

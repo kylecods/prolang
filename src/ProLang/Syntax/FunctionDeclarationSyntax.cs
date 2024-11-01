@@ -1,6 +1,6 @@
 ﻿namespace ProLang.Syntax;
 
-internal sealed class FunctionDeclarationSyntax : DeclarationSyntax
+public sealed class FunctionDeclarationSyntax : DeclarationSyntax
 {
     public FunctionDeclarationSyntax(SyntaxTree syntaxTree, SyntaxToken functionKeyword, SyntaxToken identifier, SyntaxToken openParenthesisToken, SeparatedSyntaxList<ParameterSyntax> parameters, SyntaxToken closeParenthesisToken, TypeClauseSyntax type, BlockStatementSyntax body)
         : base(syntaxTree)

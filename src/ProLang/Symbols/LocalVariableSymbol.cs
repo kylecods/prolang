@@ -1,6 +1,6 @@
 ﻿namespace ProLang.Symbols;
 
-internal class LocalVariableSymbol : VariableSymbol
+public class LocalVariableSymbol : VariableSymbol
 {
     internal LocalVariableSymbol(string name, bool isReadOnly, TypeSymbol type) : base(name, isReadOnly, type)
     {

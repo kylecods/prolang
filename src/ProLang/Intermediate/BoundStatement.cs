@@ -1,6 +1,6 @@
 ﻿namespace ProLang.Intermediate;
 
-internal abstract class BoundStatement : BoundNode
+public abstract class BoundStatement : BoundNode
 {
     
 }

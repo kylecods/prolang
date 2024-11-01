@@ -1,6 +1,6 @@
 ﻿namespace ProLang.Syntax;
 
-internal sealed class TypeClauseSyntax : SyntaxNode
+public sealed class TypeClauseSyntax : SyntaxNode
 {
     public TypeClauseSyntax(SyntaxTree syntaxTree,SyntaxToken colonToken, SyntaxToken identifier) : base(syntaxTree)
     {

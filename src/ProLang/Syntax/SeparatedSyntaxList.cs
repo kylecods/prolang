@@ -3,12 +3,12 @@ using System.Collections.Immutable;
 
 namespace ProLang.Syntax;
 
-internal abstract class SeparatedSyntaxList
+public abstract class SeparatedSyntaxList
 {
     public abstract ImmutableArray<SyntaxNode> GetWithSeparators();
 }
 
-internal sealed class SeparatedSyntaxList<T> : SeparatedSyntaxList, IEnumerable<T>
+public sealed class SeparatedSyntaxList<T> : SeparatedSyntaxList, IEnumerable<T>
 where T : SyntaxNode
 {
     private readonly ImmutableArray<SyntaxNode> _nodeAndSeparators;
@@ -28,7 +28,7 @@ where T : SyntaxNode
             return null;
         }
 
-        return (SyntaxNode)_nodeAndSeparators[index * 2 + 1];
+        return _nodeAndSeparators[index * 2 + 1];
     }
 
     public override ImmutableArray<SyntaxNode> GetWithSeparators() => _nodeAndSeparators;

@@ -5,7 +5,7 @@ using ProLang.Text;
 
 namespace ProLang.Parse;
 
-internal sealed class DiagnosticBag : IEnumerable<Diagnostic>
+public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 {
     private readonly List<Diagnostic> _diagnostics = new();
     public IEnumerator<Diagnostic> GetEnumerator() => _diagnostics.GetEnumerator();

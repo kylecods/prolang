@@ -4,7 +4,7 @@ using ProLang.Symbols;
 
 namespace ProLang.Intermediate;
 
-internal sealed class BoundGlobalScope
+public sealed class BoundGlobalScope
 {
     public BoundGlobalScope(BoundGlobalScope? previous, ImmutableArray<Diagnostic> diagnostics, ImmutableArray<FunctionSymbol> functions, ImmutableArray<VariableSymbol> variables, ImmutableArray<BoundStatement> statements)
     {

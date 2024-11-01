@@ -3,7 +3,7 @@ using ProLang.Syntax;
 
 namespace ProLang.Symbols;
 
-internal sealed class FunctionSymbol : Symbol
+public sealed class FunctionSymbol : Symbol
 {
     public FunctionSymbol(string name, ImmutableArray<ParameterSymbol> parameters, TypeSymbol type,FunctionDeclarationSyntax? declaration = null) : base(name)
     {

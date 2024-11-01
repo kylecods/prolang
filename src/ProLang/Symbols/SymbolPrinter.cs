@@ -43,7 +43,12 @@ namespace ProLang.Symbols;
             }
 
             writer.WritePunctuation(")");
-            writer.WriteLine();
+
+            if(symbol.Type != TypeSymbol.Void)
+            {
+                writer.WritePunctuation(": ");
+                symbol.Type.WriteTo(writer);
+            }
         }
 
         private static void WriteGlobalVariableTo(GlobalVariableSymbol symbol, TextWriter writer)
