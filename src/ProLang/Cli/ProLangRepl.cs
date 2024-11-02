@@ -7,7 +7,9 @@ namespace ProLang.Cli;
 
 internal sealed class ProLangRepl : Repl
 {
-    private static bool _loadingSubmission;
+    private bool _loadingSubmission;
+
+    private static readonly ProLangCompilation emptyCompilation = new();
     private ProLangCompilation? _previous;
     private bool _showTree;
     private bool _showProgram;
@@ -110,7 +112,9 @@ internal sealed class ProLangRepl : Repl
         {
             return;
         }
-        var symbols = _previous.GetSymbols().OrderBy(s => s.Kind).ThenBy(s => s.Name);
+        var compilation = _previous ?? emptyCompilation;
+
+        var symbols = compilation.GetSymbols().OrderBy(s => s.Kind).ThenBy(s=> s.Name);
 
         foreach (var symbol in symbols)
         {
@@ -127,7 +131,9 @@ internal sealed class ProLangRepl : Repl
             return;
         }
 
-        var symbol = _previous.GetSymbols().OfType<FunctionSymbol>().SingleOrDefault(f => f.Name == functionName);
+        var compilation = _previous ?? emptyCompilation;
+
+        var symbol = compilation.GetSymbols().OfType<FunctionSymbol>().SingleOrDefault(f => f.Name == functionName);
 
         if (symbol == null) 
         {
@@ -137,7 +143,7 @@ internal sealed class ProLangRepl : Repl
             return;
         }
 
-        _previous.EmitTree(symbol,Console.Out);
+        compilation.EmitTree(symbol,Console.Out);
     }
 
    
@@ -248,7 +254,7 @@ internal sealed class ProLangRepl : Repl
         Directory.Delete(GetSubmissionsDirectory(), true);
     }
 
-    private static void SaveSubmission(string text)
+    private void SaveSubmission(string text)
     {
         if (_loadingSubmission) 
         {

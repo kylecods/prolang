@@ -5,6 +5,8 @@ using ProLang.Parse;
 using ProLang.Symbols;
 using ProLang.Syntax;
 
+using ReflectionBindingFlags = System.Reflection.BindingFlags;
+
 namespace ProLang.Compiler;
 
 public sealed class ProLangCompilation : Compilation
@@ -86,13 +88,15 @@ public sealed class ProLangCompilation : Compilation
     public void EmitTree(FunctionSymbol symbol, TextWriter writer)
     {
         var program = Binder.BindProgram(GlobalScope);
+
+        symbol.WriteTo(writer);
+        writer.WriteLine();
+
         if (!program.Functions.TryGetValue(symbol, out var body))
         {
             return;
         }
 
-        symbol.WriteTo(writer);
-        writer.WriteLine();
         body.WriteTo(writer);
     }
 
@@ -108,6 +112,24 @@ public sealed class ProLangCompilation : Compilation
 
         while (submission != null)
         {
+            const ReflectionBindingFlags bindingFlags = 
+                ReflectionBindingFlags.Static | 
+                ReflectionBindingFlags.Public |
+                ReflectionBindingFlags.NonPublic;
+
+            var builtInFunctions = typeof(BuiltInFunctions)
+                .GetFields(bindingFlags)
+                .Where(fi => fi.FieldType == typeof(FunctionSymbol))
+                .Select(fi => (FunctionSymbol)fi.GetValue(null))
+                .ToList();
+
+            foreach(var builtIn in builtInFunctions)
+            {
+                if (seenSymbols.Add(builtIn.Name))
+                {
+                    yield return builtIn;
+                }
+            }
 
             foreach (var function in submission.Functions)
             {
