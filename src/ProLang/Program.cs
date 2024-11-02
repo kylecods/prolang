@@ -44,7 +44,7 @@ internal sealed class Program
             }
 
             //parse the source tree
-            var compilation = new ProLangCompilation(syntaxTrees.ToArray());
+            var compilation = ProLangCompilation.Create(syntaxTrees.ToArray());
             //run or interpret the content
             var result = compilation.Evaluate(new Dictionary<VariableSymbol, object>());
             if (!result.Diagnostics.Any())

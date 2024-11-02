@@ -10,6 +10,8 @@ internal sealed class Conversion
 
     public static readonly Conversion Explicit = new(true, false, false);
 
+    public static readonly Conversion Implicit = new(true, false, true);
+
     private Conversion(bool exists, bool isIdentity, bool isImplicit)
     {
         Exists = exists;
@@ -31,6 +33,16 @@ internal sealed class Conversion
         if (from == to)
         {
             return Identity;
+        }
+
+        if(from != TypeSymbol.Void && to == TypeSymbol.Any)
+        {
+            return Implicit;
+        }
+
+        if(from == TypeSymbol.Any && to == TypeSymbol.Void)
+        {
+            return Explicit;
         }
 
         if (from == TypeSymbol.Bool || from == TypeSymbol.Int)

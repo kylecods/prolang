@@ -9,7 +9,7 @@ internal sealed class ProLangRepl : Repl
 {
     private bool _loadingSubmission;
 
-    private static readonly ProLangCompilation emptyCompilation = new();
+    private static readonly ProLangCompilation emptyCompilation = ProLangCompilation.CreateScript(null);
     private ProLangCompilation? _previous;
     private bool _showTree;
     private bool _showProgram;
@@ -177,7 +177,7 @@ internal sealed class ProLangRepl : Repl
     {
         var syntaxTree = SyntaxTree.Parse(text);
 
-        var compilation = _previous == null! ? new ProLangCompilation(syntaxTree) : _previous.ContinueWith(syntaxTree);
+        var compilation = ProLangCompilation.CreateScript(_previous, syntaxTree);
 
         if (_showTree)
         {
@@ -251,7 +251,12 @@ internal sealed class ProLangRepl : Repl
 
     private static void ClearSubmissions()
     {
-        Directory.Delete(GetSubmissionsDirectory(), true);
+        var dir = GetSubmissionsDirectory();
+
+        if (Directory.Exists(dir))
+        {
+            Directory.Delete(GetSubmissionsDirectory(), true);
+        }
     }
 
     private void SaveSubmission(string text)
