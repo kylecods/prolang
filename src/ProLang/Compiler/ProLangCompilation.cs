@@ -179,4 +179,11 @@ public sealed class ProLangCompilation
         }
     }
 
+    public ImmutableArray<Diagnostic> Emit(string moduleName, string[] references, string outputPath)
+    {
+        var program = GetProgram();
+
+        return Emitter.Emit(program,moduleName, references, outputPath);
+    }
+
 }

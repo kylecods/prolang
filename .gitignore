@@ -5,3 +5,5 @@
 bin
 obj
 .idea
+/examples/compile_test.exe
+/src/ProLang/msbuild.binlog

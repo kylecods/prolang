@@ -1,3 +1,0 @@
-let name : string = getName()
-print("hello " + name + "!")
-
