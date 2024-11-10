@@ -1,4 +1,7 @@
 func main()
 {
-    print("Hello" + " from" + " ProLang" + " concatinated");
+    let two: int = 2
+    let three: int = 3
+
+    let result = min(two,three)
 }

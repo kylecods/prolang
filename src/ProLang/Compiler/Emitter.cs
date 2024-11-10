@@ -15,8 +15,11 @@ namespace ProLang.Compiler
         private readonly Dictionary<TypeSymbol, TypeReference> _knownTypes;
         private readonly MethodReference _consoleReadLineReference;
 
-        private MethodReference _consoleWriteLineReference;
+        private readonly MethodReference _consoleWriteLineReference;
         private readonly MethodReference _stringConcatReference;
+        private readonly MethodReference _minReference;
+        private readonly MethodReference _maxReference;
+
         private readonly AssemblyDefinition _assemblyDefinition;
 
         private Dictionary<FunctionSymbol, MethodDefinition> _methods = new();
@@ -29,8 +32,6 @@ namespace ProLang.Compiler
         {
 
             var assemblies = new List<AssemblyDefinition>();
-
-            var result = new DiagnosticBag();
 
             foreach (var reference in references)
             {
@@ -155,6 +156,10 @@ namespace ProLang.Compiler
 
             _stringConcatReference = ResolveMethod("System.String", "Concat", new[] { "System.String", "System.String" });
 
+            _minReference = ResolveMethod("System.Math", "Min", new[] { "System.Int32", "System.Int32" });
+
+            _minReference = ResolveMethod("System.Math", "Max", new[] { "System.Int32", "System.Int32" });
+
         }
 
         public static ImmutableArray<Diagnostic> Emit(BoundProgram program, string moduleName, string[] references, string outputPath)
@@ -179,11 +184,11 @@ namespace ProLang.Compiler
             var objectType = _knownTypes[TypeSymbol.Any];
 
             //main class or running class
-             _typeDefinition = new TypeDefinition("", "Program", TypeAttributes.Abstract | TypeAttributes.Sealed, objectType);
+            _typeDefinition = new TypeDefinition("", "Program", TypeAttributes.Abstract | TypeAttributes.Sealed, objectType);
 
             _assemblyDefinition.MainModule.Types.Add(_typeDefinition);
 
-            foreach(var functionWithBody in program.Functions)
+            foreach (var functionWithBody in program.Functions)
             {
                 EmitFunctionDeclaration(functionWithBody.Key);
             }
@@ -193,7 +198,7 @@ namespace ProLang.Compiler
                 EmitFunctionBody(functionWithBody.Key, functionWithBody.Value);
             }
 
-            if(program.MainFunction != null)
+            if (program.MainFunction != null)
             {
                 _assemblyDefinition.EntryPoint = _methods[program.MainFunction];
             }
@@ -207,16 +212,16 @@ namespace ProLang.Compiler
         {
             var functionType = _knownTypes[function.Type];
 
-            var method = new MethodDefinition(function.Name, MethodAttributes.Static | MethodAttributes.Private,functionType);
+            var method = new MethodDefinition(function.Name, MethodAttributes.Static | MethodAttributes.Private, functionType);
 
 
-            foreach(var parameter in function.Parameters)
+            foreach (var parameter in function.Parameters)
             {
                 var parameterType = _knownTypes[parameter.Type];
 
                 var parameterAttributes = ParameterAttributes.None;
 
-                var parameterDefinition = new ParameterDefinition(parameter.Name, parameterAttributes,parameterType);
+                var parameterDefinition = new ParameterDefinition(parameter.Name, parameterAttributes, parameterType);
 
                 method.Parameters.Add(parameterDefinition);
             }
@@ -233,14 +238,14 @@ namespace ProLang.Compiler
 
             _locals.Clear();
 
-             var ilProcessor = method.Body.GetILProcessor();
+            var ilProcessor = method.Body.GetILProcessor();
 
-            foreach(var statement in body.Statements)
+            foreach (var statement in body.Statements)
             {
                 EmitStatement(ilProcessor, statement);
             }
 
-            if (function.Type == TypeSymbol.Void) 
+            if (function.Type == TypeSymbol.Void)
             {
                 ilProcessor.Emit(OpCodes.Ret);
             }
@@ -253,22 +258,22 @@ namespace ProLang.Compiler
             switch (node.Kind)
             {
                 case BoundNodeKind.VariableDeclaration:
-                    EmitVariableDeclaration(ilProcessor,(BoundVariableDeclaration)node);
+                    EmitVariableDeclaration(ilProcessor, (BoundVariableDeclaration)node);
                     break;
                 case BoundNodeKind.LabelStatement:
-                    EmitLabelStatement(ilProcessor,(BoundLabelStatement)node);
+                    EmitLabelStatement(ilProcessor, (BoundLabelStatement)node);
                     break;
                 case BoundNodeKind.GotoStatement:
-                    EmitGotoStatement(ilProcessor,(BoundGotoStatement)node);
+                    EmitGotoStatement(ilProcessor, (BoundGotoStatement)node);
                     break;
                 case BoundNodeKind.ConditionalGotoStatement:
-                    EmitConditionalGotoStatement(ilProcessor,(BoundConditionalGotoStatement)node);
+                    EmitConditionalGotoStatement(ilProcessor, (BoundConditionalGotoStatement)node);
                     break;
                 case BoundNodeKind.ReturnStatement:
-                    EmitReturnStatement(ilProcessor,(BoundReturnStatement)node);
+                    EmitReturnStatement(ilProcessor, (BoundReturnStatement)node);
                     break;
                 case BoundNodeKind.ExpressionStatement:
-                    EmitExpressionStatement(ilProcessor,(BoundExpressionStatement)node);
+                    EmitExpressionStatement(ilProcessor, (BoundExpressionStatement)node);
                     break;
                 default:
                     throw new Exception($"Unexpected node kind {node.Kind}");
@@ -279,7 +284,7 @@ namespace ProLang.Compiler
         {
             EmitExpression(ilProcessor, node.Expression);
 
-            if(node.Expression.Type != TypeSymbol.Void)
+            if (node.Expression.Type != TypeSymbol.Void)
             {
                 ilProcessor.Emit(OpCodes.Pop);
             }
@@ -287,7 +292,7 @@ namespace ProLang.Compiler
 
         private void EmitReturnStatement(ILProcessor ilProcessor, BoundReturnStatement node)
         {
-            if(node.Expression != null)
+            if (node.Expression != null)
             {
                 EmitExpression(ilProcessor, node.Expression);
             }
@@ -320,7 +325,7 @@ namespace ProLang.Compiler
 
             ilProcessor.Body.Variables.Add(variableDefinition);
 
-            EmitExpression(ilProcessor,node.Initializer);
+            EmitExpression(ilProcessor, node.Initializer);
 
             ilProcessor.Emit(OpCodes.Stloc, variableDefinition);
         }
@@ -340,16 +345,16 @@ namespace ProLang.Compiler
                     EmitAssignmentExpression(ilProcessor, (BoundAssignmentExpression)node);
                     break;
                 case BoundNodeKind.BoundUnaryExpression:
-                    EmitUnaryExpression(ilProcessor,(BoundUnaryExpression)node);
+                    EmitUnaryExpression(ilProcessor, (BoundUnaryExpression)node);
                     break;
                 case BoundNodeKind.BoundBinaryExpression:
-                    EmitBinaryExpression(ilProcessor,(BoundBinaryExpression)node);
+                    EmitBinaryExpression(ilProcessor, (BoundBinaryExpression)node);
                     break;
                 case BoundNodeKind.BoundCallExpression:
                     EmitCallExpression(ilProcessor, (BoundCallExpression)node);
                     break;
                 case BoundNodeKind.BoundConversionExpression:
-                    EmitConversionExpression(ilProcessor,(BoundConversionExpression)node);
+                    EmitConversionExpression(ilProcessor, (BoundConversionExpression)node);
                     break;
                 default:
                     throw new NotSupportedException($"Unexpected node kind {node.Kind}");
@@ -363,40 +368,51 @@ namespace ProLang.Compiler
 
         private void EmitCallExpression(ILProcessor ilProcessor, BoundCallExpression node)
         {
-            foreach(var argument in node.Arguments)
+            foreach (var argument in node.Arguments)
             {
-                EmitExpression(ilProcessor,argument);
+                EmitExpression(ilProcessor, argument);
             }
 
-            if (node.Function == BuiltInFunctions.ReadInput) 
+            if (node.Function == BuiltInFunctions.ReadInput)
             {
                 ilProcessor.Emit(OpCodes.Call, _consoleReadLineReference);
-            }else if(node.Function == BuiltInFunctions.Print)
+            }
+            else if (node.Function == BuiltInFunctions.Print)
             {
                 ilProcessor.Emit(OpCodes.Call, _consoleWriteLineReference);
-            }else
+            }
+            else if (node.Function == BuiltInFunctions.Min)
+            {
+                ilProcessor.Emit(OpCodes.Call, _minReference);
+            }
+            else if (node.Function == BuiltInFunctions.Max)
+            {
+                ilProcessor.Emit(OpCodes.Call, _maxReference);
+            }
+            else
             {
                 var methodDefinition = _methods[node.Function];
 
-                ilProcessor.Emit(OpCodes.Call,methodDefinition);
+                ilProcessor.Emit(OpCodes.Call, methodDefinition);
             }
         }
 
         private void EmitBinaryExpression(ILProcessor ilProcessor, BoundBinaryExpression node)
         {
-            if(node.Op.Kind == BoundBinaryOperatorKind.Addition)
+            if (node.Op.Kind == BoundBinaryOperatorKind.Addition)
             {
-                if(node.Left.Type == TypeSymbol.String && node.Right.Type == TypeSymbol.String)
+                if (node.Left.Type == TypeSymbol.String && node.Right.Type == TypeSymbol.String)
                 {
-                    EmitExpression(ilProcessor,node.Left);
-                    EmitExpression(ilProcessor,node.Right);
+                    EmitExpression(ilProcessor, node.Left);
+                    EmitExpression(ilProcessor, node.Right);
                     ilProcessor.Emit(OpCodes.Call, _stringConcatReference);
                 }
                 else
                 {
                     throw new NotImplementedException();
                 }
-            }else
+            }
+            else
             {
                 throw new NotImplementedException();
             }
@@ -419,7 +435,7 @@ namespace ProLang.Compiler
 
         private void EmitVariableExpression(ILProcessor ilProcessor, BoundVariableExpression node)
         {
-            if(node.Variable is ParameterSymbol parameter)
+            if (node.Variable is ParameterSymbol parameter)
             {
                 ilProcessor.Emit(OpCodes.Ldarg, parameter.Ordinal);
             }
@@ -433,24 +449,27 @@ namespace ProLang.Compiler
 
         private void EmitLiteralExpression(ILProcessor ilProcessor, BoundLiteralExpression node)
         {
-            if(node.Type == TypeSymbol.Bool)
+            if (node.Type == TypeSymbol.Bool)
             {
                 var value = (bool)node.Value;
 
                 var instruction = value ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0;
 
                 ilProcessor.Emit(instruction);
-            }else if(node.Type == TypeSymbol.Int)
+            }
+            else if (node.Type == TypeSymbol.Int)
             {
                 var value = (int)node.Value;
 
-                ilProcessor.Emit(OpCodes.Ldc_I4,value);
-            }else if(node.Type == TypeSymbol.String)
+                ilProcessor.Emit(OpCodes.Ldc_I4, value);
+            }
+            else if (node.Type == TypeSymbol.String)
             {
                 var value = (string)node.Value;
 
-                ilProcessor.Emit(OpCodes.Ldstr,value);
-            }else
+                ilProcessor.Emit(OpCodes.Ldstr, value);
+            }
+            else
             {
                 throw new NotImplementedException($"Unexpected literal type: {node.Type}");
             }
