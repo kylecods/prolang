@@ -208,7 +208,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         var assemblyNameList = string.Join(", ", assemblyNames);
 
         var message = proLangName == null ?
-            $"The required type '{proLangName}' was found in multiple references: {assemblyNameList}."
+            $"The required type '{metaDataName}' was found in multiple references: {assemblyNameList}."
             : $"The required type '{proLangName}' ('{metaDataName}') was found in multiple references : {assemblyNameList}";
 
         Report(default, message);

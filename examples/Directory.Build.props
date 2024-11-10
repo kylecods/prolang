@@ -1,5 +1,7 @@
 <Project>
-    <PropertyGroup>
-        <DefaultLanguageSourceExtension>.prl</DefaultLanguageSourceExtension>
-    </PropertyGroup>
+
+  <PropertyGroup>
+    <DefaultLanguageSourceExtension>.prl</DefaultLanguageSourceExtension>
+  </PropertyGroup>
+
 </Project>
