@@ -182,9 +182,48 @@ public sealed class Parser
     private TypeClauseSyntax ParseTypeClause()
     {
         var colonToken = Match(SyntaxKind.ColonToken);
-        var identifier = Match(SyntaxKind.IdentifierToken);
+        var type = ParseTypeSyntax();
 
-        return new TypeClauseSyntax(_syntaxTree,colonToken, identifier);
+        return new TypeClauseSyntax(_syntaxTree, colonToken, type);
+    }
+
+    private TypeSyntax ParseTypeSyntax()
+    {
+        var identifier = Match(SyntaxKind.IdentifierToken);
+        if (Current.Kind == SyntaxKind.LessThanToken)
+        {
+            var lessThan = Match(SyntaxKind.LessThanToken);
+            var arguments = ParseGenericArguments();
+            var greaterThan = Match(SyntaxKind.GreaterThanToken);
+            return new GenericTypeSyntax(_syntaxTree, identifier, lessThan, arguments, greaterThan);
+        }
+
+        return new NameTypeSyntax(_syntaxTree, identifier);
+    }
+
+    private SeparatedSyntaxList<TypeSyntax> ParseGenericArguments()
+    {
+        var nodesAndSeparators = ImmutableArray.CreateBuilder<SyntaxNode>();
+
+        var parseNextArgument = true;
+
+        while (parseNextArgument && Current.Kind != SyntaxKind.GreaterThanToken && Current.Kind != SyntaxKind.EofToken)
+        {
+            var type = ParseTypeSyntax();
+            nodesAndSeparators.Add(type);
+
+            if (Current.Kind == SyntaxKind.CommaToken)
+            {
+                var comma = Match(SyntaxKind.CommaToken);
+                nodesAndSeparators.Add(comma);
+            }
+            else
+            {
+                parseNextArgument = false;
+            }
+        }
+
+        return new SeparatedSyntaxList<TypeSyntax>(nodesAndSeparators.ToImmutable());
     }
 
     private GlobalStatementSyntax ParseGlobalStatement()

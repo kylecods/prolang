@@ -297,8 +297,8 @@ internal sealed class Binder
             if (result is BoundExpressionStatement es)
             {
                 var isAllowedExpression = es.Expression.Kind == BoundNodeKind.BoundErrorExpression ||
-                                            es.Expression.Kind == BoundNodeKind.BoundAssignmentExpression ||
-                                            es.Expression.Kind == BoundNodeKind.BoundCallExpression;
+                                            es.Expression.Kind == BoundNodeKind.BoundCallExpression ||
+                                            es.Expression.Kind == BoundNodeKind.BoundIndexAssignmentExpression;
 
                 if (!isAllowedExpression)
                 {
@@ -426,7 +426,12 @@ internal sealed class Binder
 
     private BoundExpression BindExpression(ExpressionSyntax syntax, bool canBeVoid = false)
     {
-        var result = BindInternalExpression(syntax);
+        return BindExpression(syntax, null, canBeVoid);
+    }
+
+    private BoundExpression BindExpression(ExpressionSyntax syntax, TypeSymbol? expectedType, bool canBeVoid = false)
+    {
+        var result = BindInternalExpression(syntax, expectedType);
 
         if (!canBeVoid && result.Type == TypeSymbol.Void)
         {
@@ -506,9 +511,8 @@ internal sealed class Binder
 
     private BoundStatement BindVariableSyntax(VariableStatementSyntax syntax)
     {
-        var initializer = BindExpression(syntax.Expression);
-
         var type = BindTypeClause(syntax.TypeClause);
+        var initializer = type != null ? BindExpression(syntax.Expression, type) : BindExpression(syntax.Expression);
 
         var variableType = type ?? initializer.Type;
 
@@ -526,14 +530,66 @@ internal sealed class Binder
             return null;
         }
 
-        var type = LookupType(syntax.Identifier.Text);
+        return BindTypeSyntax(syntax.Type);
+    }
 
-        if (type == null)
+    private TypeSymbol BindTypeSyntax(TypeSyntax syntax)
+    {
+        if (syntax is NameTypeSyntax nameSyntax)
         {
-            _diagnostics.ReportUndefinedType(syntax.Identifier.Location, syntax.Identifier.Text);
+            var name = nameSyntax.Identifier.Text;
+            var type = LookupType(name);
+            if (type == null)
+            {
+                _diagnostics.ReportUndefinedType(nameSyntax.Identifier.Location, name);
+                return TypeSymbol.Error;
+            }
+            return type;
         }
 
-        return type;
+        if (syntax is GenericTypeSyntax genericSyntax)
+        {
+            var name = genericSyntax.Identifier.Text;
+            var baseType = LookupType(name);
+            if (baseType == null)
+            {
+                _diagnostics.ReportUndefinedType(genericSyntax.Identifier.Location, name);
+                return TypeSymbol.Error;
+            }
+
+            var arguments = ImmutableArray.CreateBuilder<TypeSymbol>();
+            foreach (var argSyntax in genericSyntax.Arguments)
+            {
+                arguments.Add(BindTypeSyntax(argSyntax));
+            }
+
+            return baseType.WithArgs(arguments.ToArray());
+        }
+
+        throw new Exception($"Unexpected type syntax {syntax.Kind}");
+    }
+
+    private TypeSymbol? LookupType(string name)
+    {
+        switch (name)
+        {
+            case "any":
+                return TypeSymbol.Any;
+            case "bool":
+                return TypeSymbol.Bool;
+            case "int":
+                return TypeSymbol.Int;
+            case "string":
+                return TypeSymbol.String;
+            case "void":
+                return TypeSymbol.Void;
+            case "array":
+                return TypeSymbol.Array;
+            case "map":
+                return TypeSymbol.Map;
+            default:
+                return null;
+        }
     }
 
     private BoundStatement BindProLangBlockStatement(BlockStatementSyntax syntax)
@@ -552,7 +608,7 @@ internal sealed class Binder
         return new BoundBlockStatement(statements.ToImmutableArray());
     }
 
-    public BoundExpression BindInternalExpression(ExpressionSyntax syntax)
+    public BoundExpression BindInternalExpression(ExpressionSyntax syntax, TypeSymbol? expectedType = null)
     {
         switch (syntax.Kind)
         {
@@ -571,9 +627,9 @@ internal sealed class Binder
             case SyntaxKind.CallExpression:
                 return BindCallExpression((CallExpressionSyntax)syntax);
             case SyntaxKind.ArrayExpression:
-                return BindArrayExpression((ArrayExpressionSyntax)syntax);
+                return BindArrayExpression((ArrayExpressionSyntax)syntax, expectedType);
             case SyntaxKind.MapExpression:
-                return BindMapExpression((MapExpressionSyntax)syntax);
+                return BindMapExpression((MapExpressionSyntax)syntax, expectedType);
             case SyntaxKind.IndexExpression:
                 return BindIndexExpression((IndexExpressionSyntax)syntax);
             default:
@@ -581,30 +637,49 @@ internal sealed class Binder
         }
     }
 
-    private BoundExpression BindArrayExpression(ArrayExpressionSyntax syntax)
+    private BoundExpression BindArrayExpression(ArrayExpressionSyntax syntax, TypeSymbol? expectedType = null)
     {
+        var elementType = TypeSymbol.Any;
+        if (expectedType != null && expectedType.Name == "array" && expectedType.TypeArguments.Length == 1)
+        {
+            elementType = expectedType.TypeArguments[0];
+        }
+
         var boundElements = ImmutableArray.CreateBuilder<BoundExpression>();
         foreach (var element in syntax.Elements)
         {
             var boundElement = BindExpression(element);
-            var convertedElement = BindConversion(element.Location, boundElement, TypeSymbol.Any);
+            var convertedElement = BindConversion(element.Location, boundElement, elementType);
             boundElements.Add(convertedElement);
         }
-        return new BoundArrayExpression(boundElements.ToImmutable());
+        
+        var resultType = TypeSymbol.Array.WithArgs(elementType);
+        return new BoundArrayExpression(boundElements.ToImmutable(), resultType);
     }
 
-    private BoundExpression BindMapExpression(MapExpressionSyntax syntax)
+    private BoundExpression BindMapExpression(MapExpressionSyntax syntax, TypeSymbol? expectedType = null)
     {
+        var keyType = TypeSymbol.Any;
+        var valueType = TypeSymbol.Any;
+
+        if (expectedType != null && expectedType.Name == "map" && expectedType.TypeArguments.Length == 2)
+        {
+            keyType = expectedType.TypeArguments[0];
+            valueType = expectedType.TypeArguments[1];
+        }
+
         var boundEntries = ImmutableArray.CreateBuilder<(BoundExpression Key, BoundExpression Value)>();
         foreach (var entry in syntax.Entries)
         {
             var key = BindExpression(entry.Key);
-            var convertedKey = BindConversion(entry.Key.Location, key, TypeSymbol.Any);
+            var convertedKey = BindConversion(entry.Key.Location, key, keyType);
             var value = BindExpression(entry.Value);
-            var convertedValue = BindConversion(entry.Value.Location, value, TypeSymbol.Any);
+            var convertedValue = BindConversion(entry.Value.Location, value, valueType);
             boundEntries.Add((convertedKey, convertedValue));
         }
-        return new BoundMapExpression(boundEntries.ToImmutable());
+        
+        var resultType = TypeSymbol.Map.WithArgs(keyType, valueType);
+        return new BoundMapExpression(boundEntries.ToImmutable(), resultType);
     }
 
     private BoundExpression BindIndexExpression(IndexExpressionSyntax syntax)
@@ -612,16 +687,28 @@ internal sealed class Binder
         var expression = BindExpression(syntax.Expression);
         var index = BindExpression(syntax.Index);
         
-        if (expression.Type == TypeSymbol.Array)
+        var resultType = TypeSymbol.Any;
+
+        if (expression.Type.Name == "array")
         {
             index = BindConversion(syntax.Index.Location, index, TypeSymbol.Int);
+            if (expression.Type.TypeArguments.Length == 1)
+            {
+                resultType = expression.Type.TypeArguments[0];
+            }
         }
-        else if (expression.Type == TypeSymbol.Map)
+        else if (expression.Type.Name == "map")
         {
-            index = BindConversion(syntax.Index.Location, index, TypeSymbol.Any);
+            var keyType = TypeSymbol.Any;
+            if (expression.Type.TypeArguments.Length == 2)
+            {
+                keyType = expression.Type.TypeArguments[0];
+                resultType = expression.Type.TypeArguments[1];
+            }
+            index = BindConversion(syntax.Index.Location, index, keyType);
         }
 
-        return new BoundIndexExpression(expression, index);
+        return new BoundIndexExpression(expression, index, resultType);
     }
 
     private BoundExpression BindAssignmentExpression(AssignmentExpressionSyntax syntax)
@@ -639,16 +726,8 @@ internal sealed class Binder
         {
             var expression = indexExpression.Expression;
             var index = indexExpression.Index;
-            var value = BindConversion(syntax.Right.Location, boundRhs, TypeSymbol.Any);
-
-            if (expression.Type == TypeSymbol.Array)
-            {
-                index = BindConversion(syntax.Left.Location, index, TypeSymbol.Int);
-            }
-            else if (expression.Type == TypeSymbol.Map)
-            {
-                index = BindConversion(syntax.Left.Location, index, TypeSymbol.Any);
-            }
+            var valueType = indexExpression.Type;
+            var value = BindConversion(syntax.Right.Location, boundRhs, valueType);
 
             return new BoundIndexAssignmentExpression(expression, index, value);
         }
@@ -770,7 +849,7 @@ internal sealed class Binder
 
     private BoundExpression BindConversion(ExpressionSyntax syntax, TypeSymbol type, bool allowExplicit = false)
     {
-        var expression = BindExpression(syntax);
+        var expression = BindExpression(syntax, expectedType: type);
 
         return BindConversion(syntax.Location, expression, type, allowExplicit);
     }
@@ -817,28 +896,4 @@ internal sealed class Binder
 
         return variable;
     }
-
-    private TypeSymbol? LookupType(string name)
-    {
-        switch (name)
-        {
-            case "any":
-                return TypeSymbol.Any;
-            case "bool":
-                return TypeSymbol.Bool;
-            case "int":
-                return TypeSymbol.Int;
-            case "string":
-                return TypeSymbol.String;
-            case "void":
-                return TypeSymbol.Void;
-            case "array":
-                return TypeSymbol.Array;
-            case "map":
-                return TypeSymbol.Map;
-            default:
-                return null;
-        }
-    }
-
 }

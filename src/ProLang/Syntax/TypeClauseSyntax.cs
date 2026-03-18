@@ -1,16 +1,16 @@
-﻿namespace ProLang.Syntax;
+namespace ProLang.Syntax;
 
 public sealed class TypeClauseSyntax : SyntaxNode
 {
-    public TypeClauseSyntax(SyntaxTree syntaxTree,SyntaxToken colonToken, SyntaxToken identifier) : base(syntaxTree)
+    public TypeClauseSyntax(SyntaxTree syntaxTree, SyntaxToken colonToken, TypeSyntax type) : base(syntaxTree)
     {
         ColonToken = colonToken;
-        Identifier = identifier;
+        Type = type;
     }
 
     public override SyntaxKind Kind => SyntaxKind.TypeClause;
     
     public SyntaxToken ColonToken { get; }
     
-    public SyntaxToken Identifier { get; }
+    public TypeSyntax Type { get; }
 }

@@ -110,6 +110,8 @@ public enum SyntaxKind
     HtmlDeclaration,
     FunctionDeclaration,
     TypeClause,
+    NameType,
+    GenericType,
     Parameter,
     
     //html groups

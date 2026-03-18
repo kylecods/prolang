@@ -237,7 +237,7 @@ internal abstract class BoundTreeRewriter
             return node;
         }
 
-        return new BoundArrayExpression(builder.MoveToImmutable());
+        return new BoundArrayExpression(builder.MoveToImmutable(), node.Type);
     }
 
     protected virtual BoundExpression RewriteMapExpression(BoundMapExpression node)
@@ -273,7 +273,7 @@ internal abstract class BoundTreeRewriter
             return node;
         }
 
-        return new BoundMapExpression(builder.MoveToImmutable());
+        return new BoundMapExpression(builder.MoveToImmutable(), node.Type);
     }
 
     protected virtual BoundExpression RewriteIndexExpression(BoundIndexExpression node)
@@ -286,7 +286,7 @@ internal abstract class BoundTreeRewriter
             return node;
         }
 
-        return new BoundIndexExpression(expression, index);
+        return new BoundIndexExpression(expression, index, node.Type);
     }
 
     protected virtual BoundExpression RewriteIndexAssignmentExpression(BoundIndexAssignmentExpression node)

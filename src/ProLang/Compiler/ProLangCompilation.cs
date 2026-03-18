@@ -1,4 +1,4 @@
-﻿using System.Collections.Immutable;
+using System.Collections.Immutable;
 using ProLang.Intermediate;
 using ProLang.Interpreter;
 using ProLang.Parse;
@@ -181,9 +181,20 @@ public sealed class ProLangCompilation
 
     public ImmutableArray<Diagnostic> Emit(string moduleName, string[] references, string outputPath)
     {
-        var program = GetProgram();
+        var parseDiagnostics = SyntaxTrees.SelectMany(st => st.Diagnostics);
+        var diagnostics = parseDiagnostics.Concat(GlobalScope.Diagnostics).ToImmutableArray();
+        if (diagnostics.Any())
+        {
+            return diagnostics;
+        }
 
-        return Emitter.Emit(program,moduleName, references, outputPath);
+        var program = GetProgram();
+        if (program.Diagnostics.Any())
+        {
+            return program.Diagnostics.ToImmutableArray();
+        }
+
+        return Emitter.Emit(program, moduleName, references, outputPath);
     }
 
 }
