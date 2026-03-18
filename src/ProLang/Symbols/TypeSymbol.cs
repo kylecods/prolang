@@ -1,4 +1,4 @@
-﻿namespace ProLang.Symbols;
+namespace ProLang.Symbols;
 
 public sealed class TypeSymbol : Symbol
 {
@@ -8,6 +8,8 @@ public sealed class TypeSymbol : Symbol
     public static readonly TypeSymbol String = new("string");
     public static readonly TypeSymbol Void = new("void");
     public static readonly TypeSymbol Any = new("any");
+    public static readonly TypeSymbol Array = new("array");
+    public static readonly TypeSymbol Map = new("map");
     private TypeSymbol(string name) : base(name)
     {
     }

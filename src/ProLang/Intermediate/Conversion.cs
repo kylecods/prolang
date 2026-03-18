@@ -1,4 +1,4 @@
-﻿using ProLang.Symbols;
+using ProLang.Symbols;
 
 namespace ProLang.Intermediate;
 
@@ -45,13 +45,33 @@ internal sealed class Conversion
             return Explicit;
         }
 
+        if (from == TypeSymbol.Any)
+        {
+            if (to == TypeSymbol.String)
+            {
+                return Implicit;
+            }
+
+            if (to == TypeSymbol.Bool || to == TypeSymbol.Int || to == TypeSymbol.Array || to == TypeSymbol.Map)
+            {
+                return Explicit;
+            }
+        }
+
+        if (from == TypeSymbol.Array || from == TypeSymbol.Map)
+        {
+            if (to == TypeSymbol.String)
+            {
+                return Explicit;
+            }
+        }
+
         if (from == TypeSymbol.Bool || from == TypeSymbol.Int)
         {
             if (to == TypeSymbol.String)
             {
                 return Explicit;
             }
-            
         }
 
         if (from == TypeSymbol.String)

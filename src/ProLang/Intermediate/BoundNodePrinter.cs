@@ -1,4 +1,4 @@
-﻿using System.CodeDom.Compiler;
+using System.CodeDom.Compiler;
 using ProLang.Symbols;
 using ProLang.Syntax;
 using ProLang.Text;
@@ -77,6 +77,18 @@ internal static class BoundNodePrinter
                 break;
             case BoundNodeKind.BoundConversionExpression:
                 WriteConversionExpression((BoundConversionExpression)node, writer);
+                break;
+            case BoundNodeKind.BoundArrayExpression:
+                WriteArrayExpression((BoundArrayExpression)node, writer);
+                break;
+            case BoundNodeKind.BoundMapExpression:
+                WriteMapExpression((BoundMapExpression)node, writer);
+                break;
+            case BoundNodeKind.BoundIndexExpression:
+                WriteIndexExpression((BoundIndexExpression)node, writer);
+                break;
+            case BoundNodeKind.BoundIndexAssignmentExpression:
+                WriteIndexAssignmentExpression((BoundIndexAssignmentExpression)node, writer);
                 break;
             default:
                 throw new Exception($"Unexpected node {node.Kind}");
@@ -363,4 +375,48 @@ internal static class BoundNodePrinter
         writer.WriteLine();
     }
 
+    private static void WriteArrayExpression(BoundArrayExpression node, IndentedTextWriter writer)
+    {
+        writer.WritePunctuation("[");
+        var isFirst = true;
+        foreach (var element in node.Elements)
+        {
+            if (isFirst) isFirst = false;
+            else writer.WritePunctuation(", ");
+            element.WriteTo(writer);
+        }
+        writer.WritePunctuation("]");
+    }
+
+    private static void WriteMapExpression(BoundMapExpression node, IndentedTextWriter writer)
+    {
+        writer.WritePunctuation("{");
+        var isFirst = true;
+        foreach (var entry in node.Entries)
+        {
+            if (isFirst) isFirst = false;
+            else writer.WritePunctuation(", ");
+            entry.Key.WriteTo(writer);
+            writer.WritePunctuation(": ");
+            entry.Value.WriteTo(writer);
+        }
+        writer.WritePunctuation("}");
+    }
+
+    private static void WriteIndexExpression(BoundIndexExpression node, IndentedTextWriter writer)
+    {
+        node.Expression.WriteTo(writer);
+        writer.WritePunctuation("[");
+        node.Index.WriteTo(writer);
+        writer.WritePunctuation("]");
+    }
+
+    private static void WriteIndexAssignmentExpression(BoundIndexAssignmentExpression node, IndentedTextWriter writer)
+    {
+        node.LHS.WriteTo(writer);
+        writer.WritePunctuation("[");
+        node.Index.WriteTo(writer);
+        writer.WritePunctuation("] = ");
+        node.RHS.WriteTo(writer);
+    }
 }

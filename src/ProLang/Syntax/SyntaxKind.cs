@@ -1,4 +1,4 @@
-﻿namespace ProLang.Syntax;
+namespace ProLang.Syntax;
 
 public enum SyntaxKind
 {
@@ -30,6 +30,8 @@ public enum SyntaxKind
     RightParenthesisToken,// ')'
     LeftCurlyToken,// '{'
     RightCurlyToken,// '}'
+    LeftBracketToken, // '['
+    RightBracketToken, // ']'
     HatToken, // '^'
     LessThanToken,//Can be used as open angle in html '<'div..
     GreaterThanToken,//Can be used as open angle in html ..div'>'
@@ -81,6 +83,10 @@ public enum SyntaxKind
     AssignmentExpression,
     NameExpression,
     CallExpression,
+    ArrayExpression,
+    MapExpression,
+    IndexExpression,
+    MapEntry,
     
     //statements
     VariableDeclaration,

@@ -1,4 +1,4 @@
-﻿using System.Text;
+using System.Text;
 using ProLang.Symbols;
 using ProLang.Syntax;
 using ProLang.Text;
@@ -222,6 +222,14 @@ internal sealed class Lexer
                 break;
             case '}':
                 _kind = SyntaxKind.RightCurlyToken;
+                _position++;
+                break;
+            case '[':
+                _kind = SyntaxKind.LeftBracketToken;
+                _position++;
+                break;
+            case ']':
+                _kind = SyntaxKind.RightBracketToken;
                 _position++;
                 break;
             case '"':

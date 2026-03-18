@@ -1,4 +1,4 @@
-﻿namespace ProLang.Intermediate;
+namespace ProLang.Intermediate;
 
 public enum  BoundNodeKind
 {
@@ -24,5 +24,9 @@ public enum  BoundNodeKind
     BoundAssignmentExpression,
     BoundErrorExpression,
     BoundCallExpression,
-    BoundConversionExpression
+    BoundConversionExpression,
+    BoundArrayExpression,
+    BoundMapExpression,
+    BoundIndexExpression,
+    BoundIndexAssignmentExpression
 }

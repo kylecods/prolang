@@ -1,21 +1,17 @@
-﻿namespace ProLang.Syntax;
+namespace ProLang.Syntax;
 
 internal sealed class AssignmentExpressionSyntax : ExpressionSyntax
 {
-    public AssignmentExpressionSyntax(SyntaxTree syntaxTree,SyntaxToken identifierToken, SyntaxToken equalsToken, ExpressionSyntax expression)
+    public AssignmentExpressionSyntax(SyntaxTree syntaxTree, ExpressionSyntax left, SyntaxToken operatorToken, ExpressionSyntax right)
     :base(syntaxTree)
     {
-        IdentifierToken = identifierToken;
-        
-        EqualsToken = equalsToken;
-        
-        Expression = expression;
+        Left = left;
+        OperatorToken = operatorToken;
+        Right = right;
     }
 
-    public SyntaxToken IdentifierToken { get; }
-    
-    public SyntaxToken EqualsToken { get; }
-
-    public ExpressionSyntax Expression { get; }
+    public ExpressionSyntax Left { get; }
+    public SyntaxToken OperatorToken { get; }
+    public ExpressionSyntax Right { get; }
     public override SyntaxKind Kind => SyntaxKind.AssignmentExpression;
 }

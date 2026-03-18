@@ -1,4 +1,4 @@
-﻿using System.Collections;
+using System.Collections;
 using Mono.Cecil;
 using ProLang.Symbols;
 using ProLang.Syntax;
@@ -221,5 +221,11 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         var message = $"The required method '{typeName}.{methodName}({parameterTypeNameList})' cannot be resolved among the given references.";
 
         Report(default, message);
+    }
+
+    public void ReportInvalidAssignmentTarget(TextLocation location)
+    {
+        var message = "Invalid assignment target.";
+        Report(location, message);
     }
 }

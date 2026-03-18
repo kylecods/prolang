@@ -1,4 +1,4 @@
-﻿using ProLang.Intermediate;
+using ProLang.Intermediate;
 using ProLang.Symbols;
 
 namespace ProLang.Interpreter;
@@ -242,11 +242,80 @@ internal sealed class Evaluator
                 return EvaluateCallExpression((BoundCallExpression)node)!;
             case BoundNodeKind.BoundConversionExpression:
                 return EvaluateConversionExpression((BoundConversionExpression)node);
+            case BoundNodeKind.BoundArrayExpression:
+                return EvaluateArrayExpression((BoundArrayExpression)node);
+            case BoundNodeKind.BoundMapExpression:
+                return EvaluateMapExpression((BoundMapExpression)node);
+            case BoundNodeKind.BoundIndexExpression:
+                return EvaluateIndexExpression((BoundIndexExpression)node);
+            case BoundNodeKind.BoundIndexAssignmentExpression:
+                return EvaluateIndexAssignmentExpression((BoundIndexAssignmentExpression)node);
             default:
                 throw new Exception($"Unexpected node {node.Kind}");
         }
     }
-    
+
+    private object EvaluateArrayExpression(BoundArrayExpression node)
+    {
+        var elements = new List<object>();
+        foreach (var element in node.Elements)
+        {
+            elements.Add(EvaluateExpression(element));
+        }
+        return elements;
+    }
+
+    private object EvaluateMapExpression(BoundMapExpression node)
+    {
+        var entries = new Dictionary<object, object>();
+        foreach (var entry in node.Entries)
+        {
+            var key = EvaluateExpression(entry.Key);
+            var value = EvaluateExpression(entry.Value);
+            entries.Add(key, value);
+        }
+        return entries;
+    }
+
+    private object EvaluateIndexExpression(BoundIndexExpression node)
+    {
+        var expression = EvaluateExpression(node.Expression);
+        var index = EvaluateExpression(node.Index);
+
+        if (expression is List<object> array)
+        {
+            return array[Convert.ToInt32(index)];
+        }
+        else if (expression is Dictionary<object, object> map)
+        {
+            return map[index];
+        }
+
+        throw new Exception($"Cannot index type {expression?.GetType()}");
+    }
+
+    private object EvaluateIndexAssignmentExpression(BoundIndexAssignmentExpression node)
+    {
+        var lhs = EvaluateExpression(node.LHS);
+        var index = EvaluateExpression(node.Index);
+        var rhs = EvaluateExpression(node.RHS);
+
+        if (lhs is List<object> array)
+        {
+            array[Convert.ToInt32(index)] = rhs;
+        }
+        else if (lhs is Dictionary<object, object> map)
+        {
+            map[index] = rhs;
+        }
+        else
+        {
+            throw new Exception($"Cannot assign to index of type {lhs?.GetType()}");
+        }
+
+        return rhs;
+    }
+
     private object? EvaluateCallExpression(BoundCallExpression node)
     {
         if (node.Function == BuiltInFunctions.ReadInput)
@@ -361,6 +430,11 @@ internal sealed class Evaluator
         if (node.Type == TypeSymbol.String)
         {
             return Convert.ToString(value)!;
+        }
+
+        if (node.Type == TypeSymbol.Array || node.Type == TypeSymbol.Map)
+        {
+            return value;
         }
 
         throw new Exception($"Unexpected type {node.Type}");

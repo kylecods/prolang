@@ -1,4 +1,4 @@
-﻿using ProLang.Symbols;
+using ProLang.Symbols;
 using ProLang.Syntax;
 
 namespace ProLang.Intermediate;
@@ -62,9 +62,9 @@ internal sealed class BoundBinaryOperator
             new (SyntaxKind.AmpersandAmpersandToken, BoundBinaryOperatorKind.LogicalAnd, TypeSymbol.Bool),
             new (SyntaxKind.PipePipeToken, BoundBinaryOperatorKind.LogicalOr, TypeSymbol.Bool),
             
-            new(SyntaxKind.PlusToken,BoundBinaryOperatorKind.Addition,TypeSymbol.String)
-            
-            
+            new(SyntaxKind.PlusToken,BoundBinaryOperatorKind.Addition,TypeSymbol.String),
+            new(SyntaxKind.PlusToken,BoundBinaryOperatorKind.Addition,TypeSymbol.String, TypeSymbol.Any, TypeSymbol.String),
+            new(SyntaxKind.PlusToken,BoundBinaryOperatorKind.Addition, TypeSymbol.Any, TypeSymbol.String, TypeSymbol.String)
         };
 
         public static BoundBinaryOperator? Bind(SyntaxKind syntaxKind, TypeSymbol leftType, TypeSymbol rightType)

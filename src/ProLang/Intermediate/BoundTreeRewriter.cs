@@ -1,4 +1,4 @@
-﻿using System.Collections.Immutable;
+using System.Collections.Immutable;
 
 namespace ProLang.Intermediate;
 
@@ -192,9 +192,115 @@ internal abstract class BoundTreeRewriter
                 return RewriteCallExpression((BoundCallExpression)node);
             case BoundNodeKind.BoundConversionExpression:
                 return RewriteConversionExpression((BoundConversionExpression)node);
+            case BoundNodeKind.BoundArrayExpression:
+                return RewriteArrayExpression((BoundArrayExpression)node);
+            case BoundNodeKind.BoundMapExpression:
+                return RewriteMapExpression((BoundMapExpression)node);
+            case BoundNodeKind.BoundIndexExpression:
+                return RewriteIndexExpression((BoundIndexExpression)node);
+            case BoundNodeKind.BoundIndexAssignmentExpression:
+                return RewriteIndexAssignmentExpression((BoundIndexAssignmentExpression)node);
             default:
                 throw new Exception($"Unexpected node: {node.Kind}");
         }
+    }
+
+    protected virtual BoundExpression RewriteArrayExpression(BoundArrayExpression node)
+    {
+        ImmutableArray<BoundExpression>.Builder? builder = null;
+
+        for (int i = 0; i < node.Elements.Length; i++)
+        {
+            var oldElement = node.Elements[i];
+            var newElement = RewriteExpression(oldElement);
+            if (newElement != oldElement)
+            {
+                if (builder == null)
+                {
+                    builder = ImmutableArray.CreateBuilder<BoundExpression>(node.Elements.Length);
+
+                    for (int j = 0; j < i; j++)
+                    {
+                        builder.Add(node.Elements[j]);
+                    }
+                }
+            }
+
+            if (builder != null)
+            {
+                builder.Add(newElement);
+            }
+        }
+
+        if (builder == null)
+        {
+            return node;
+        }
+
+        return new BoundArrayExpression(builder.MoveToImmutable());
+    }
+
+    protected virtual BoundExpression RewriteMapExpression(BoundMapExpression node)
+    {
+        ImmutableArray<(BoundExpression Key, BoundExpression Value)>.Builder? builder = null;
+
+        for (int i = 0; i < node.Entries.Length; i++)
+        {
+            var oldEntry = node.Entries[i];
+            var newKey = RewriteExpression(oldEntry.Key);
+            var newValue = RewriteExpression(oldEntry.Value);
+            if (newKey != oldEntry.Key || newValue != oldEntry.Value)
+            {
+                if (builder == null)
+                {
+                    builder = ImmutableArray.CreateBuilder<(BoundExpression Key, BoundExpression Value)>(node.Entries.Length);
+
+                    for (int j = 0; j < i; j++)
+                    {
+                        builder.Add(node.Entries[j]);
+                    }
+                }
+            }
+
+            if (builder != null)
+            {
+                builder.Add((newKey, newValue));
+            }
+        }
+
+        if (builder == null)
+        {
+            return node;
+        }
+
+        return new BoundMapExpression(builder.MoveToImmutable());
+    }
+
+    protected virtual BoundExpression RewriteIndexExpression(BoundIndexExpression node)
+    {
+        var expression = RewriteExpression(node.Expression);
+        var index = RewriteExpression(node.Index);
+
+        if (expression == node.Expression && index == node.Index)
+        {
+            return node;
+        }
+
+        return new BoundIndexExpression(expression, index);
+    }
+
+    protected virtual BoundExpression RewriteIndexAssignmentExpression(BoundIndexAssignmentExpression node)
+    {
+        var lhs = RewriteExpression(node.LHS);
+        var index = RewriteExpression(node.Index);
+        var rhs = RewriteExpression(node.RHS);
+
+        if (lhs == node.LHS && index == node.Index && rhs == node.RHS)
+        {
+            return node;
+        }
+
+        return new BoundIndexAssignmentExpression(lhs, index, rhs);
     }
 
     protected virtual BoundExpression RewriteCallExpression(BoundCallExpression node)

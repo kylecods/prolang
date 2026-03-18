@@ -1,4 +1,4 @@
-﻿using System.Collections.Immutable;
+using System.Collections.Immutable;
 using ProLang.Lowering;
 using ProLang.Parse;
 using ProLang.Symbols;
@@ -570,25 +570,91 @@ internal sealed class Binder
                 return BindBinaryExpression((BinaryExpressionSyntax)syntax);
             case SyntaxKind.CallExpression:
                 return BindCallExpression((CallExpressionSyntax)syntax);
+            case SyntaxKind.ArrayExpression:
+                return BindArrayExpression((ArrayExpressionSyntax)syntax);
+            case SyntaxKind.MapExpression:
+                return BindMapExpression((MapExpressionSyntax)syntax);
+            case SyntaxKind.IndexExpression:
+                return BindIndexExpression((IndexExpressionSyntax)syntax);
             default:
                 throw new Exception($"Unknown syntax kind {syntax.Kind}");
         }
     }
 
-    private BoundExpression BindAssignmentExpression(AssignmentExpressionSyntax syntax)
+    private BoundExpression BindArrayExpression(ArrayExpressionSyntax syntax)
     {
-        var name = syntax.IdentifierToken.Text;
-        var boundExpression = BindExpression(syntax.Expression);
-
-        if (!_scope.TryLookupVariable(name, out var variable))
+        var boundElements = ImmutableArray.CreateBuilder<BoundExpression>();
+        foreach (var element in syntax.Elements)
         {
-            _diagnostics.ReportUndefinedName(syntax.IdentifierToken.Location, name);
-            return boundExpression;
+            var boundElement = BindExpression(element);
+            var convertedElement = BindConversion(element.Location, boundElement, TypeSymbol.Any);
+            boundElements.Add(convertedElement);
+        }
+        return new BoundArrayExpression(boundElements.ToImmutable());
+    }
+
+    private BoundExpression BindMapExpression(MapExpressionSyntax syntax)
+    {
+        var boundEntries = ImmutableArray.CreateBuilder<(BoundExpression Key, BoundExpression Value)>();
+        foreach (var entry in syntax.Entries)
+        {
+            var key = BindExpression(entry.Key);
+            var convertedKey = BindConversion(entry.Key.Location, key, TypeSymbol.Any);
+            var value = BindExpression(entry.Value);
+            var convertedValue = BindConversion(entry.Value.Location, value, TypeSymbol.Any);
+            boundEntries.Add((convertedKey, convertedValue));
+        }
+        return new BoundMapExpression(boundEntries.ToImmutable());
+    }
+
+    private BoundExpression BindIndexExpression(IndexExpressionSyntax syntax)
+    {
+        var expression = BindExpression(syntax.Expression);
+        var index = BindExpression(syntax.Index);
+        
+        if (expression.Type == TypeSymbol.Array)
+        {
+            index = BindConversion(syntax.Index.Location, index, TypeSymbol.Int);
+        }
+        else if (expression.Type == TypeSymbol.Map)
+        {
+            index = BindConversion(syntax.Index.Location, index, TypeSymbol.Any);
         }
 
-        var convertedExpression = BindConversion(syntax.Expression.Location, boundExpression, variable.Type);
+        return new BoundIndexExpression(expression, index);
+    }
 
-        return new BoundAssignmentExpression(variable, convertedExpression);
+    private BoundExpression BindAssignmentExpression(AssignmentExpressionSyntax syntax)
+    {
+        var boundLhs = BindExpression(syntax.Left);
+        var boundRhs = BindExpression(syntax.Right);
+
+        if (boundLhs is BoundVariableExpression variableExpression)
+        {
+            var variable = variableExpression.Variable;
+            var convertedExpression = BindConversion(syntax.Right.Location, boundRhs, variable.Type);
+            return new BoundAssignmentExpression(variable, convertedExpression);
+        }
+        else if (boundLhs is BoundIndexExpression indexExpression)
+        {
+            var expression = indexExpression.Expression;
+            var index = indexExpression.Index;
+            var value = BindConversion(syntax.Right.Location, boundRhs, TypeSymbol.Any);
+
+            if (expression.Type == TypeSymbol.Array)
+            {
+                index = BindConversion(syntax.Left.Location, index, TypeSymbol.Int);
+            }
+            else if (expression.Type == TypeSymbol.Map)
+            {
+                index = BindConversion(syntax.Left.Location, index, TypeSymbol.Any);
+            }
+
+            return new BoundIndexAssignmentExpression(expression, index, value);
+        }
+
+        _diagnostics.ReportInvalidAssignmentTarget(syntax.Left.Location);
+        return boundRhs;
     }
 
     private BoundExpression BindParenthesizedExpression(ParenthesisExpressionSyntax syntax)
@@ -766,6 +832,10 @@ internal sealed class Binder
                 return TypeSymbol.String;
             case "void":
                 return TypeSymbol.Void;
+            case "array":
+                return TypeSymbol.Array;
+            case "map":
+                return TypeSymbol.Map;
             default:
                 return null;
         }

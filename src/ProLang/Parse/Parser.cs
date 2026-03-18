@@ -1,4 +1,4 @@
-﻿using System.Collections.Immutable;
+using System.Collections.Immutable;
 using ProLang.Syntax;
 using ProLang.Text;
 
@@ -406,24 +406,20 @@ public sealed class Parser
 
     private ExpressionSyntax ParseAssignmentExpression()
     {
-        if (Peek(0).Kind == SyntaxKind.IdentifierToken)
+        var left = ParseBinaryExpression();
+
+        if (Current.Kind == SyntaxKind.EqualsToken ||
+            Current.Kind == SyntaxKind.PlusEqualsToken ||
+            Current.Kind == SyntaxKind.MinusEqualsToken ||
+            Current.Kind == SyntaxKind.StarEqualsToken ||
+            Current.Kind == SyntaxKind.SlashEqualsToken)
         {
-            switch (Peek(1).Kind)
-            {
-                case SyntaxKind.PlusEqualsToken:
-                case SyntaxKind.MinusEqualsToken:
-                case SyntaxKind.StarEqualsToken:
-                case SyntaxKind.SlashEqualsToken:
-                case SyntaxKind.EqualsToken:
-                    var identifierToken = NextToken();
-                    var operatorToken = NextToken();
-                    var expression = ParseAssignmentExpression();
-                    return new AssignmentExpressionSyntax(_syntaxTree,identifierToken, operatorToken, expression);
-                    
-            }
+            var operatorToken = NextToken();
+            var right = ParseAssignmentExpression();
+            return new AssignmentExpressionSyntax(_syntaxTree, left, operatorToken, right);
         }
 
-        return ParseBinaryExpression();
+        return left;
     }
 
     private ExpressionSyntax ParsePrimaryExpression()
@@ -443,11 +439,104 @@ public sealed class Parser
                 return ParseNumberLiteral(); 
             case SyntaxKind.StringToken:
                 return ParseStringLiteral();
+            case SyntaxKind.LeftBracketToken:
+                return ParseArrayLiteral();
+            case SyntaxKind.LeftCurlyToken:
+                return ParseMapLiteral();
             case SyntaxKind.IdentifierToken:
             default:
                 
-                return ParseNameOrCallExpression();
+                return ParsePostFixExpression();
         }
+    }
+
+    private ExpressionSyntax ParseArrayLiteral()
+    {
+        var leftBracket = Match(SyntaxKind.LeftBracketToken);
+        var elements = ParseArrayElements();
+        var rightBracket = Match(SyntaxKind.RightBracketToken);
+        return new ArrayExpressionSyntax(_syntaxTree, leftBracket, elements, rightBracket);
+    }
+
+    private SeparatedSyntaxList<ExpressionSyntax> ParseArrayElements()
+    {
+        var nodesAndSeparators = ImmutableArray.CreateBuilder<SyntaxNode>();
+
+        var parseNextElement = true;
+
+        while (parseNextElement && Current.Kind != SyntaxKind.RightBracketToken && Current.Kind != SyntaxKind.EofToken)
+        {
+            var expression = ParseExpression();
+            nodesAndSeparators.Add(expression);
+
+            if (Current.Kind == SyntaxKind.CommaToken)
+            {
+                var comma = Match(SyntaxKind.CommaToken);
+                nodesAndSeparators.Add(comma);
+            }
+            else
+            {
+                parseNextElement = false;
+            }
+        }
+
+        return new SeparatedSyntaxList<ExpressionSyntax>(nodesAndSeparators.ToImmutable());
+    }
+
+    private ExpressionSyntax ParseMapLiteral()
+    {
+        var leftCurly = Match(SyntaxKind.LeftCurlyToken);
+        var entries = ParseMapEntries();
+        var rightCurly = Match(SyntaxKind.RightCurlyToken);
+        return new MapExpressionSyntax(_syntaxTree, leftCurly, entries, rightCurly);
+    }
+
+    private SeparatedSyntaxList<MapEntrySyntax> ParseMapEntries()
+    {
+        var nodesAndSeparators = ImmutableArray.CreateBuilder<SyntaxNode>();
+
+        var parseNextEntry = true;
+
+        while (parseNextEntry && Current.Kind != SyntaxKind.RightCurlyToken && Current.Kind != SyntaxKind.EofToken)
+        {
+            var entry = ParseMapEntry();
+            nodesAndSeparators.Add(entry);
+
+            if (Current.Kind == SyntaxKind.CommaToken)
+            {
+                var comma = Match(SyntaxKind.CommaToken);
+                nodesAndSeparators.Add(comma);
+            }
+            else
+            {
+                parseNextEntry = false;
+            }
+        }
+
+        return new SeparatedSyntaxList<MapEntrySyntax>(nodesAndSeparators.ToImmutable());
+    }
+
+    private MapEntrySyntax ParseMapEntry()
+    {
+        var key = ParseExpression();
+        var colon = Match(SyntaxKind.ColonToken);
+        var value = ParseExpression();
+        return new MapEntrySyntax(_syntaxTree, key, colon, value);
+    }
+
+    private ExpressionSyntax ParsePostFixExpression()
+    {
+        var expression = ParseNameOrCallExpression();
+
+        while (Current.Kind == SyntaxKind.LeftBracketToken)
+        {
+            var leftBracket = Match(SyntaxKind.LeftBracketToken);
+            var index = ParseExpression();
+            var rightBracket = Match(SyntaxKind.RightBracketToken);
+            expression = new IndexExpressionSyntax(_syntaxTree, expression, leftBracket, index, rightBracket);
+        }
+
+        return expression;
     }
 
     private ExpressionSyntax ParseNameOrCallExpression()

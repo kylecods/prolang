@@ -1,4 +1,4 @@
-﻿using Mono.Options;
+using Mono.Options;
 using ProLang.Compiler;
 using ProLang.Symbols;
 using ProLang.Syntax;
@@ -88,18 +88,22 @@ internal sealed class Program
         //parse the source tree
         var compilation = ProLangCompilation.Create(syntaxTrees.ToArray());
         //run or interpret the content
-        var diagnostics = compilation.Emit(moduleName,referencePaths.ToArray(),outputPath);
-
-
-        if (diagnostics.Any())
+        try
         {
-            
-            Console.Error.WriteDiagnostics(diagnostics);
+            var diagnostics = compilation.Emit(moduleName, referencePaths.ToArray(), outputPath);
 
+            if (diagnostics.Any())
+            {
+                Console.Error.WriteDiagnostics(diagnostics);
+                return 1;
+            }
+
+            return 0;
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine(ex.ToString());
             return 1;
         }
-
-        return 0;
-
     }
 }

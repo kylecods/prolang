@@ -1,4 +1,4 @@
-﻿using Mono.Cecil;
+using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Mono.Cecil.Rocks;
 using ProLang.Intermediate;
@@ -19,6 +19,16 @@ namespace ProLang.Compiler
         private readonly MethodReference _stringConcatReference;
         private readonly MethodReference _minReference;
         private readonly MethodReference _maxReference;
+
+        private readonly MethodReference _arrayListConstructor;
+        private readonly MethodReference _arrayListAddReference;
+        private readonly MethodReference _arrayListGetReference;
+        private readonly MethodReference _arrayListSetReference;
+
+        private readonly MethodReference _hashtableConstructor;
+        private readonly MethodReference _hashtableAddReference;
+        private readonly MethodReference _hashtableGetReference;
+        private readonly MethodReference _hashtableSetReference;
 
         private readonly AssemblyDefinition _assemblyDefinition;
 
@@ -54,6 +64,8 @@ namespace ProLang.Compiler
                 (TypeSymbol.Int, "System.Int32"),
                 (TypeSymbol.String, "System.String"),
                 (TypeSymbol.Void, "System.Void"),
+                (TypeSymbol.Array, "System.Collections.ArrayList"),
+                (TypeSymbol.Map, "System.Collections.Hashtable"),
             };
 
             var assemblyName = new AssemblyNameDefinition(moduleName, new Version(1, 0));
@@ -154,11 +166,21 @@ namespace ProLang.Compiler
 
             _consoleReadLineReference = ResolveMethod("System.Console", "ReadLine", Array.Empty<string>());
 
-            _stringConcatReference = ResolveMethod("System.String", "Concat", new[] { "System.String", "System.String" });
+            _stringConcatReference = ResolveMethod("System.String", "Concat", new[] { "System.Object", "System.Object" });
 
             _minReference = ResolveMethod("System.Math", "Min", new[] { "System.Int32", "System.Int32" });
 
             _minReference = ResolveMethod("System.Math", "Max", new[] { "System.Int32", "System.Int32" });
+
+            _arrayListConstructor = ResolveMethod("System.Collections.ArrayList", ".ctor", Array.Empty<string>());
+            _arrayListAddReference = ResolveMethod("System.Collections.ArrayList", "Add", new[] { "System.Object" });
+            _arrayListGetReference = ResolveMethod("System.Collections.ArrayList", "get_Item", new[] { "System.Int32" });
+            _arrayListSetReference = ResolveMethod("System.Collections.ArrayList", "set_Item", new[] { "System.Int32", "System.Object" });
+
+            _hashtableConstructor = ResolveMethod("System.Collections.Hashtable", ".ctor", Array.Empty<string>());
+            _hashtableAddReference = ResolveMethod("System.Collections.Hashtable", "Add", new[] { "System.Object", "System.Object" });
+            _hashtableGetReference = ResolveMethod("System.Collections.Hashtable", "get_Item", new[] { "System.Object" });
+            _hashtableSetReference = ResolveMethod("System.Collections.Hashtable", "set_Item", new[] { "System.Object", "System.Object" });
 
         }
 
@@ -212,7 +234,7 @@ namespace ProLang.Compiler
         {
             var functionType = _knownTypes[function.Type];
 
-            var method = new MethodDefinition(function.Name, MethodAttributes.Static | MethodAttributes.Private, functionType);
+            var method = new MethodDefinition(function.Name, MethodAttributes.Static | MethodAttributes.Public, functionType);
 
 
             foreach (var parameter in function.Parameters)
@@ -239,15 +261,14 @@ namespace ProLang.Compiler
             _locals.Clear();
 
             var ilProcessor = method.Body.GetILProcessor();
-
             foreach (var statement in body.Statements)
             {
                 EmitStatement(ilProcessor, statement);
             }
 
-            if (function.Type == TypeSymbol.Void)
+            if (method.ReturnType.FullName == "System.Void")
             {
-                ilProcessor.Emit(OpCodes.Ret);
+                EmitInstruction(ilProcessor, OpCodes.Ret);
             }
 
             method.Body.OptimizeMacros();
@@ -286,7 +307,7 @@ namespace ProLang.Compiler
 
             if (node.Expression.Type != TypeSymbol.Void)
             {
-                ilProcessor.Emit(OpCodes.Pop);
+                EmitInstruction(ilProcessor, OpCodes.Pop);
             }
         }
 
@@ -297,7 +318,7 @@ namespace ProLang.Compiler
                 EmitExpression(ilProcessor, node.Expression);
             }
 
-            ilProcessor.Emit(OpCodes.Ret);
+            EmitInstruction(ilProcessor, OpCodes.Ret);
         }
 
         private void EmitConditionalGotoStatement(ILProcessor ilProcessor, BoundConditionalGotoStatement node)
@@ -327,7 +348,7 @@ namespace ProLang.Compiler
 
             EmitExpression(ilProcessor, node.Initializer);
 
-            ilProcessor.Emit(OpCodes.Stloc, variableDefinition);
+            EmitInstruction(ilProcessor, OpCodes.Stloc, variableDefinition);
         }
 
 
@@ -356,14 +377,143 @@ namespace ProLang.Compiler
                 case BoundNodeKind.BoundConversionExpression:
                     EmitConversionExpression(ilProcessor, (BoundConversionExpression)node);
                     break;
+                case BoundNodeKind.BoundArrayExpression:
+                    EmitArrayExpression(ilProcessor, (BoundArrayExpression)node);
+                    break;
+                case BoundNodeKind.BoundMapExpression:
+                    EmitMapExpression(ilProcessor, (BoundMapExpression)node);
+                    break;
+                case BoundNodeKind.BoundIndexExpression:
+                    EmitIndexExpression(ilProcessor, (BoundIndexExpression)node);
+                    break;
+                case BoundNodeKind.BoundIndexAssignmentExpression:
+                    EmitIndexAssignmentExpression(ilProcessor, (BoundIndexAssignmentExpression)node);
+                    break;
                 default:
                     throw new NotSupportedException($"Unexpected node kind {node.Kind}");
             }
         }
 
+        private void EmitIndexAssignmentExpression(ILProcessor ilProcessor, BoundIndexAssignmentExpression node)
+        {
+            EmitExpression(ilProcessor, node.LHS);
+            EmitExpression(ilProcessor, node.Index);
+            EmitExpression(ilProcessor, node.RHS);
+
+            if (node.LHS.Type == TypeSymbol.Array)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, _arrayListSetReference);
+            }
+            else
+            {
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, _hashtableSetReference);
+            }
+            
+            // Push a dummy value because the expression is expected to return something
+            EmitInstruction(ilProcessor, OpCodes.Ldnull); 
+        }
+
+        private void EmitIndexExpression(ILProcessor ilProcessor, BoundIndexExpression node)
+        {
+            EmitExpression(ilProcessor, node.Expression);
+            EmitExpression(ilProcessor, node.Index);
+            
+            if (node.Expression.Type == TypeSymbol.Array)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, _arrayListGetReference);
+            }
+            else
+            {
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, _hashtableGetReference);
+            }
+        }
+
+        private void EmitMapExpression(ILProcessor ilProcessor, BoundMapExpression node)
+        {
+            EmitInstruction(ilProcessor, OpCodes.Newobj, _hashtableConstructor);
+            foreach (var entry in node.Entries)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Dup);
+                EmitExpression(ilProcessor, entry.Key);
+                EmitExpression(ilProcessor, entry.Value);
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, _hashtableAddReference);
+            }
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode)
+        {
+            ilProcessor.Emit(opCode);
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, MethodReference method)
+        {
+            ilProcessor.Emit(opCode, method);
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, TypeReference type)
+        {
+            ilProcessor.Emit(opCode, type);
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, VariableDefinition variable)
+        {
+            ilProcessor.Emit(opCode, variable);
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, int value)
+        {
+            ilProcessor.Emit(opCode, value);
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, string value)
+        {
+            ilProcessor.Emit(opCode, value);
+        }
+
+        private void EmitArrayExpression(ILProcessor ilProcessor, BoundArrayExpression node)
+        {
+            EmitInstruction(ilProcessor, OpCodes.Newobj, _arrayListConstructor);
+            foreach (var element in node.Elements)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Dup);
+                EmitExpression(ilProcessor, element);
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, _arrayListAddReference);
+                EmitInstruction(ilProcessor, OpCodes.Pop); // ArrayList.Add returns the index, we don't need it.
+            }
+        }
+
         private void EmitConversionExpression(ILProcessor ilProcessor, BoundConversionExpression node)
         {
-            throw new NotImplementedException();
+            EmitExpression(ilProcessor, node.Expression);
+
+            var fromType = node.Expression.Type;
+            var toType = node.Type;
+
+            if (fromType == TypeSymbol.Any || toType == TypeSymbol.Any)
+            {
+                // handle boxing
+                if (fromType == TypeSymbol.Int || fromType == TypeSymbol.Bool)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Box, _knownTypes[fromType]);
+                }
+                else if (toType == TypeSymbol.Int || toType == TypeSymbol.Bool)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Unbox_Any, _knownTypes[toType]);
+                }
+            }
+            else if (toType == TypeSymbol.String && (fromType == TypeSymbol.Int || fromType == TypeSymbol.Bool || fromType == TypeSymbol.Any))
+            {
+                // we should call ToString()
+                // For now, let's just use Convert.ToString if we had it, but we can call Object.ToString()
+                // Actually, let's keep it simple. If it's a value type, box it first.
+                if (fromType == TypeSymbol.Int || fromType == TypeSymbol.Bool)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Box, _knownTypes[fromType]);
+                }
+                
+                var toStringMethod = _knownTypes[TypeSymbol.Any].Resolve().Methods.First(m => m.Name == "ToString" && m.Parameters.Count == 0);
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, _assemblyDefinition.MainModule.ImportReference(toStringMethod));
+            }
         }
 
         private void EmitCallExpression(ILProcessor ilProcessor, BoundCallExpression node)
@@ -375,52 +525,136 @@ namespace ProLang.Compiler
 
             if (node.Function == BuiltInFunctions.ReadInput)
             {
-                ilProcessor.Emit(OpCodes.Call, _consoleReadLineReference);
+                EmitInstruction(ilProcessor, OpCodes.Call, _consoleReadLineReference);
             }
             else if (node.Function == BuiltInFunctions.Print)
             {
-                ilProcessor.Emit(OpCodes.Call, _consoleWriteLineReference);
+                EmitInstruction(ilProcessor, OpCodes.Call, _consoleWriteLineReference);
             }
             else if (node.Function == BuiltInFunctions.Min)
             {
-                ilProcessor.Emit(OpCodes.Call, _minReference);
+                EmitInstruction(ilProcessor, OpCodes.Call, _minReference);
             }
             else if (node.Function == BuiltInFunctions.Max)
             {
-                ilProcessor.Emit(OpCodes.Call, _maxReference);
+                EmitInstruction(ilProcessor, OpCodes.Call, _maxReference);
             }
             else
             {
                 var methodDefinition = _methods[node.Function];
 
-                ilProcessor.Emit(OpCodes.Call, methodDefinition);
+                EmitInstruction(ilProcessor, OpCodes.Call, methodDefinition);
             }
         }
 
         private void EmitBinaryExpression(ILProcessor ilProcessor, BoundBinaryExpression node)
         {
+            EmitExpression(ilProcessor, node.Left);
+            if (node.Op.Kind == BoundBinaryOperatorKind.Addition && node.Op.Type == TypeSymbol.String)
+            {
+                if (node.Left.Type != TypeSymbol.String && node.Left.Type != TypeSymbol.Any)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Box, _knownTypes[node.Left.Type]);
+                }
+            }
+
+            EmitExpression(ilProcessor, node.Right);
+            if (node.Op.Kind == BoundBinaryOperatorKind.Addition && node.Op.Type == TypeSymbol.String)
+            {
+                if (node.Right.Type != TypeSymbol.String && node.Right.Type != TypeSymbol.Any)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Box, _knownTypes[node.Right.Type]);
+                }
+            }
+
             if (node.Op.Kind == BoundBinaryOperatorKind.Addition)
             {
-                if (node.Left.Type == TypeSymbol.String && node.Right.Type == TypeSymbol.String)
+                if (node.Op.Type == TypeSymbol.String)
                 {
-                    EmitExpression(ilProcessor, node.Left);
-                    EmitExpression(ilProcessor, node.Right);
-                    ilProcessor.Emit(OpCodes.Call, _stringConcatReference);
+                    EmitInstruction(ilProcessor, OpCodes.Call, _stringConcatReference);
                 }
                 else
                 {
-                    throw new NotImplementedException();
+                    EmitInstruction(ilProcessor, OpCodes.Add);
                 }
+            }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.Subtraction)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Sub);
+            }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.Multiplication)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Mul);
+            }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.Division)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Div);
+            }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.LogicalAnd)
+            {
+                EmitInstruction(ilProcessor, OpCodes.And);
+            }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.LogicalOr)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Or);
+            }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.Equals)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Ceq);
+            }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.NotEquals)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Ceq);
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
+                EmitInstruction(ilProcessor, OpCodes.Ceq);
+            }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.LessThan)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Clt);
+            }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.LessEqual)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Cgt);
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
+                EmitInstruction(ilProcessor, OpCodes.Ceq);
+            }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.GreaterThan)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Cgt);
+            }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.GreaterEqual)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Clt);
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
+                EmitInstruction(ilProcessor, OpCodes.Ceq);
             }
             else
             {
-                throw new NotImplementedException();
+                throw new Exception($"Unexpected binary operator {node.Op.Kind}");
             }
         }
 
         private void EmitUnaryExpression(ILProcessor ilProcessor, BoundUnaryExpression node)
         {
-            throw new NotImplementedException();
+            EmitExpression(ilProcessor, node.Operand);
+
+            if (node.Op.Kind == BoundUnaryOperatorKind.Identity)
+            {
+                //do nothing
+            }
+            else if (node.Op.Kind == BoundUnaryOperatorKind.Negation)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Neg);
+            }
+            else if (node.Op.Kind == BoundUnaryOperatorKind.LogicalNegation)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
+                EmitInstruction(ilProcessor, OpCodes.Ceq);
+            }
+            else
+            {
+                throw new Exception($"Unexpected unary operator {node.Op.Kind}");
+            }
         }
 
         private void EmitAssignmentExpression(ILProcessor ilProcessor, BoundAssignmentExpression node)
@@ -429,21 +663,21 @@ namespace ProLang.Compiler
 
             EmitExpression(ilProcessor, node.Expression);
 
-            ilProcessor.Emit(OpCodes.Dup);
-            ilProcessor.Emit(OpCodes.Stloc, variableDefinition);
+            EmitInstruction(ilProcessor, OpCodes.Dup);
+            EmitInstruction(ilProcessor, OpCodes.Stloc, variableDefinition);
         }
 
         private void EmitVariableExpression(ILProcessor ilProcessor, BoundVariableExpression node)
         {
             if (node.Variable is ParameterSymbol parameter)
             {
-                ilProcessor.Emit(OpCodes.Ldarg, parameter.Ordinal);
+                EmitInstruction(ilProcessor, OpCodes.Ldarg, parameter.Ordinal);
             }
             else
             {
                 var variableDefinition = _locals[node.Variable];
 
-                ilProcessor.Emit(OpCodes.Ldloc, variableDefinition);
+                EmitInstruction(ilProcessor, OpCodes.Ldloc, variableDefinition);
             }
         }
 
@@ -455,19 +689,19 @@ namespace ProLang.Compiler
 
                 var instruction = value ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0;
 
-                ilProcessor.Emit(instruction);
+                EmitInstruction(ilProcessor, instruction);
             }
             else if (node.Type == TypeSymbol.Int)
             {
                 var value = (int)node.Value;
 
-                ilProcessor.Emit(OpCodes.Ldc_I4, value);
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I4, value);
             }
             else if (node.Type == TypeSymbol.String)
             {
                 var value = (string)node.Value;
 
-                ilProcessor.Emit(OpCodes.Ldstr, value);
+                EmitInstruction(ilProcessor, OpCodes.Ldstr, value);
             }
             else
             {

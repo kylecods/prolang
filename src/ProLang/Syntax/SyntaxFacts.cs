@@ -1,4 +1,4 @@
-﻿namespace ProLang.Syntax;
+namespace ProLang.Syntax;
 
 internal static class SyntaxFacts
 {
@@ -111,6 +111,10 @@ internal static class SyntaxFacts
                 return "{";
             case SyntaxKind.RightCurlyToken:
                 return "}";
+            case SyntaxKind.LeftBracketToken:
+                return "[";
+            case SyntaxKind.RightBracketToken:
+                return "]";
             case SyntaxKind.ColonToken:
                 return ":";
             case SyntaxKind.CommaToken:

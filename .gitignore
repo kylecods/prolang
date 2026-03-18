@@ -7,3 +7,11 @@ obj
 .idea
 /examples/compile_test.exe
 /src/ProLang/msbuild.binlog
+build_errors.txt
+run_errors.txt
+System.Collections.NonGeneric.dll
+System.Console.dll
+System.Private.CoreLib.dll
+System.Runtime.dll
+src/ProLang/Intermediate/Conversion.cs
+build_errors.txt
