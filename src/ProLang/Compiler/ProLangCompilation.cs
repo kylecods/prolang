@@ -13,6 +13,7 @@ public sealed class ProLangCompilation
 {
 
     private BoundGlobalScope? _globalScope;
+    private readonly ImmutableArray<Diagnostic> _importDiagnostics;
 
     internal BoundGlobalScope GlobalScope
     {
@@ -30,21 +31,101 @@ public sealed class ProLangCompilation
     }
  
 
-    private ProLangCompilation(bool isScript, ProLangCompilation? previous, params SyntaxTree[] syntaxTrees)
+    private ProLangCompilation(bool isScript, ProLangCompilation? previous, ImmutableArray<Diagnostic> importDiagnostics, params SyntaxTree[] syntaxTrees)
     {
         IsScript = isScript;
         Previous = previous;
         SyntaxTrees = syntaxTrees.ToImmutableArray();
+        _importDiagnostics = importDiagnostics;
     }
 
     public static ProLangCompilation Create(params SyntaxTree[] syntaxTrees)
     {
-        return new ProLangCompilation(isScript:false,previous: null,syntaxTrees);
+        var (resolved, diagnostics) = ResolveAllImports(syntaxTrees.ToImmutableArray());
+        return new ProLangCompilation(isScript:false, previous: null, diagnostics, resolved.ToArray());
     }
 
     public static ProLangCompilation CreateScript(ProLangCompilation previous, params SyntaxTree[] syntaxTrees)
     {
-        return new ProLangCompilation(isScript: true, previous: previous,syntaxTrees);
+        return new ProLangCompilation(isScript: true, previous: previous, ImmutableArray<Diagnostic>.Empty, syntaxTrees);
+    }
+
+    private static (ImmutableArray<SyntaxTree> Trees, ImmutableArray<Diagnostic> Diagnostics) ResolveAllImports(
+        ImmutableArray<SyntaxTree> syntaxTrees)
+    {
+        var allTrees = ImmutableArray.CreateBuilder<SyntaxTree>();
+        var diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Seed visited with the initially provided files
+        foreach (var st in syntaxTrees)
+        {
+            var filePath = st.Text.FileName;
+            if (!string.IsNullOrEmpty(filePath))
+            {
+                visited.Add(Path.GetFullPath(filePath));
+            }
+        }
+
+        var queue = new Queue<SyntaxTree>(syntaxTrees);
+
+        while (queue.Count > 0)
+        {
+            var tree = queue.Dequeue();
+            allTrees.Add(tree);
+
+            var importingFilePath = tree.Text.FileName;
+            var importingDir = string.IsNullOrEmpty(importingFilePath)
+                ? Directory.GetCurrentDirectory()
+                : Path.GetDirectoryName(Path.GetFullPath(importingFilePath));
+
+            foreach (var decl in tree.Root.Declarations)
+            {
+                if (decl is not ImportDeclarationSyntax import)
+                    continue;
+
+                var importPath = import.Path;
+
+                // Resolve: try relative to importing file, then relative to CWD
+                string? resolvedPath = null;
+
+                if (!string.IsNullOrEmpty(importingDir))
+                {
+                    var candidate = Path.GetFullPath(Path.Combine(importingDir, importPath));
+                    if (File.Exists(candidate))
+                    {
+                        resolvedPath = candidate;
+                    }
+                }
+
+                if (resolvedPath == null)
+                {
+                    var candidate = Path.GetFullPath(importPath);
+                    if (File.Exists(candidate))
+                    {
+                        resolvedPath = candidate;
+                    }
+                }
+
+                if (resolvedPath == null)
+                {
+                    diagnostics.Add(new Diagnostic(import.PathToken.Location,
+                        $"Could not find file '{importPath}'."));
+                    continue;
+                }
+
+                if (!visited.Add(resolvedPath))
+                {
+                    // Already imported — skip (not an error for non-circular cases)
+                    continue;
+                }
+
+                var importedTree = SyntaxTree.Load(resolvedPath);
+                queue.Enqueue(importedTree);
+            }
+        }
+
+        return (allTrees.ToImmutable(), diagnostics.ToImmutable());
     }
 
     private BoundProgram GetProgram()
@@ -56,6 +137,11 @@ public sealed class ProLangCompilation
 
     internal EvaluationResult Evaluate(Dictionary<VariableSymbol, object> variables)
     {
+        if (_importDiagnostics.Any())
+        {
+            return new EvaluationResult(_importDiagnostics, null!);
+        }
+
         var parseDiagnostics = SyntaxTrees.SelectMany(st => st.Diagnostics);
 
         var diagnostics = parseDiagnostics.Concat(GlobalScope.Diagnostics).ToImmutableArray();
@@ -66,18 +152,6 @@ public sealed class ProLangCompilation
         }
 
         var program = GetProgram();
-
-        //var appPath = Environment.GetCommandLineArgs()[0];
-        //var appDirectory = Path.GetDirectoryName(appPath);
-        //var cfgPath = Path.Combine(appDirectory!, "cfg.dot");
-        //var cfgStatement = !program.Statement.Statements.Any() && program.Functions.Any() ?
-        //        program.Functions.Last().Value : program.Statement;
-
-        //var cfg = ControlFlowGraph.Create(cfgStatement);
-        //using (var streamWriter = new StreamWriter(cfgPath))
-        //{
-        //    cfg.WriteTo(streamWriter);
-        //}
 
         if (program.Diagnostics.Any())
         {
@@ -181,6 +255,11 @@ public sealed class ProLangCompilation
 
     public ImmutableArray<Diagnostic> Emit(string moduleName, string[] references, string outputPath)
     {
+        if (_importDiagnostics.Any())
+        {
+            return _importDiagnostics;
+        }
+
         var parseDiagnostics = SyntaxTrees.SelectMany(st => st.Diagnostics);
         var diagnostics = parseDiagnostics.Concat(GlobalScope.Diagnostics).ToImmutableArray();
         if (diagnostics.Any())

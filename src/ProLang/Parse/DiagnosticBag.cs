@@ -228,4 +228,16 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         var message = "Invalid assignment target.";
         Report(location, message);
     }
+
+    public void ReportFileNotFound(TextLocation location, string path)
+    {
+        var message = $"Could not find file '{path}'.";
+        Report(location, message);
+    }
+
+    public void ReportCircularImport(TextLocation location, string path)
+    {
+        var message = $"Circular import detected for '{path}'.";
+        Report(location, message);
+    }
 }

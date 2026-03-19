@@ -1,0 +1,2 @@
+import "nested_a.prl"
+print("version = " + string(getVersion()))

@@ -1,0 +1,4 @@
+let version = 2
+func getVersion(): int {
+    return version
+}

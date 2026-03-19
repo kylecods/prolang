@@ -1,0 +1,7 @@
+func square(n: int): int {
+    return n * n
+}
+func add(a: int, b: int): int {
+    return a + b
+}
+let maxval = 100

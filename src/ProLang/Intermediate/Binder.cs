@@ -50,6 +50,10 @@ internal sealed class Binder
             binder.BindFunctionDeclaration(function);
         }
 
+        // Pre-register global variables from all files so they are visible
+        // regardless of statement processing order (important for imports)
+        binder.RegisterGlobalVariables(syntaxTrees);
+
         var statements = ImmutableArray.CreateBuilder<BoundStatement>();
 
         var globalStatements =
@@ -277,6 +281,23 @@ internal sealed class Binder
     }
 
     public DiagnosticBag Diagnostics => _diagnostics;
+
+    private void RegisterGlobalVariables(ImmutableArray<SyntaxTree> syntaxTrees)
+    {
+        var globalStatements =
+            syntaxTrees.SelectMany(st => st.Root.Declarations).OfType<GlobalStatementSyntax>();
+
+        foreach (var gs in globalStatements)
+        {
+            if (gs.Statement is VariableStatementSyntax varStmt)
+            {
+                var type = BindTypeClause(varStmt.TypeClause);
+                var initializer = type != null ? BindExpression(varStmt.Expression, type) : BindExpression(varStmt.Expression);
+                var variableType = type ?? initializer.Type;
+                BindVariable(varStmt.Identifier, false, variableType);
+            }
+        }
+    }
 
     private BoundStatement BindErrorStatement()
     {
@@ -891,6 +912,11 @@ internal sealed class Binder
 
         if (declare && !_scope.TryDeclareVariable(variable))
         {
+            // Variable already declared — try to look up the existing one
+            if (_scope.TryLookupVariable(name, out var existing))
+            {
+                return existing!;
+            }
             _diagnostics.ReportVariableAlreadyDeclared(identifier.Location, name);
         }
 

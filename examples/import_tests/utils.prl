@@ -1,0 +1,7 @@
+let pi = 3
+func greet(name: string): string {
+    return "Hello, " + name
+}
+func double(n: int): int {
+    return n * 2
+}

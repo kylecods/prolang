@@ -1,4 +1,6 @@
-let arr: array<int> = [1, 2, 3]
+import "array.prl"
+
+let arr: array<int> = arrays()
 print("Array element 0: " + string(arr[0]))
 print("Array element 1: " + string(arr[1]))
 print("Array element 2: " + string(arr[2]))

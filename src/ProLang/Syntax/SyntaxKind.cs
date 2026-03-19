@@ -70,7 +70,8 @@ public enum SyntaxKind
     BreakKeyword,
     ContinueKeyword,
     ReturnKeyword,
-    
+    ImportKeyword,
+
     //html keywords
     ScriptKeyword,
     
@@ -109,6 +110,7 @@ public enum SyntaxKind
     GlobalStatement,
     HtmlDeclaration,
     FunctionDeclaration,
+    ImportDeclaration,
     TypeClause,
     NameType,
     GenericType,

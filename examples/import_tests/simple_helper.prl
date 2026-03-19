@@ -1,0 +1,3 @@
+func getNum(): int {
+    return 42
+}

@@ -108,6 +108,11 @@ public sealed class Parser
 
     private DeclarationSyntax ParseDeclaration()
     {
+        if (Current.Kind == SyntaxKind.ImportKeyword)
+        {
+            return ParseImportDeclaration();
+        }
+
         if (Current.Kind == SyntaxKind.LessThanToken)
         {
             return ParseHtmlDeclaration();
@@ -119,6 +124,13 @@ public sealed class Parser
         }
 
         return ParseGlobalStatement();
+    }
+
+    private ImportDeclarationSyntax ParseImportDeclaration()
+    {
+        var importKeyword = Match(SyntaxKind.ImportKeyword);
+        var pathToken = Match(SyntaxKind.StringToken);
+        return new ImportDeclarationSyntax(_syntaxTree, importKeyword, pathToken);
     }
 
     private DeclarationSyntax ParseFunctionDeclaration()

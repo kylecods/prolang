@@ -139,6 +139,8 @@ internal static class SyntaxFacts
                 return "continue";
             case SyntaxKind.ReturnKeyword:
                 return "return";
+            case SyntaxKind.ImportKeyword:
+                return "import";
             default:
                 return null;
         }
@@ -176,6 +178,8 @@ internal static class SyntaxFacts
                 return SyntaxKind.ContinueKeyword;
             case "return":
                 return SyntaxKind.ReturnKeyword;
+            case "import":
+                return SyntaxKind.ImportKeyword;
             default:
                 return SyntaxKind.IdentifierToken;
          }

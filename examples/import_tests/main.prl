@@ -1,0 +1,9 @@
+import "utils.prl"
+import "math_helpers.prl"
+
+print(greet("World"))
+print("pi = " + string(pi))
+print("double(5) = " + string(double(5)))
+print("square(4) = " + string(square(4)))
+print("add(3, 4) = " + string(add(3, 4)))
+print("maxval = " + string(maxval))
