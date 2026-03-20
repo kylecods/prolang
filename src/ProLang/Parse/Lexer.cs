@@ -83,7 +83,41 @@ internal sealed class Lexer
                 break;
             case '/':
                 _position++;
-                if (Current != '>')
+                if (Current == '/')
+                {
+                    // Line comment - skip to end of line
+                    while (Current != '\n' && Current != '\0')
+                    {
+                        _position++;
+                    }
+                    // Return whitespace token (comments are ignored)
+                    _kind = SyntaxKind.WhitespaceToken;
+                }
+                else if (Current == '*')
+                {
+                    // Block comment - skip to */
+                    _position++; // skip the *
+                    while (true)
+                    {
+                        if (Current == '\0')
+                        {
+                            // Unterminated block comment
+                            var span = new TextSpan(_start, 2);
+                            var location = new TextLocation(_text, span);
+                            _diagnostics.ReportUnterminatedString(location);
+                            break;
+                        }
+                        if (Current == '*' && LookAhead == '/')
+                        {
+                            _position += 2; // skip */
+                            break;
+                        }
+                        _position++;
+                    }
+                    // Return whitespace token (comments are ignored)
+                    _kind = SyntaxKind.WhitespaceToken;
+                }
+                else if (Current != '>')
                 {
                     _kind = SyntaxKind.SlashToken;
                 }

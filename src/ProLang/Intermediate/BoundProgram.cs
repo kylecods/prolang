@@ -4,7 +4,7 @@ using ProLang.Symbols;
 
 namespace ProLang.Intermediate;
 
-internal sealed class BoundProgram
+public sealed class BoundProgram
 {
     public BoundProgram(
         BoundProgram previous,

@@ -85,6 +85,14 @@ internal static class TextWriterExtensions
                      .ThenBy(d => d.Location.Span.Length))
         {
             var text = diagnostic.Location.Text;
+            if (text == null)
+            {
+                writer.SetForeground(ConsoleColor.DarkRed);
+                writer.WriteLine(diagnostic.Message);
+                writer.ResetColor();
+                continue;
+            }
+            
             var fileName = diagnostic.Location.FileName;
             var startLine = diagnostic.Location.StartLine + 1;
             var startCharacter = diagnostic.Location.StartCharacter + 1;
@@ -92,37 +100,44 @@ internal static class TextWriterExtensions
             var endCharacter = diagnostic.Location.EndCharacter + 1;
 
             var span = diagnostic.Location.Span;
-            var lineIndex = text.GetLineIndex(span.Start);
-            var line = text.Lines[lineIndex];
             
-            Console.WriteLine();
+            writer.WriteLine();
 
-            Console.ForegroundColor = ConsoleColor.DarkRed;
+            writer.SetForeground(ConsoleColor.DarkRed);
             
-            Console.Write($"{fileName}({startLine},{startCharacter},{endLine},{endCharacter}): ");
-            Console.WriteLine(diagnostic);
-            Console.ResetColor();
+            writer.Write($"{fileName}({startLine},{startCharacter},{endLine},{endCharacter}): ");
+            writer.WriteLine(diagnostic);
+            writer.ResetColor();
 
-            var prefixSpan = TextSpan.FromBounds(line.Start, span.Start);
+            try
+            {
+                var lineIndex = text.GetLineIndex(span.Start);
+                var line = text.Lines[lineIndex];
+                
+                var prefixSpan = TextSpan.FromBounds(line.Start, span.Start);
+                var suffixSpan = TextSpan.FromBounds(span.End, line.End);
 
-            var suffixSpan = TextSpan.FromBounds(span.End, line.End);
+                var prefix = text.ToString(prefixSpan);
+                var error = text.ToString(span);
+                var suffix = text.ToString(suffixSpan);
+                
+                writer.Write("    ");
+                writer.Write(prefix);
 
-            var prefix = text.ToString(prefixSpan);
-            var error = text.ToString(span);
-            var suffix = text.ToString(suffixSpan);
+                writer.SetForeground(ConsoleColor.DarkRed);
+                writer.Write(error);
+                writer.ResetColor();
+                
+                writer.Write(suffix);
+            }
+            catch
+            {
+                // If we can't properly show the error context, just show the message
+            }
             
-            Console.Write("    ");
-            Console.Write(prefix);
-
-            Console.ForegroundColor = ConsoleColor.DarkRed;
-            Console.Write(error);
-            Console.ResetColor();
-            
-            Console.Write(suffix);
-            
-            Console.WriteLine();
+            writer.WriteLine();
         }
         
-        Console.WriteLine();
+        writer.WriteLine();
     }
 }

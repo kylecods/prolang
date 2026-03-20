@@ -1,0 +1,1 @@
+dotnet bin/Debug/syntax_types.dll

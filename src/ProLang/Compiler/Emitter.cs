@@ -32,8 +32,12 @@ namespace ProLang.Compiler
 
         private TypeDefinition _typeDefinition;
 
+        private Dictionary<BoundLabel, Instruction> _labels = new();
+        private List<(BoundLabel label, Instruction instruction)> _fixups = new();
+
         private Emitter(string moduleName, string[] references)
         {
+            // Load provided references
             foreach (var reference in references)
             {
                 try
@@ -47,6 +51,12 @@ namespace ProLang.Compiler
                 }
             }
 
+            // If no references were provided, load runtime assemblies automatically
+            if (references.Length == 0)
+            {
+                LoadRuntimeAssemblies();
+            }
+
             var assemblyName = new AssemblyNameDefinition(moduleName, new Version(1, 0));
             _assemblyDefinition = AssemblyDefinition.CreateAssembly(assemblyName, moduleName, ModuleKind.Console);
 
@@ -58,6 +68,53 @@ namespace ProLang.Compiler
 
             _listType = ResolveType("System.Collections.Generic.List`1")!;
             _dictionaryType = ResolveType("System.Collections.Generic.Dictionary`2")!;
+        }
+
+        private void LoadRuntimeAssemblies()
+        {
+            // Find reference assemblies in the SDK
+            var sdkRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                ".dotnet", "packs", "Microsoft.NETCore.App.Ref");
+            
+            // Find the latest version
+            var refAssembliesPath = Directory.GetDirectories(sdkRoot)
+                .OrderByDescending(d => d)
+                .Select(d => Path.Combine(d, "ref", "net10.0"))
+                .FirstOrDefault(Directory.Exists);
+
+            if (refAssembliesPath == null)
+            {
+                // Fallback to runtime directory
+                refAssembliesPath = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
+            }
+            
+            // Load essential .NET assemblies
+            var requiredAssemblies = new[]
+            {
+                "System.Runtime.dll",
+                "System.Console.dll",
+                "System.Collections.dll",
+                "System.Linq.dll",
+                "Microsoft.CSharp.dll"
+            };
+
+            foreach (var assemblyName in requiredAssemblies)
+            {
+                var assemblyPath = Path.Combine(refAssembliesPath, assemblyName);
+                if (File.Exists(assemblyPath))
+                {
+                    try
+                    {
+                        var assembly = AssemblyDefinition.ReadAssembly(assemblyPath, new ReaderParameters { ReadSymbols = false });
+                        _assemblies.Add(assembly);
+                    }
+                    catch (Exception)
+                    {
+                        // Ignore if we can't load the assembly
+                    }
+                }
+            }
         }
 
         private TypeReference? ResolveType(string metaDataName)
@@ -254,6 +311,8 @@ namespace ProLang.Compiler
             var method = _methods[function];
 
             _locals.Clear();
+            _labels.Clear();
+            _fixups.Clear();
 
             var ilProcessor = method.Body.GetILProcessor();
             foreach (var statement in body.Statements)
@@ -269,6 +328,16 @@ namespace ProLang.Compiler
             {
                 EmitInstruction(ilProcessor, OpCodes.Box, method.ReturnType);
                 EmitInstruction(ilProcessor, OpCodes.Ret);
+            }
+
+            // Fixup goto instructions
+            foreach (var (label, instruction) in _fixups)
+            {
+                if (!_labels.TryGetValue(label, out var target))
+                {
+                    throw new Exception($"Label {label.Name} not found");
+                }
+                instruction.Operand = target;
             }
 
             method.Body.OptimizeMacros();
@@ -348,17 +417,28 @@ namespace ProLang.Compiler
 
         private void EmitConditionalGotoStatement(ILProcessor ilProcessor, BoundConditionalGotoStatement node)
         {
-            throw new NotImplementedException();
+            EmitExpression(ilProcessor, node.Condition);
+
+            // Create a placeholder instruction - we'll fixup the target later
+            var opCode = node.JumpIfTrue ? OpCodes.Brtrue : OpCodes.Brfalse;
+            var instruction = ilProcessor.Create(opCode, Instruction.Create(OpCodes.Nop));
+            ilProcessor.Append(instruction);
+            _fixups.Add((node.BoundLabel, instruction));
         }
 
         private void EmitGotoStatement(ILProcessor ilProcessor, BoundGotoStatement node)
         {
-            throw new NotImplementedException();
+            // Create a placeholder instruction - we'll fixup the target later
+            var instruction = ilProcessor.Create(OpCodes.Br, Instruction.Create(OpCodes.Nop));
+            ilProcessor.Append(instruction);
+            _fixups.Add((node.BoundLabel, instruction));
         }
 
         private void EmitLabelStatement(ILProcessor ilProcessor, BoundLabelStatement node)
         {
-            throw new NotImplementedException();
+            var instruction = ilProcessor.Create(OpCodes.Nop);
+            ilProcessor.Append(instruction);
+            _labels[node.BoundLabel] = instruction;
         }
 
         private void EmitVariableDeclaration(ILProcessor ilProcessor, BoundVariableDeclaration node)

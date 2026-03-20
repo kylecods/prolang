@@ -1,3 +1,30 @@
 func getNum(): int {
     return 42
 }
+
+
+//01-Syntax and types
+print("Examples 1: Types and variables")
+
+let anInteger: int = 100
+
+print("This is an integer: ")
+print(string(an_integer))
+
+
+
+let name = "JOHN"
+
+print("This is inferred string " + name)
+
+
+let isThisCompiled: bool = true
+print("Is this compiled?")
+
+
+let firstName: string = "John"
+let lastName : string = "Doe"
+
+let fullName = "Hello " + firstName + lastName
+
+print(fullName)
