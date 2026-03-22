@@ -731,6 +731,10 @@ namespace ProLang.Compiler
                 EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
                 EmitInstruction(ilProcessor, OpCodes.Ceq);
             }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.Modulo)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Rem);
+            }
             else
             {
                 throw new Exception($"Unexpected binary operator {node.Op.Kind}");

@@ -1,0 +1,50 @@
+/*
+* Sample 3: Control Flow
+*/
+
+print("Example 3: Control Flow")
+
+
+//If statements
+let a : int = 56
+print("Testing if statements: ")
+if(a > 100) {
+    print("Its large")
+}else if(a > 30) {
+    print("Its more than 30")
+}else {
+    print("Its small")
+}
+
+//while statements
+print("Testing while statements: ")
+let b: int = 0
+while(b <= 5){
+    print("While value: " + string(b))
+    b +=1
+}
+
+//for loops
+print("Testing for loops: ")
+for(let v = 1 to 10) {
+    print("For value: " + string(a))
+}
+
+//Break and continue
+print("Testing break and continue statements: ")
+
+for(let f = 1 to 20) {
+
+    if(f == 3) {
+        print(" skipped value: " + string(f))
+        continue
+    }
+
+      if(f == 12) {
+        print(" stopped at value: " + string(f))
+        break
+    }
+
+    print(string(f))
+
+}

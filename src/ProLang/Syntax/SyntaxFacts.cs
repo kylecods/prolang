@@ -21,6 +21,7 @@ internal static class SyntaxFacts
         {
             case SyntaxKind.StarToken:
             case SyntaxKind.SlashToken:
+            case SyntaxKind.PercentageToken:
                 return 5;
                 
             case SyntaxKind.PlusToken:

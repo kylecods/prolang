@@ -1,0 +1,30 @@
+/*
+* Sample 2: Operators
+*/
+
+print("Example 2: Operators")
+
+let a = 10
+let b = 4
+
+print("Arithmetic with a=10, b=4")
+
+//Addition
+print("a+b= ")
+print(string(a+b))
+
+//Subtraction
+print("a-b= ")
+print(string(a-b))
+
+//Multiplication
+print("a*b= ")
+print(string(a*b))
+
+//Division
+print("a/b= ")
+print(string(a/b))
+
+//Modulo
+print("a%b=")
+print(string(a%b))

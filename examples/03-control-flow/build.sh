@@ -1,0 +1,1 @@
+dotnet run --project ../../src/ProLang/ProLang.csproj -- 03_control_flow.prl /r "/home/kyle/.dotnet/packs/Microsoft.NETCore.App.Ref/10.0.5/ref/net10.0/System.Console.dll" /r "/home/kyle/.dotnet/packs/Microsoft.NETCore.App.Ref/10.0.5/ref/net10.0/System.Runtime.dll" /r "/home/kyle/.dotnet/packs/Microsoft.NETCore.App.Ref/10.0.5/ref/net10.0/System.Collections.dll"
