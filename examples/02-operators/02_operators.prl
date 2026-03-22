@@ -28,3 +28,28 @@ print(string(a/b))
 //Modulo
 print("a%b=")
 print(string(a%b))
+
+// Comparision
+let x = 5
+let y = 5
+let z = 6
+print("Comparisons with x=5, y=5, z=6")
+print("x == y:")
+print(string(x == y)) // true
+print("x != z:")
+print(string(x != z)) // true
+print("x < z:")
+print(string(x < z))  // true
+print("z >= y:")
+print(string(z >= y)) // true
+
+//Logical operators
+let isSunny = true
+let hasCoffee = false
+print("Logical Operators:")
+print("isSunny && hasCoffee (AND):")
+print(string(isSunny && hasCoffee)) // false
+print("isSunny || hasCoffee (OR):")
+print(string(isSunny || hasCoffee))  // true
+print("!hasCoffee (NOT):")
+print(string(!hasCoffee)) // true

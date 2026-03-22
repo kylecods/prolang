@@ -793,7 +793,7 @@ internal sealed class Binder
             return new BoundErrorExpression();
         }
 
-        var boundOperator = BoundUnaryOperator.Bind(syntax.Operand.Kind, boundOperand.Type);
+        var boundOperator = BoundUnaryOperator.Bind(syntax.OperatorToken.Kind, boundOperand.Type);
 
         if (boundOperator == null)
         {

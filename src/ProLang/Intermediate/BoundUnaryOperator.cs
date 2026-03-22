@@ -23,18 +23,17 @@ internal sealed class BoundUnaryOperator
     public TypeSymbol OperandType { get; }
     public TypeSymbol Type { get; }
     
-    private static BoundUnaryOperator[] _operators =
-    {
+    private static readonly BoundUnaryOperator[] Operators =
+    [
         new (SyntaxKind.BangToken, BoundUnaryOperatorKind.LogicalNegation, TypeSymbol.Bool),
-
         new (SyntaxKind.PlusToken, BoundUnaryOperatorKind.Identity, TypeSymbol.Int),
         new (SyntaxKind.MinusToken, BoundUnaryOperatorKind.Negation, TypeSymbol.Int),
-        new(SyntaxKind.TildeToken, BoundUnaryOperatorKind.OnesComplement,TypeSymbol.Int),
-    };
+        new(SyntaxKind.TildeToken, BoundUnaryOperatorKind.OnesComplement,TypeSymbol.Int)
+    ];
 
     public static BoundUnaryOperator? Bind(SyntaxKind syntaxKind, TypeSymbol operandType)
     {
-        foreach (var op in _operators)
+        foreach (var op in Operators)
         {
             if (op.SyntaxKind == syntaxKind && op.OperandType == operandType)
                 return op;

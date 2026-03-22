@@ -30,7 +30,7 @@ namespace ProLang.Symbols;
 
         private static void WriteFunctionTo(FunctionSymbol symbol, TextWriter writer)
         {
-            writer.WriteKeyword("function ");
+            writer.WriteKeyword("func ");
             writer.WriteIdentifier(symbol.Name);
             writer.WritePunctuation("(");
 
