@@ -2,6 +2,8 @@
 * Sample 2: Operators
 */
 
+import "io"
+
 print("Example 2: Operators")
 
 let a = 10

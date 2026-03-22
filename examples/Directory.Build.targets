@@ -2,7 +2,7 @@
   <Target Name="CreateManifestResourceNames" />
 
   <Target Name="CoreCompile" DependsOnTargets="$(CoreCompileDependsOn)">
-    <Exec Command="dotnet run --project &quot;$(MSBuildThisFileDirectory)\..\src\ProLang\ProLang.csproj&quot; -- @(Compile->'&quot;%(Identity)&quot;', ' ') /o &quot;@(IntermediateAssembly)&quot; @(ReferencePath->'/r &quot;%(Identity)&quot;', ' ')"
+    <Exec Command="dotnet run --project &quot;$(MSBuildThisFileDirectory)\..\src\ProLang\ProLang.csproj&quot; -- @(Compile->'&quot;%(Identity)&quot;', ' ') /o &quot;@(IntermediateAssembly)&quot;"
           WorkingDirectory="$(MSBuildProjectDirectory)" />
   </Target>
 

@@ -3,9 +3,8 @@ using ProLang.Intermediate;
 using ProLang.Interpreter;
 using ProLang.Parse;
 using ProLang.Symbols;
+using ProLang.Symbols.Modules;
 using ProLang.Syntax;
-
-using ReflectionBindingFlags = System.Reflection.BindingFlags;
 
 namespace ProLang.Compiler;
 
@@ -14,6 +13,7 @@ public sealed class ProLangCompilation
 
     private BoundGlobalScope? _globalScope;
     private readonly ImmutableArray<Diagnostic> _importDiagnostics;
+    private readonly ImmutableHashSet<string> _importedModules;
 
     internal BoundGlobalScope GlobalScope
     {
@@ -21,7 +21,7 @@ public sealed class ProLangCompilation
         {
             if (_globalScope == null)
             {
-                var globalScope = Binder.BindGlobalScope(IsScript,Previous?.GlobalScope, SyntaxTrees);
+                var globalScope = Binder.BindGlobalScope(IsScript,Previous?.GlobalScope, SyntaxTrees, _importedModules);
 
                 Interlocked.CompareExchange(ref _globalScope, globalScope, null);
             }
@@ -31,31 +31,34 @@ public sealed class ProLangCompilation
     }
  
 
-    private ProLangCompilation(bool isScript, ProLangCompilation? previous, ImmutableArray<Diagnostic> importDiagnostics, params SyntaxTree[] syntaxTrees)
+    private ProLangCompilation(bool isScript, ProLangCompilation? previous, ImmutableArray<Diagnostic> importDiagnostics, ImmutableHashSet<string> importedModules, params SyntaxTree[] syntaxTrees)
     {
         IsScript = isScript;
         Previous = previous;
         SyntaxTrees = syntaxTrees.ToImmutableArray();
         _importDiagnostics = importDiagnostics;
+        _importedModules = importedModules;
     }
 
     public static ProLangCompilation Create(params SyntaxTree[] syntaxTrees)
     {
-        var (resolved, diagnostics) = ResolveAllImports(syntaxTrees.ToImmutableArray());
-        return new ProLangCompilation(isScript:false, previous: null, diagnostics, resolved.ToArray());
+        var (resolved, diagnostics, importedModules) = ResolveAllImports(syntaxTrees.ToImmutableArray());
+        return new ProLangCompilation(isScript:false, previous: null, diagnostics, importedModules, resolved.ToArray());
     }
 
     public static ProLangCompilation CreateScript(ProLangCompilation previous, params SyntaxTree[] syntaxTrees)
     {
-        return new ProLangCompilation(isScript: true, previous: previous, ImmutableArray<Diagnostic>.Empty, syntaxTrees);
+        var allModules = BuiltInModule.GetAll().Select(m => m.Name).ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
+        return new ProLangCompilation(isScript: true, previous: previous, ImmutableArray<Diagnostic>.Empty, allModules, syntaxTrees);
     }
 
-    private static (ImmutableArray<SyntaxTree> Trees, ImmutableArray<Diagnostic> Diagnostics) ResolveAllImports(
+    private static (ImmutableArray<SyntaxTree> Trees, ImmutableArray<Diagnostic> Diagnostics, ImmutableHashSet<string> ImportedModules) ResolveAllImports(
         ImmutableArray<SyntaxTree> syntaxTrees)
     {
         var allTrees = ImmutableArray.CreateBuilder<SyntaxTree>();
         var diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var importedModules = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Seed visited with the initially provided files
         foreach (var st in syntaxTrees)
@@ -86,6 +89,12 @@ public sealed class ProLangCompilation
 
                 var importPath = import.Path;
 
+                if (BuiltInModule.TryGetModule(importPath, out _))
+                {
+                    importedModules.Add(importPath);
+                    continue;
+                }
+
                 // Resolve: try relative to importing file, then relative to CWD
                 string? resolvedPath = null;
 
@@ -110,7 +119,7 @@ public sealed class ProLangCompilation
                 if (resolvedPath == null)
                 {
                     diagnostics.Add(new Diagnostic(import.PathToken.Location,
-                        $"Could not find file '{importPath}'."));
+                        $"Could not find file or module '{importPath}'."));
                     continue;
                 }
 
@@ -125,7 +134,7 @@ public sealed class ProLangCompilation
             }
         }
 
-        return (allTrees.ToImmutable(), diagnostics.ToImmutable());
+        return (allTrees.ToImmutable(), diagnostics.ToImmutable(), importedModules.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase));
     }
 
     private BoundProgram GetProgram()
@@ -212,17 +221,7 @@ public sealed class ProLangCompilation
 
         while (submission != null)
         {
-            const ReflectionBindingFlags bindingFlags = 
-                ReflectionBindingFlags.Static | 
-                ReflectionBindingFlags.Public |
-                ReflectionBindingFlags.NonPublic;
-
-            var builtInFunctions = typeof(BuiltInFunctions)
-                .GetFields(bindingFlags)
-                .Where(fi => fi.FieldType == typeof(FunctionSymbol))
-                .Select(fi => (FunctionSymbol)fi.GetValue(null))
-                .ToList();
-
+            var builtInFunctions = BuiltInModule.GetAllFunctions().ToList();
 
             foreach (var function in submission.Functions)
             {

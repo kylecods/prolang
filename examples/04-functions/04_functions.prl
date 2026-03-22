@@ -1,0 +1,40 @@
+/*
+* Sample 4: Functions
+*/
+import "io"
+
+print("Example 4: Functions")
+
+//Function without parameters
+func getNumber() : int {
+    return 1
+}
+print("function<getNumber>: ")
+print(string(getNumber()))
+
+//Function with parameters
+func showNumber(n: int) : int {
+    return n
+}
+let showNum: int = showNumber(30)
+print("function<showNumber>: ")
+print(string(showNum))
+
+//Recursion
+
+func factorial(n: int) : int {
+    if(n == 0) {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+
+let factFive = factorial(5)
+
+print("Factorial of 5 is: ")
+print(string(factFive))
+
+
+let factHundred = factorial(7)
+print("Factorial of 100 is: ")
+print(string(factHundred))

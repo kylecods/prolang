@@ -1,1 +1,1 @@
-dotnet run --project ../../src/ProLang/ProLang.csproj -- 01_syntax_types.prl /r "/home/kyle/.dotnet/packs/Microsoft.NETCore.App.Ref/10.0.5/ref/net10.0/System.Console.dll" /r "/home/kyle/.dotnet/packs/Microsoft.NETCore.App.Ref/10.0.5/ref/net10.0/System.Runtime.dll" /r "/home/kyle/.dotnet/packs/Microsoft.NETCore.App.Ref/10.0.5/ref/net10.0/System.Collections.dll"
+dotnet run --project ../../src/ProLang/ProLang.csproj -- 01_syntax_types.prl

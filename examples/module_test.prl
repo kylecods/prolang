@@ -1,0 +1,4 @@
+import "io"
+
+print("Hello from module system!")
+print("IO module imported successfully")

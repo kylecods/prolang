@@ -1,0 +1,8 @@
+import "io"
+import "math"
+import "module_file_import.prl"
+
+print("Module system integration test")
+print("Answer from file import: " + string(getAnswer()))
+print("min(10, 5) = " + string(min(10, 5)))
+print("max(10, 5) = " + string(max(10, 5)))

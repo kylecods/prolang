@@ -1,6 +1,9 @@
 /*
 * Sample 1: Syntax and types
 */
+
+import "io"
+
 print("Examples 1: Types and variables")
 
 //Integers

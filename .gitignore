@@ -15,3 +15,4 @@ System.Private.CoreLib.dll
 System.Runtime.dll
 src/ProLang/Intermediate/Conversion.cs
 build_errors.txt
+examples/*.exe

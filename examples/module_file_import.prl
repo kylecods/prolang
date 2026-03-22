@@ -1,0 +1,3 @@
+func getAnswer(): int {
+    return 42
+}

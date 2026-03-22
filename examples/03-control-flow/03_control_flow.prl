@@ -2,6 +2,8 @@
 * Sample 3: Control Flow
 */
 
+import "io"
+
 print("Example 3: Control Flow")
 
 

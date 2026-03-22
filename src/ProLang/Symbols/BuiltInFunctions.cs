@@ -1,5 +1,5 @@
-﻿using System.Collections.Immutable;
-using System.Reflection;
+using System.Collections.Immutable;
+using ProLang.Symbols.Modules;
 
 namespace ProLang.Symbols;
 
@@ -29,7 +29,5 @@ internal static class BuiltInFunctions
         [new ParameterSymbol("path", TypeSymbol.String,0), new ParameterSymbol("contents", TypeSymbol.String,0)],
         TypeSymbol.Void);
 
-    internal static IEnumerable<FunctionSymbol> GetAll() => typeof(BuiltInFunctions)
-        .GetFields(BindingFlags.Public | BindingFlags.Static).Where(f => f.FieldType == typeof(FunctionSymbol))
-        .Select(f => (FunctionSymbol)f.GetValue(null)!);
+    internal static IEnumerable<FunctionSymbol> GetAll() => BuiltInModule.GetAllFunctions();
 }

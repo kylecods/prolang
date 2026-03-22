@@ -2,6 +2,7 @@ using System.Collections.Immutable;
 using ProLang.Lowering;
 using ProLang.Parse;
 using ProLang.Symbols;
+using ProLang.Symbols.Modules;
 using ProLang.Syntax;
 using ProLang.Text;
 
@@ -36,9 +37,9 @@ internal sealed class Binder
         }
     }
 
-    public static BoundGlobalScope BindGlobalScope(bool isScript, BoundGlobalScope? previous, ImmutableArray<SyntaxTree> syntaxTrees)
+    public static BoundGlobalScope BindGlobalScope(bool isScript, BoundGlobalScope? previous, ImmutableArray<SyntaxTree> syntaxTrees, ImmutableHashSet<string>? importedModules = null)
     {
-        var parentScope = CreateParentScope(previous);
+        var parentScope = CreateParentScope(previous, importedModules);
 
         var binder = new Binder(isScript, parentScope, null);
 
@@ -236,7 +237,7 @@ internal sealed class Binder
         }
     }
 
-    private static BoundScope CreateParentScope(BoundGlobalScope? previous)
+    private static BoundScope CreateParentScope(BoundGlobalScope? previous, ImmutableHashSet<string>? importedModules = null)
     {
         var stack = new Stack<BoundGlobalScope>();
 
@@ -246,7 +247,7 @@ internal sealed class Binder
             previous = previous.Previous;
         }
 
-        var parent = CreateRootScope();
+        var parent = CreateRootScope(importedModules);
 
         while (stack.Count > 0)
         {
@@ -268,19 +269,30 @@ internal sealed class Binder
         return parent;
     }
 
-    private static BoundScope CreateRootScope()
+    private static BoundScope CreateRootScope(ImmutableHashSet<string>? importedModules = null)
     {
         var result = new BoundScope(null!);
 
-        foreach (var f in BuiltInFunctions.GetAll())
+        if (importedModules == null)
         {
-            result.TryDeclareFunction(f);
+            return result;
+        }
+        
+        foreach (var moduleName in importedModules)
+        {
+            if (BuiltInModule.TryGetModule(moduleName, out var module) && module != null)
+            {
+                foreach (var f in module.Functions)
+                {
+                    result.TryDeclareFunction(f);
+                }
+            }
         }
 
         return result;
     }
 
-    public DiagnosticBag Diagnostics => _diagnostics;
+    private DiagnosticBag Diagnostics => _diagnostics;
 
     private void RegisterGlobalVariables(ImmutableArray<SyntaxTree> syntaxTrees)
     {
