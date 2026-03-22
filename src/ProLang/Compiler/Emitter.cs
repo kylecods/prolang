@@ -21,6 +21,10 @@ namespace ProLang.Compiler
         private readonly MethodReference _minReference;
         private readonly MethodReference _maxReference;
 
+        private MethodReference? _listAddMethod;
+        private MethodReference? _listRemoveAtMethod;
+        private MethodReference? _listGetCountMethod;
+
         private readonly TypeReference _listType;
         private readonly TypeReference _dictionaryType;
 
@@ -641,6 +645,49 @@ namespace ProLang.Compiler
             else if (node.Function == BuiltInFunctions.Max)
             {
                 EmitInstruction(ilProcessor, OpCodes.Call, _maxReference);
+            }
+            else if (node.Function == BuiltInFunctions.Push)
+            {
+                var listType = GetTypeReference(TypeSymbol.Array);
+                _listAddMethod ??= GetGenericMethod(listType, "Add", 1);
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, _listAddMethod);
+            }
+            else if (node.Function == BuiltInFunctions.Pop)
+            {
+                var listType = GetTypeReference(TypeSymbol.Array);
+                _listRemoveAtMethod ??= GetGenericMethod(listType, "RemoveAt", 1);
+                _listGetCountMethod ??= GetGenericMethod(listType, "get_Count", 0);
+
+                var local = new VariableDefinition(listType);
+                ilProcessor.Body.Variables.Add(local);
+                EmitInstruction(ilProcessor, OpCodes.Stloc, local);
+
+                // get last element
+                EmitInstruction(ilProcessor, OpCodes.Ldloc, local);
+                EmitInstruction(ilProcessor, OpCodes.Ldloc, local);
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, _listGetCountMethod);
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_1);
+                EmitInstruction(ilProcessor, OpCodes.Sub);
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, GetGenericMethod(listType, "get_Item", 1));
+
+                // remove last element
+                EmitInstruction(ilProcessor, OpCodes.Ldloc, local);
+                EmitInstruction(ilProcessor, OpCodes.Ldloc, local);
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, _listGetCountMethod);
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_1);
+                EmitInstruction(ilProcessor, OpCodes.Sub);
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, _listRemoveAtMethod);
+            }
+            else if (node.Function == BuiltInFunctions.GetAt)
+            {
+                var listType = GetTypeReference(TypeSymbol.Array);
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, GetGenericMethod(listType, "get_Item", 1));
+            }
+            else if (node.Function == BuiltInFunctions.Length)
+            {
+                var listType = GetTypeReference(TypeSymbol.Array);
+                _listGetCountMethod ??= GetGenericMethod(listType, "get_Count", 0);
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, _listGetCountMethod);
             }
             else
             {

@@ -666,6 +666,8 @@ internal sealed class Binder
                 return BindMapExpression((MapExpressionSyntax)syntax, expectedType);
             case SyntaxKind.IndexExpression:
                 return BindIndexExpression((IndexExpressionSyntax)syntax);
+            case SyntaxKind.MethodCallExpression:
+                return BindMethodCallExpression((MethodCallExpressionSyntax)syntax);
             default:
                 throw new Exception($"Unknown syntax kind {syntax.Kind}");
         }
@@ -876,6 +878,63 @@ internal sealed class Binder
             var parameter = function.Parameters[i];
 
             boundArguments[i] = BindConversion(argumentLocation, argument, parameter.Type);
+        }
+
+        return new BoundCallExpression(function, boundArguments.ToImmutable());
+    }
+
+    private static readonly Dictionary<string, FunctionSymbol> ArrayMethods = new(StringComparer.Ordinal)
+    {
+        { "push", BuiltInFunctions.Push },
+        { "pop", BuiltInFunctions.Pop },
+        { "getAt", BuiltInFunctions.GetAt },
+        { "length", BuiltInFunctions.Length },
+    };
+
+    private BoundExpression BindMethodCallExpression(MethodCallExpressionSyntax syntax)
+    {
+        var receiver = BindExpression(syntax.Expression);
+        var methodName = syntax.MethodName.Text;
+
+        if (receiver.Type == TypeSymbol.Error)
+        {
+            return new BoundErrorExpression();
+        }
+
+        if (receiver.Type.Name != "array")
+        {
+            _diagnostics.ReportUndefinedMethod(syntax.MethodName.Location, methodName, receiver.Type);
+            return new BoundErrorExpression();
+        }
+
+        if (!ArrayMethods.TryGetValue(methodName, out var function))
+        {
+            _diagnostics.ReportUndefinedMethod(syntax.MethodName.Location, methodName, receiver.Type);
+            return new BoundErrorExpression();
+        }
+
+        // The first parameter is always the array (receiver).
+        // The remaining parameters correspond to the method call arguments.
+        var expectedArgCount = function.Parameters.Length - 1;
+
+        if (syntax.Arguments.Count != expectedArgCount)
+        {
+            _diagnostics.ReportWrongMethodArgumentCount(syntax.Location, methodName, expectedArgCount, syntax.Arguments.Count);
+            return new BoundErrorExpression();
+        }
+
+        var boundArguments = ImmutableArray.CreateBuilder<BoundExpression>();
+
+        // First argument is the receiver (the array)
+        var receiverParam = function.Parameters[0];
+        boundArguments.Add(BindConversion(syntax.Expression.Location, receiver, receiverParam.Type));
+
+        // Bind the remaining arguments
+        for (int i = 0; i < syntax.Arguments.Count; i++)
+        {
+            var argument = BindExpression(syntax.Arguments[i]);
+            var parameter = function.Parameters[i + 1];
+            boundArguments.Add(BindConversion(syntax.Arguments[i].Location, argument, parameter.Type));
         }
 
         return new BoundCallExpression(function, boundArguments.ToImmutable());

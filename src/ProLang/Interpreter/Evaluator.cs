@@ -384,6 +384,38 @@ internal sealed class Evaluator
              return null;
         }
 
+        if (node.Function == BuiltInFunctions.Push)
+        {
+            var arr = (List<object>)EvaluateExpression(node.Arguments[0]);
+            var value = EvaluateExpression(node.Arguments[1]);
+            arr.Add(value);
+            return null;
+        }
+
+        if (node.Function == BuiltInFunctions.Pop)
+        {
+            var arr = (List<object>)EvaluateExpression(node.Arguments[0]);
+            if (arr.Count == 0)
+                throw new Exception("Cannot pop from an empty array.");
+            var value = arr[arr.Count - 1];
+            arr.RemoveAt(arr.Count - 1);
+            return value;
+        }
+
+        if (node.Function == BuiltInFunctions.GetAt)
+        {
+            var arr = (List<object>)EvaluateExpression(node.Arguments[0]);
+            var index = (int)EvaluateExpression(node.Arguments[1]);
+            if (index < 0 || index >= arr.Count)
+                throw new Exception($"Index {index} is out of bounds for array of length {arr.Count}.");
+            return arr[index];
+        }
+
+        if (node.Function == BuiltInFunctions.Length)
+        {
+            var arr = (List<object>)EvaluateExpression(node.Arguments[0]);
+            return arr.Count;
+        }
 
         var locals = new Dictionary<VariableSymbol, object>();
 

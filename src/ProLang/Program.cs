@@ -15,6 +15,7 @@ internal sealed class Program
         var referencePaths = new List<string>();
         var sourcePaths = new List<string>();
         var helpRequested = false;
+        var runMode = false;
 
         var options = new OptionSet
         {
@@ -22,6 +23,7 @@ internal sealed class Program
             {"r=","The {path} of an assembly to reference", v=> referencePaths.Add(v) },
             {"o=","The output {path} of the assembly to create", v=>outputPath = v },
             {"m=", "The {name} of the module", v => moduleName = v },
+            {"run", "Run using the interpreter instead of compiling", v => runMode = true },
             {"h|help", "Prints help", v=>helpRequested = true},
             {"<>", v=>sourcePaths.Add(v) }
         };
@@ -83,6 +85,33 @@ internal sealed class Program
         if (hasErrors)
         {
             return 1;
+        }
+
+        if (runMode)
+        {
+            try
+            {
+                ProLangCompilation? previous = null;
+                foreach (var syntaxTree in syntaxTrees)
+                {
+                    var scriptCompilation = ProLangCompilation.CreateScript(previous, syntaxTree);
+                    var result = scriptCompilation.Evaluate(new Dictionary<VariableSymbol, object>());
+
+                    if (result.Diagnostics.Any())
+                    {
+                        Console.Error.WriteDiagnostics(result.Diagnostics);
+                        return 1;
+                    }
+
+                    previous = scriptCompilation;
+                }
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(ex.ToString());
+                return 1;
+            }
         }
 
         //parse the source tree

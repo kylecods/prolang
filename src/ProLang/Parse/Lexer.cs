@@ -285,6 +285,10 @@ internal sealed class Lexer
                 _kind = SyntaxKind.ColonToken;
                 _position++;
                 break;
+            case '.':
+                _kind = SyntaxKind.DotToken;
+                _position++;
+                break;
             default:
                 if (char.IsLetter(Current))
                 {

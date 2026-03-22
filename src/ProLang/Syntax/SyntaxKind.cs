@@ -39,6 +39,7 @@ public enum SyntaxKind
     
     AmpersandAmpersandToken, // '&&'
     PipePipeToken, // '||'
+    DotToken, // '.'
     
     EqualsEqualsToken,// '=='
     LessThanEqualToken,// '<='
@@ -87,6 +88,7 @@ public enum SyntaxKind
     ArrayExpression,
     MapExpression,
     IndexExpression,
+    MethodCallExpression,
     MapEntry,
     
     //statements

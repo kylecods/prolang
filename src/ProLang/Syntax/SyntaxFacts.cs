@@ -120,6 +120,8 @@ internal static class SyntaxFacts
                 return ":";
             case SyntaxKind.CommaToken:
                 return ",";
+            case SyntaxKind.DotToken:
+                return ".";
             case SyntaxKind.IfKeyword:
                 return "if";
             case SyntaxKind.ElIfKeyword:

@@ -29,5 +29,25 @@ internal static class BuiltInFunctions
         [new ParameterSymbol("path", TypeSymbol.String,0), new ParameterSymbol("contents", TypeSymbol.String,0)],
         TypeSymbol.Void);
 
+    public static readonly FunctionSymbol Push = new("push",
+        ImmutableArray.Create(
+            new ParameterSymbol("arr", TypeSymbol.Any, 0),
+            new ParameterSymbol("value", TypeSymbol.Any, 1)),
+        TypeSymbol.Void);
+
+    public static readonly FunctionSymbol Pop = new("pop",
+        ImmutableArray.Create(new ParameterSymbol("arr", TypeSymbol.Any, 0)),
+        TypeSymbol.Any);
+
+    public static readonly FunctionSymbol GetAt = new("getAt",
+        ImmutableArray.Create(
+            new ParameterSymbol("arr", TypeSymbol.Any, 0),
+            new ParameterSymbol("index", TypeSymbol.Int, 1)),
+        TypeSymbol.Any);
+
+    public static readonly FunctionSymbol Length = new("length",
+        ImmutableArray.Create(new ParameterSymbol("arr", TypeSymbol.Any, 0)),
+        TypeSymbol.Int);
+
     internal static IEnumerable<FunctionSymbol> GetAll() => BuiltInModule.GetAllFunctions();
 }

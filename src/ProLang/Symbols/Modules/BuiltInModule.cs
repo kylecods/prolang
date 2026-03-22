@@ -9,6 +9,7 @@ public abstract class BuiltInModule
         Register(new IOModule());
         Register(new MathModule());
         Register(new FileSystemModule());
+        Register(new ArrayModule());
     }
 
     private static void Register(BuiltInModule module)

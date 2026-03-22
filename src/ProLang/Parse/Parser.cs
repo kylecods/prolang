@@ -579,12 +579,28 @@ public sealed class Parser
     {
         var expression = ParseNameOrCallExpression();
 
-        while (Current.Kind == SyntaxKind.LeftBracketToken)
+        while (true)
         {
-            var leftBracket = Match(SyntaxKind.LeftBracketToken);
-            var index = ParseExpression();
-            var rightBracket = Match(SyntaxKind.RightBracketToken);
-            expression = new IndexExpressionSyntax(_syntaxTree, expression, leftBracket, index, rightBracket);
+            if (Current.Kind == SyntaxKind.LeftBracketToken)
+            {
+                var leftBracket = Match(SyntaxKind.LeftBracketToken);
+                var index = ParseExpression();
+                var rightBracket = Match(SyntaxKind.RightBracketToken);
+                expression = new IndexExpressionSyntax(_syntaxTree, expression, leftBracket, index, rightBracket);
+            }
+            else if (Current.Kind == SyntaxKind.DotToken && Peek(1).Kind == SyntaxKind.IdentifierToken && Peek(2).Kind == SyntaxKind.LeftParenthesisToken)
+            {
+                var dotToken = Match(SyntaxKind.DotToken);
+                var methodName = Match(SyntaxKind.IdentifierToken);
+                var openParen = Match(SyntaxKind.LeftParenthesisToken);
+                var arguments = ParseArguments();
+                var closeParen = Match(SyntaxKind.RightParenthesisToken);
+                expression = new MethodCallExpressionSyntax(_syntaxTree, expression, dotToken, methodName, openParen, arguments, closeParen);
+            }
+            else
+            {
+                break;
+            }
         }
 
         return expression;

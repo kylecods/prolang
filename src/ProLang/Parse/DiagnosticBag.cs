@@ -89,6 +89,18 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Report(location, message);
     }
 
+    public void ReportUndefinedMethod(TextLocation location, string methodName, TypeSymbol receiverType)
+    {
+        var message = $"Method '{methodName}' does not exist on type '{receiverType}'.";
+        Report(location, message);
+    }
+
+    public void ReportWrongMethodArgumentCount(TextLocation location, string methodName, int expectedCount, int actualCount)
+    {
+        var message = $"Method '{methodName}' requires {expectedCount} argument(s) but was given {actualCount}";
+        Report(location, message);
+    }
+
     public void ReportWrongArgumentCount(TextLocation location, string name, int expectedCount, int actualCount)
     {
         var message = $"Function '{name} requires {expectedCount}' arguments but was given {actualCount}";
