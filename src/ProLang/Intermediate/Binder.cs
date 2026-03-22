@@ -319,6 +319,7 @@ internal sealed class Binder
             {
                 var isAllowedExpression = es.Expression.Kind == BoundNodeKind.BoundErrorExpression ||
                                             es.Expression.Kind == BoundNodeKind.BoundCallExpression ||
+                                            es.Expression.Kind == BoundNodeKind.BoundAssignmentExpression ||
                                             es.Expression.Kind == BoundNodeKind.BoundIndexAssignmentExpression;
 
                 if (!isAllowedExpression)

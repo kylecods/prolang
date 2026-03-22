@@ -58,10 +58,32 @@ internal sealed class Lowerer : BoundTreeRewriter
     {
         if (node.ElseIfStatement != null)
         {
-             //TODO:Figure this out   
+            // Convert elif to an if-else structure: if(cond) { body } else { elif(cond) { body } }
+            // The elif might itself be followed by an else clause
+            var elseLabel = GenerateLabel();
+            var endLabel = GenerateLabel();
 
-             return RewriteStatement(node);
-         
+            var gotoFalse = new BoundConditionalGotoStatement(elseLabel, node.Condition, false);
+            var gotoEndStatement = new BoundGotoStatement(endLabel);
+            var elseLabelStatement = new BoundLabelStatement(elseLabel);
+            var endLabelStatement = new BoundLabelStatement(endLabel);
+
+            // Convert the BoundElIfStatement to a BoundIfStatement
+            var elif = (BoundElIfStatement)node.ElseIfStatement;
+            BoundStatement elifAsIf = new BoundIfStatement(elif.Condition, elif.Body, null, node.ElseStatement);
+            // Recursively lower the converted if statement
+            elifAsIf = RewriteIfStatement((BoundIfStatement)elifAsIf);
+
+            var result = new BoundBlockStatement(ImmutableArray.Create<BoundStatement>(
+                gotoFalse,
+                node.Body,
+                gotoEndStatement,
+                elseLabelStatement,
+                elifAsIf,
+                endLabelStatement
+            ));
+
+            return RewriteStatement(result);
         }
         else if (node.ElseStatement != null)
         {

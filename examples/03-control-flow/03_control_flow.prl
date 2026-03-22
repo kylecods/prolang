@@ -10,7 +10,7 @@ let a : int = 56
 print("Testing if statements: ")
 if(a > 100) {
     print("Its large")
-}else if(a > 30) {
+}elif(a > 30) {
     print("Its more than 30")
 }else {
     print("Its small")
@@ -21,30 +21,31 @@ print("Testing while statements: ")
 let b: int = 0
 while(b <= 5){
     print("While value: " + string(b))
-    b +=1
+    b = b + 1
 }
 
 //for loops
 print("Testing for loops: ")
-for(let v = 1 to 10) {
-    print("For value: " + string(a))
+let v = 0
+for(v = 1 to 10) {
+    print("For value: " + string(v))
 }
 
 //Break and continue
 print("Testing break and continue statements: ")
 
-for(let f = 1 to 20) {
-
-    if(f == 3) {
-        print(" skipped value: " + string(f))
+let i: int = 0
+while(i < 20) {
+    i = i + 1
+    if(i == 3) {
+        print(" skipped value: " + string(i))
         continue
     }
 
-      if(f == 12) {
-        print(" stopped at value: " + string(f))
+      if(i == 12) {
+        print(" stopped at value: " + string(i))
         break
     }
 
-    print(string(f))
-
+    print(string(i))
 }
