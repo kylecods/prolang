@@ -2,9 +2,14 @@ using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Mono.Cecil.Rocks;
 using ProLang.Intermediate;
+using ProLang.Interop;
 using ProLang.Parse;
 using ProLang.Symbols;
 using System.Collections.Immutable;
+using System.Reflection;
+using CecilTypeAttributes = Mono.Cecil.TypeAttributes;
+using CecilMethodAttributes = Mono.Cecil.MethodAttributes;
+using CecilParameterAttributes = Mono.Cecil.ParameterAttributes;
 
 namespace ProLang.Compiler
 {
@@ -41,13 +46,19 @@ namespace ProLang.Compiler
 
         private Emitter(string moduleName, string[] references)
         {
+            // Always load runtime assemblies first to ensure core types are available
+            LoadRuntimeAssemblies();
+
             // Load provided references
             foreach (var reference in references)
             {
                 try
                 {
                     var assembly = AssemblyDefinition.ReadAssembly(reference);
-                    _assemblies.Add(assembly);
+                    if (!_assemblies.Any(a => a.Name.Name == assembly.Name.Name))
+                    {
+                        _assemblies.Add(assembly);
+                    }
                 }
                 catch (BadImageFormatException)
                 {
@@ -55,14 +66,8 @@ namespace ProLang.Compiler
                 }
             }
 
-            // If no references were provided, load runtime assemblies automatically
-            if (references.Length == 0)
-            {
-                LoadRuntimeAssemblies();
-            }
-
             var assemblyName = new AssemblyNameDefinition(moduleName, new Version(1, 0));
-            _assemblyDefinition = AssemblyDefinition.CreateAssembly(assemblyName, moduleName, ModuleKind.Console);
+            _assemblyDefinition = AssemblyDefinition.CreateAssembly(assemblyName, moduleName, ModuleKind.Dll);
 
             _consoleWriteLineReference = ResolveMethod("System.Console", "WriteLine", new[] { "System.String" })!;
             _consoleReadLineReference = ResolveMethod("System.Console", "ReadLine", Array.Empty<string>())!;
@@ -80,28 +85,44 @@ namespace ProLang.Compiler
             var sdkRoot = Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
                 ".dotnet", "packs", "Microsoft.NETCore.App.Ref");
-            
-            // Find the latest version
-            var refAssembliesPath = Directory.GetDirectories(sdkRoot)
-                .OrderByDescending(d => d)
-                .Select(d => Path.Combine(d, "ref", "net10.0"))
-                .FirstOrDefault(Directory.Exists);
 
-            if (refAssembliesPath == null)
+            string? refAssembliesPath = null;
+
+            if (Directory.Exists(sdkRoot))
+            {
+                // Find the latest version
+                refAssembliesPath = Directory.GetDirectories(sdkRoot)
+                    .OrderByDescending(d => d)
+                    .Select(d => Path.Combine(d, "ref"))
+                    .Where(Directory.Exists)
+                    .SelectMany(d => Directory.GetDirectories(d))
+                    .OrderByDescending(d => d)
+                    .FirstOrDefault();
+            }
+
+            if (refAssembliesPath == null || !Directory.Exists(refAssembliesPath))
             {
                 // Fallback to runtime directory
                 refAssembliesPath = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
             }
-            
-            // Load essential .NET assemblies
+
+            // Load essential .NET assemblies for interop
             var requiredAssemblies = new[]
             {
                 "System.Runtime.dll",
                 "System.Console.dll",
                 "System.Collections.dll",
+                "System.Collections.Concurrent.dll",
                 "System.Linq.dll",
+                "System.Text.RegularExpressions.dll",
+                "System.IO.FileSystem.dll",
+                "System.Threading.dll",
+                "System.Net.Primitives.dll",
+                "System.Text.Json.dll",
                 "Microsoft.CSharp.dll"
             };
+
+            var loadedAssemblyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
             foreach (var assemblyName in requiredAssemblies)
             {
@@ -111,7 +132,12 @@ namespace ProLang.Compiler
                     try
                     {
                         var assembly = AssemblyDefinition.ReadAssembly(assemblyPath, new ReaderParameters { ReadSymbols = false });
-                        _assemblies.Add(assembly);
+                        var simpleName = assembly.Name.Name;
+                        if (!loadedAssemblyNames.Contains(simpleName))
+                        {
+                            _assemblies.Add(assembly);
+                            loadedAssemblyNames.Add(simpleName);
+                        }
                     }
                     catch (Exception)
                     {
@@ -119,6 +145,9 @@ namespace ProLang.Compiler
                     }
                 }
             }
+
+            // Do NOT load runtime directory assemblies - they cause duplicates with reference assemblies
+            // The reference assemblies from SDK packs are sufficient and cleaner
         }
 
         private TypeReference? ResolveType(string metaDataName)
@@ -262,7 +291,7 @@ namespace ProLang.Compiler
             var objectType = GetTypeReference(TypeSymbol.Any);
 
             //main class or running class
-            _typeDefinition = new TypeDefinition("", "Program", TypeAttributes.Abstract | TypeAttributes.Sealed, objectType);
+            _typeDefinition = new TypeDefinition("", "Program", CecilTypeAttributes.Abstract | CecilTypeAttributes.Sealed, objectType);
 
             _assemblyDefinition.MainModule.Types.Add(_typeDefinition);
 
@@ -283,6 +312,24 @@ namespace ProLang.Compiler
 
             _assemblyDefinition.Write(outputPath);
 
+            // Generate .runtimeconfig.json for running with dotnet
+            var runtimeConfigPath = Path.ChangeExtension(outputPath, ".runtimeconfig.json");
+            if (runtimeConfigPath != null)
+            {
+                var runtimeConfig = """
+                    {
+                      "runtimeOptions": {
+                        "tfm": "net10.0",
+                        "framework": {
+                          "name": "Microsoft.NETCore.App",
+                          "version": "10.0.0"
+                        }
+                      }
+                    }
+                    """;
+                File.WriteAllText(runtimeConfigPath, runtimeConfig);
+            }
+
             return _diagnostics.ToImmutableArray();
         }
 
@@ -290,14 +337,14 @@ namespace ProLang.Compiler
         {
             var functionType = GetTypeReference(function.Type);
 
-            var method = new MethodDefinition(function.Name, MethodAttributes.Static | MethodAttributes.Public, functionType);
+            var method = new MethodDefinition(function.Name, CecilMethodAttributes.Static | CecilMethodAttributes.Public, functionType);
 
 
             foreach (var parameter in function.Parameters)
             {
                 var parameterType = GetTypeReference(parameter.Type);
 
-                var parameterAttributes = ParameterAttributes.None;
+                var parameterAttributes = CecilParameterAttributes.None;
 
                 var parameterDefinition = new ParameterDefinition(parameter.Name, parameterAttributes, parameterType);
 
@@ -575,6 +622,11 @@ namespace ProLang.Compiler
             ilProcessor.Emit(opCode, value);
         }
 
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, FieldReference field)
+        {
+            ilProcessor.Emit(opCode, field);
+        }
+
         private void EmitArrayExpression(ILProcessor ilProcessor, BoundArrayExpression node)
         {
             var arrayType = GetTypeReference(node.Type);
@@ -689,6 +741,10 @@ namespace ProLang.Compiler
                 _listGetCountMethod ??= GetGenericMethod(listType, "get_Count", 0);
                 EmitInstruction(ilProcessor, OpCodes.Callvirt, _listGetCountMethod);
             }
+            else if (node.Function is DotNetFunctionSymbol dotNetFunc)
+            {
+                EmitDotNetCallExpression(ilProcessor, dotNetFunc);
+            }
             else
             {
                 var methodDefinition = _methods[node.Function];
@@ -697,23 +753,256 @@ namespace ProLang.Compiler
             }
         }
 
+        /// <summary>
+        /// Emits a .NET method call instruction.
+        /// </summary>
+        private void EmitDotNetCallExpression(ILProcessor ilProcessor, DotNetFunctionSymbol dotNetFunc)
+        {
+            if (dotNetFunc.ConstructorInfo != null)
+            {
+                // Resolve and emit constructor call
+                var typeRef = ResolveDotNetType(dotNetFunc.DeclaringType);
+                var methodRef = ResolveDotNetConstructor(dotNetFunc.ConstructorInfo, typeRef);
+                EmitInstruction(ilProcessor, OpCodes.Newobj, methodRef);
+                
+                // Box value types if the return type is Any (object)
+                if (dotNetFunc.Type == TypeSymbol.Any && dotNetFunc.DeclaringType.IsValueType)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Box, typeRef);
+                }
+                return;
+            }
+
+            if (dotNetFunc.MethodInfo != null)
+            {
+                var typeRef = ResolveDotNetType(dotNetFunc.DeclaringType);
+                var methodRef = ResolveDotNetMethod(dotNetFunc.MethodInfo, typeRef);
+
+                if (dotNetFunc.IsStatic)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Call, methodRef);
+                }
+                else
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Callvirt, methodRef);
+                }
+                
+                // Box value types if the return type is Any (object)
+                if (dotNetFunc.Type == TypeSymbol.Any && dotNetFunc.MethodInfo.ReturnType.IsValueType)
+                {
+                    var returnTypeRef = ResolveDotNetType(dotNetFunc.MethodInfo.ReturnType);
+                    EmitInstruction(ilProcessor, OpCodes.Box, returnTypeRef);
+                }
+                return;
+            }
+
+            // Extract actual member name from qualified name (e.g., "Math.PI" -> "PI")
+            var memberName = dotNetFunc.Name.Contains('.')
+                ? dotNetFunc.Name.Substring(dotNetFunc.Name.LastIndexOf('.') + 1)
+                : dotNetFunc.Name;
+
+            // Static field/property access
+            var field = dotNetFunc.DeclaringType.GetField(memberName);
+            if (field != null)
+            {
+                var typeRef = ResolveDotNetType(dotNetFunc.DeclaringType);
+                var fieldRef = new FieldReference(field.Name, ResolveDotNetTypeAsTypeRef(field.FieldType), typeRef);
+                EmitInstruction(ilProcessor, OpCodes.Ldsfld, _assemblyDefinition.MainModule.ImportReference(fieldRef));
+                
+                // Box value types if the return type is Any (object)
+                if (dotNetFunc.Type == TypeSymbol.Any && field.FieldType.IsValueType)
+                {
+                    var fieldTypeRef = ResolveDotNetType(field.FieldType);
+                    EmitInstruction(ilProcessor, OpCodes.Box, fieldTypeRef);
+                }
+                return;
+            }
+
+            var property = dotNetFunc.DeclaringType.GetProperty(memberName);
+            if (property?.GetMethod != null)
+            {
+                var typeRef = ResolveDotNetType(dotNetFunc.DeclaringType);
+                var methodRef = ResolveDotNetMethod(property.GetMethod, typeRef);
+                EmitInstruction(ilProcessor, OpCodes.Call, methodRef);
+                
+                // Box value types if the return type is Any (object)
+                if (dotNetFunc.Type == TypeSymbol.Any && property.PropertyType.IsValueType)
+                {
+                    var propTypeRef = ResolveDotNetType(property.PropertyType);
+                    EmitInstruction(ilProcessor, OpCodes.Box, propTypeRef);
+                }
+                return;
+            }
+
+            throw new NotSupportedException($"Cannot emit .NET member '{dotNetFunc.Name}' (member: '{memberName}')");
+        }
+
+        /// <summary>
+        /// Resolves a .NET type to a Mono.Cecil TypeReference.
+        /// </summary>
+        private TypeReference ResolveDotNetType(Type type)
+        {
+            // Try to find in loaded assemblies
+            var typeRef = _assemblies
+                .SelectMany(a => a.Modules)
+                .SelectMany(m => m.Types)
+                .FirstOrDefault(t => t.FullName == type.FullName);
+
+            if (typeRef != null)
+            {
+                return _assemblyDefinition.MainModule.ImportReference(typeRef);
+            }
+
+            // Try to resolve from runtime
+            try
+            {
+                var assemblyLocation = type.Assembly.Location;
+                if (!string.IsNullOrEmpty(assemblyLocation) && File.Exists(assemblyLocation))
+                {
+                    var runtimeAssembly = AssemblyDefinition.ReadAssembly(assemblyLocation);
+                    _assemblies.Add(runtimeAssembly);
+                    
+                    typeRef = runtimeAssembly.MainModule.Types.FirstOrDefault(t => t.FullName == type.FullName);
+                    if (typeRef != null)
+                    {
+                        return _assemblyDefinition.MainModule.ImportReference(typeRef);
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore
+            }
+
+            throw new TypeLoadException($"Cannot resolve .NET type '{type.FullName}' in loaded assemblies");
+        }
+
+        /// <summary>
+        /// Resolves a .NET method to a Mono.Cecil MethodReference.
+        /// </summary>
+        private MethodReference ResolveDotNetMethod(System.Reflection.MethodInfo method, TypeReference typeRef)
+        {
+            // Find the TypeDefinition from loaded assemblies (avoid using typeRef.Resolve() which uses Cecil's resolver)
+            TypeDefinition? typeDef = _assemblies
+                .SelectMany(a => a.Modules)
+                .SelectMany(m => m.Types)
+                .FirstOrDefault(t => t.FullName == typeRef.FullName);
+
+            if (typeDef == null)
+            {
+                throw new TypeLoadException($"Cannot resolve type '{typeRef.FullName}' in loaded assemblies");
+            }
+
+            // Search for the method on the type and its base types
+            var currentTypeDef = typeDef;
+            while (currentTypeDef != null)
+            {
+                var methodDef = currentTypeDef.Methods.FirstOrDefault(m =>
+                    m.Name == method.Name &&
+                    m.Parameters.Count == method.GetParameters().Length);
+
+                if (methodDef != null)
+                {
+                    // Create a proper method reference
+                    var methodRef = _assemblyDefinition.MainModule.ImportReference(methodDef);
+                    
+                    // If the type is a generic instance, we need to make the method reference generic too
+                    if (typeRef is GenericInstanceType genericType)
+                    {
+                        var specializedMethod = new MethodReference(methodDef.Name, methodDef.ReturnType, genericType);
+                        specializedMethod.HasThis = methodDef.HasThis;
+                        specializedMethod.ExplicitThis = methodDef.ExplicitThis;
+                        specializedMethod.CallingConvention = methodDef.CallingConvention;
+                        
+                        foreach (var param in methodDef.Parameters)
+                        {
+                            specializedMethod.Parameters.Add(new ParameterDefinition(param.Name, param.Attributes, param.ParameterType));
+                        }
+                        
+                        return _assemblyDefinition.MainModule.ImportReference(specializedMethod);
+                    }
+                    
+                    return methodRef;
+                }
+
+                // Check base type - search in loaded assemblies
+                if (currentTypeDef.BaseType != null)
+                {
+                    currentTypeDef = _assemblies
+                        .SelectMany(a => a.Modules)
+                        .SelectMany(m => m.Types)
+                        .FirstOrDefault(t => t.FullName == currentTypeDef.BaseType.FullName);
+                }
+                else
+                {
+                    break;
+                }
+            }
+
+            throw new MissingMethodException($"Cannot resolve method '{method.Name}' on type '{typeRef.FullName}'");
+        }
+
+        /// <summary>
+        /// Resolves a .NET constructor to a Mono.Cecil MethodReference.
+        /// </summary>
+        private MethodReference ResolveDotNetConstructor(System.Reflection.ConstructorInfo constructor, TypeReference typeRef)
+        {
+            var typeDef = typeRef.Resolve();
+            var ctorDef = typeDef.Methods.FirstOrDefault(m =>
+                m.IsConstructor &&
+                m.Parameters.Count == constructor.GetParameters().Length);
+
+            if (ctorDef != null)
+            {
+                return _assemblyDefinition.MainModule.ImportReference(ctorDef);
+            }
+
+            throw new MissingMethodException($"Cannot resolve constructor on type '{typeRef.FullName}'");
+        }
+
+        /// <summary>
+        /// Resolves a .NET type to a TypeReference for field type resolution.
+        /// </summary>
+        private TypeReference ResolveDotNetTypeAsTypeRef(Type type)
+        {
+            return type.FullName switch
+            {
+                "System.Void" => ResolveType("System.Void")!,
+                "System.Boolean" => ResolveType("System.Boolean")!,
+                "System.Int32" => ResolveType("System.Int32")!,
+                "System.String" => ResolveType("System.String")!,
+                "System.Object" => ResolveType("System.Object")!,
+                _ => ResolveDotNetType(type)
+            };
+        }
+
         private void EmitBinaryExpression(ILProcessor ilProcessor, BoundBinaryExpression node)
         {
             EmitExpression(ilProcessor, node.Left);
             if (node.Op.Kind == BoundBinaryOperatorKind.Addition && node.Op.Type == TypeSymbol.String)
             {
-                if (node.Left.Type != TypeSymbol.String && node.Left.Type != TypeSymbol.Any)
+                // Box non-string types for String.Concat(object, object)
+                // For Any type (which could be a value type like DateTime), we need to box too
+                if (node.Left.Type != TypeSymbol.String)
                 {
-                    EmitInstruction(ilProcessor, OpCodes.Box, GetTypeReference(node.Left.Type));
+                    if (node.Left.Type == TypeSymbol.Any || node.Left.Type == TypeSymbol.Int || node.Left.Type == TypeSymbol.Bool)
+                    {
+                        EmitInstruction(ilProcessor, OpCodes.Box, GetTypeReference(node.Left.Type));
+                    }
                 }
             }
 
             EmitExpression(ilProcessor, node.Right);
             if (node.Op.Kind == BoundBinaryOperatorKind.Addition && node.Op.Type == TypeSymbol.String)
             {
-                if (node.Right.Type != TypeSymbol.String && node.Right.Type != TypeSymbol.Any)
+                // Box non-string types for String.Concat(object, object)
+                // For Any type (which could be a value type like DateTime), we need to box too
+                if (node.Right.Type != TypeSymbol.String)
                 {
-                    EmitInstruction(ilProcessor, OpCodes.Box, GetTypeReference(node.Right.Type));
+                    if (node.Right.Type == TypeSymbol.Any || node.Right.Type == TypeSymbol.Int || node.Right.Type == TypeSymbol.Bool)
+                    {
+                        EmitInstruction(ilProcessor, OpCodes.Box, GetTypeReference(node.Right.Type));
+                    }
                 }
             }
 

@@ -45,7 +45,7 @@ internal sealed class Program
 
         if (outputPath == null)
         {
-            outputPath = Path.ChangeExtension(sourcePaths[0], ".exe");
+            outputPath = Path.ChangeExtension(sourcePaths[0], ".dll");
         }
 
         if (moduleName == null) 

@@ -1,6 +1,7 @@
 using System.Collections.Immutable;
 using ProLang.Intermediate;
 using ProLang.Interpreter;
+using ProLang.Interop;
 using ProLang.Parse;
 using ProLang.Symbols;
 using ProLang.Symbols.Modules;
@@ -48,8 +49,14 @@ public sealed class ProLangCompilation
 
     public static ProLangCompilation CreateScript(ProLangCompilation previous, params SyntaxTree[] syntaxTrees)
     {
-        var allModules = BuiltInModule.GetAll().Select(m => m.Name).ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
-        return new ProLangCompilation(isScript: true, previous: previous, ImmutableArray<Diagnostic>.Empty, allModules, syntaxTrees);
+        var (resolved, diagnostics, importedModules) = ResolveAllImports(syntaxTrees.ToImmutableArray());
+
+        // Also include built-in modules
+        var allModules = BuiltInModule.GetAll().Select(m => m.Name)
+            .Concat(importedModules)
+            .ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
+
+        return new ProLangCompilation(isScript: true, previous: previous, diagnostics, allModules, resolved.ToArray());
     }
 
     private static (ImmutableArray<SyntaxTree> Trees, ImmutableArray<Diagnostic> Diagnostics, ImmutableHashSet<string> ImportedModules) ResolveAllImports(
@@ -89,6 +96,81 @@ public sealed class ProLangCompilation
 
                 var importPath = import.Path;
 
+                // Handle .NET namespace imports: "dotnet:System.Text.Json"
+                if (importPath.StartsWith("dotnet:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var namespaceName = importPath.Substring("dotnet:".Length);
+                    if (BuiltInModule.RegisterDotNetNamespace(namespaceName))
+                    {
+                        importedModules.Add(importPath);
+                    }
+                    else
+                    {
+                        diagnostics.Add(new Diagnostic(import.PathToken.Location,
+                            $"Could not find .NET namespace '{namespaceName}'. Ensure the assembly is loaded."));
+                    }
+                    continue;
+                }
+
+                // Handle .NET assembly file imports: "assembly:/path/to/MyLib.dll"
+                if (importPath.StartsWith("assembly:", StringComparison.OrdinalIgnoreCase))
+                {
+                    var assemblyPath = importPath.Substring("assembly:".Length);
+
+                    // Try relative to importing file first
+                    string? resolvedAssemblyPath = null;
+                    if (!string.IsNullOrEmpty(importingDir))
+                    {
+                        var candidate = Path.GetFullPath(Path.Combine(importingDir, assemblyPath));
+                        if (File.Exists(candidate))
+                        {
+                            resolvedAssemblyPath = candidate;
+                        }
+                    }
+
+                    // Try as absolute path
+                    if (resolvedAssemblyPath == null && Path.IsPathRooted(assemblyPath))
+                    {
+                        if (File.Exists(assemblyPath))
+                        {
+                            resolvedAssemblyPath = Path.GetFullPath(assemblyPath);
+                        }
+                    }
+
+                    // Try relative to CWD
+                    if (resolvedAssemblyPath == null)
+                    {
+                        var candidate = Path.GetFullPath(assemblyPath);
+                        if (File.Exists(candidate))
+                        {
+                            resolvedAssemblyPath = candidate;
+                        }
+                    }
+
+                    if (resolvedAssemblyPath != null)
+                    {
+                        var assembly = BuiltInModule.LoadAssemblyFromFile(resolvedAssemblyPath);
+                        if (assembly != null)
+                        {
+                            importedModules.Add(importPath);
+                            // Register all public namespaces from the assembly
+                            RegisterAssemblyNamespaces(assembly);
+                        }
+                        else
+                        {
+                            diagnostics.Add(new Diagnostic(import.PathToken.Location,
+                                $"Could not load .NET assembly '{resolvedAssemblyPath}'. The file may not be a valid .NET assembly."));
+                        }
+                    }
+                    else
+                    {
+                        diagnostics.Add(new Diagnostic(import.PathToken.Location,
+                            $"Could not find assembly file '{assemblyPath}'."));
+                    }
+                    continue;
+                }
+
+                // Handle built-in modules
                 if (BuiltInModule.TryGetModule(importPath, out _))
                 {
                     importedModules.Add(importPath);
@@ -135,6 +217,33 @@ public sealed class ProLangCompilation
         }
 
         return (allTrees.ToImmutable(), diagnostics.ToImmutable(), importedModules.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Registers all public namespaces from an assembly as importable modules.
+    /// </summary>
+    private static void RegisterAssemblyNamespaces(System.Reflection.Assembly assembly)
+    {
+        try
+        {
+            var namespaces = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var type in assembly.GetExportedTypes())
+            {
+                if (!string.IsNullOrEmpty(type.Namespace))
+                {
+                    namespaces.Add(type.Namespace);
+                }
+            }
+
+            foreach (var ns in namespaces)
+            {
+                BuiltInModule.RegisterDotNetNamespace(ns);
+            }
+        }
+        catch
+        {
+            // Some assemblies may throw on GetExportedTypes
+        }
     }
 
     private BoundProgram GetProgram()

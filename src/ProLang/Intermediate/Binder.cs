@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using ProLang.Interop;
 using ProLang.Lowering;
 using ProLang.Parse;
 using ProLang.Symbols;
@@ -285,6 +286,19 @@ internal sealed class Binder
                 foreach (var f in module.Functions)
                 {
                     result.TryDeclareFunction(f);
+                }
+
+                // For .NET modules, also register types that can be used as type names
+                if (module is DotNetInteropModule dotNetModule)
+                {
+                    foreach (var type in dotNetModule.GetDotNetTypes())
+                    {
+                        // Register static methods with qualified names like "Math.Max"
+                        foreach (var func in module.Functions)
+                        {
+                            result.TryDeclareFunction(func);
+                        }
+                    }
                 }
             }
         }
@@ -622,6 +636,23 @@ internal sealed class Binder
             case "map":
                 return TypeSymbol.Map;
             default:
+                // Try to find as a .NET type
+                var dotNetType = DotNetAssemblyRegistry.Instance.FindType(name);
+                if (dotNetType != null)
+                {
+                    return DotNetTypeMapper.MapToProLangType(dotNetType);
+                }
+
+                // Try common namespace prefixes
+                foreach (var ns in new[] { "System", "System.Collections.Generic", "System.Text", "System.IO" })
+                {
+                    dotNetType = DotNetAssemblyRegistry.Instance.FindTypeByNamespace(ns, name);
+                    if (dotNetType != null)
+                    {
+                        return DotNetTypeMapper.MapToProLangType(dotNetType);
+                    }
+                }
+
                 return null;
         }
     }
@@ -859,8 +890,17 @@ internal sealed class Binder
 
         if (!_scope.TryLookupFunction(syntax.Identifier.Text, out var function))
         {
-            _diagnostics.ReportUndefinedFunction(syntax.Identifier.Location, syntax.Identifier.Text);
-            return new BoundErrorExpression();
+            // Try to resolve as a .NET static method (e.g., "WriteLine" from System.Console)
+            var dotNetFunc = TryResolveDotNetFunction(syntax.Identifier.Text);
+            if (dotNetFunc != null)
+            {
+                function = dotNetFunc;
+            }
+            else
+            {
+                _diagnostics.ReportUndefinedFunction(syntax.Identifier.Location, syntax.Identifier.Text);
+                return new BoundErrorExpression();
+            }
         }
 
         if (syntax.Arguments.Count != function.Parameters.Length)
@@ -883,6 +923,41 @@ internal sealed class Binder
         return new BoundCallExpression(function, boundArguments.ToImmutable());
     }
 
+    /// <summary>
+    /// Tries to resolve a function from .NET assemblies by searching for static methods.
+    /// </summary>
+    private DotNetFunctionSymbol? TryResolveDotNetFunction(string name)
+    {
+        var registry = DotNetAssemblyRegistry.Instance;
+
+        // Search through all loaded assemblies for a static method matching the name
+        foreach (var assembly in registry.GetLoadedAssemblies())
+        {
+            try
+            {
+                foreach (var type in assembly.GetExportedTypes())
+                {
+                    if (!type.IsPublic) continue;
+
+                    var methods = registry.GetStaticMethods(type);
+                    var matchingMethod = methods.FirstOrDefault(m =>
+                        m.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
+
+                    if (matchingMethod != null)
+                    {
+                        return DotNetFunctionSymbol.FromStaticMethod(matchingMethod);
+                    }
+                }
+            }
+            catch
+            {
+                // Ignore assembly access errors
+            }
+        }
+
+        return null;
+    }
+
     private static readonly Dictionary<string, FunctionSymbol> ArrayMethods = new(StringComparer.Ordinal)
     {
         { "push", BuiltInFunctions.Push },
@@ -893,48 +968,258 @@ internal sealed class Binder
 
     private BoundExpression BindMethodCallExpression(MethodCallExpressionSyntax syntax)
     {
-        var receiver = BindExpression(syntax.Expression);
         var methodName = syntax.MethodName.Text;
+
+        // First check if the expression is a NameExpression that could be a .NET type name
+        if (syntax.Expression is NameExpressionSyntax nameExpr)
+        {
+            var typeName = nameExpr.IdentifierToken.Text;
+
+            // Try to resolve as .NET static method call (e.g., DateTime.Now, Math.Max)
+            var dotNetFunc = ResolveDotNetStaticMethod(typeName, methodName);
+            if (dotNetFunc != null)
+            {
+                return BindDotNetFunctionCall(syntax, dotNetFunc, syntax.Arguments);
+            }
+        }
+
+        // Otherwise, bind the expression normally
+        var receiver = BindExpression(syntax.Expression);
 
         if (receiver.Type == TypeSymbol.Error)
         {
             return new BoundErrorExpression();
         }
 
-        if (receiver.Type.Name != "array")
+        // Handle array methods
+        if (receiver.Type.Name == "array")
         {
-            _diagnostics.ReportUndefinedMethod(syntax.MethodName.Location, methodName, receiver.Type);
-            return new BoundErrorExpression();
+            if (!ArrayMethods.TryGetValue(methodName, out var function))
+            {
+                _diagnostics.ReportUndefinedMethod(syntax.MethodName.Location, methodName, receiver.Type);
+                return new BoundErrorExpression();
+            }
+
+            var expectedArgCount = function.Parameters.Length - 1;
+
+            if (syntax.Arguments.Count != expectedArgCount)
+            {
+                _diagnostics.ReportWrongMethodArgumentCount(syntax.Location, methodName, expectedArgCount, syntax.Arguments.Count);
+                return new BoundErrorExpression();
+            }
+
+            var boundArguments = ImmutableArray.CreateBuilder<BoundExpression>();
+
+            var receiverParam = function.Parameters[0];
+            boundArguments.Add(BindConversion(syntax.Expression.Location, receiver, receiverParam.Type));
+
+            for (int i = 0; i < syntax.Arguments.Count; i++)
+            {
+                var argument = BindExpression(syntax.Arguments[i]);
+                var parameter = function.Parameters[i + 1];
+                boundArguments.Add(BindConversion(syntax.Arguments[i].Location, argument, parameter.Type));
+            }
+
+            return new BoundCallExpression(function, boundArguments.ToImmutable());
         }
 
-        if (!ArrayMethods.TryGetValue(methodName, out var function))
+        // Handle .NET static method calls via qualified name (e.g., Math.Max)
+        if (receiver is BoundVariableExpression varExpr)
         {
-            _diagnostics.ReportUndefinedMethod(syntax.MethodName.Location, methodName, receiver.Type);
-            return new BoundErrorExpression();
+            var typeName = varExpr.Variable.Name;
+            var dotNetFunc = ResolveDotNetStaticMethod(typeName, methodName);
+            if (dotNetFunc != null)
+            {
+                return BindDotNetFunctionCall(syntax, dotNetFunc, syntax.Arguments);
+            }
+
+            // Try namespace.Type.Method pattern
+            var qualifiedName = $"{typeName}.{methodName}";
+            if (_scope.TryLookupFunction(qualifiedName, out var func))
+            {
+                return BindFunctionCall(syntax, func!, syntax.Arguments);
+            }
         }
 
-        // The first parameter is always the array (receiver).
-        // The remaining parameters correspond to the method call arguments.
-        var expectedArgCount = function.Parameters.Length - 1;
-
-        if (syntax.Arguments.Count != expectedArgCount)
+        // Handle .NET instance method calls on 'any' type
+        if (receiver.Type == TypeSymbol.Any)
         {
-            _diagnostics.ReportWrongMethodArgumentCount(syntax.Location, methodName, expectedArgCount, syntax.Arguments.Count);
-            return new BoundErrorExpression();
+            var dotNetFunc = ResolveDotNetInstanceMethod(methodName);
+            if (dotNetFunc != null)
+            {
+                return BindDotNetInstanceMethodCall(syntax, receiver, dotNetFunc, syntax.Arguments);
+            }
         }
 
+        _diagnostics.ReportUndefinedMethod(syntax.MethodName.Location, methodName, receiver.Type);
+        return new BoundErrorExpression();
+    }
+
+    /// <summary>
+    /// Resolves a .NET static method by type name and method name.
+    /// </summary>
+    private DotNetFunctionSymbol? ResolveDotNetStaticMethod(string typeName, string methodName)
+    {
+        var registry = DotNetAssemblyRegistry.Instance;
+
+        // Try to find the type by full name first
+        Type? dotNetType = registry.FindType(typeName);
+
+        if (dotNetType == null)
+        {
+            // Search all loaded assemblies for the type (not just hardcoded prefixes)
+            foreach (var assembly in registry.GetLoadedAssemblies())
+            {
+                try
+                {
+                    dotNetType = assembly.GetTypes().FirstOrDefault(t =>
+                        t.IsPublic && t.Name.Equals(typeName, StringComparison.OrdinalIgnoreCase));
+                    if (dotNetType != null) break;
+                }
+                catch
+                {
+                    // Some assemblies may throw
+                }
+            }
+        }
+
+        if (dotNetType == null)
+        {
+            // Try common namespace prefixes as fallback
+            foreach (var ns in new[] { "System", "System.Collections.Generic", "System.Text", "System.IO", "System.Linq" })
+            {
+                dotNetType = registry.FindTypeByNamespace(ns, typeName);
+                if (dotNetType != null) break;
+            }
+        }
+
+        if (dotNetType == null)
+            return null;
+
+        // First try to find a static method
+        var methods = registry.GetStaticMethods(dotNetType);
+        var matchingMethod = methods.FirstOrDefault(m =>
+            m.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase));
+
+        if (matchingMethod != null)
+            return DotNetFunctionSymbol.FromStaticMethod(matchingMethod);
+
+        // If no method found, try to find a static property
+        var properties = registry.GetStaticProperties(dotNetType);
+        var matchingProperty = properties.FirstOrDefault(p =>
+            p.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase));
+
+        if (matchingProperty != null)
+            return DotNetFunctionSymbol.FromStaticProperty(matchingProperty);
+
+        // If still not found, try to find a static field (constants, etc.)
+        var fields = dotNetType.GetFields(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Static);
+        var matchingField = fields.FirstOrDefault(f =>
+            f.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase));
+
+        if (matchingField != null)
+            return DotNetFunctionSymbol.FromStaticField(matchingField);
+
+        return null;
+    }
+
+    /// <summary>
+    /// Resolves a .NET instance method (for 'any' type objects).
+    /// </summary>
+    private DotNetFunctionSymbol? ResolveDotNetInstanceMethod(string methodName)
+    {
+        // We don't know the actual type at bind time for 'any' types,
+        // so we create a placeholder that will be resolved at runtime
+        return null;
+    }
+
+    /// <summary>
+    /// Binds a call to a .NET function.
+    /// </summary>
+    private BoundExpression BindDotNetFunctionCall(
+        MethodCallExpressionSyntax syntax,
+        DotNetFunctionSymbol function,
+        SeparatedSyntaxList<ExpressionSyntax> arguments)
+    {
         var boundArguments = ImmutableArray.CreateBuilder<BoundExpression>();
 
-        // First argument is the receiver (the array)
-        var receiverParam = function.Parameters[0];
-        boundArguments.Add(BindConversion(syntax.Expression.Location, receiver, receiverParam.Type));
-
-        // Bind the remaining arguments
-        for (int i = 0; i < syntax.Arguments.Count; i++)
+        foreach (var argument in arguments)
         {
-            var argument = BindExpression(syntax.Arguments[i]);
-            var parameter = function.Parameters[i + 1];
-            boundArguments.Add(BindConversion(syntax.Arguments[i].Location, argument, parameter.Type));
+            var boundArgument = BindExpression(argument);
+            boundArguments.Add(boundArgument);
+        }
+
+        if (arguments.Count != function.Parameters.Length)
+        {
+            _diagnostics.ReportWrongArgumentCount(syntax.Location, function.Name, function.Parameters.Length,
+                arguments.Count);
+            return new BoundErrorExpression();
+        }
+
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            var argumentLocation = arguments[i].Location;
+            var argument = boundArguments[i];
+            var parameter = function.Parameters[i];
+
+            boundArguments[i] = BindConversion(argumentLocation, argument, parameter.Type);
+        }
+
+        return new BoundCallExpression(function, boundArguments.ToImmutable());
+    }
+
+    /// <summary>
+    /// Binds a .NET instance method call.
+    /// </summary>
+    private BoundExpression BindDotNetInstanceMethodCall(
+        MethodCallExpressionSyntax syntax,
+        BoundExpression receiver,
+        DotNetFunctionSymbol function,
+        SeparatedSyntaxList<ExpressionSyntax> arguments)
+    {
+        var boundArguments = ImmutableArray.CreateBuilder<BoundExpression>();
+
+        // First argument is the receiver (the instance)
+        boundArguments.Add(receiver);
+
+        foreach (var argument in arguments)
+        {
+            boundArguments.Add(BindExpression(argument));
+        }
+
+        return new BoundCallExpression(function, boundArguments.ToImmutable());
+    }
+
+    /// <summary>
+    /// Binds a function call by function symbol.
+    /// </summary>
+    private BoundExpression BindFunctionCall(
+        MethodCallExpressionSyntax syntax,
+        FunctionSymbol function,
+        SeparatedSyntaxList<ExpressionSyntax> arguments)
+    {
+        var boundArguments = ImmutableArray.CreateBuilder<BoundExpression>();
+
+        foreach (var argument in arguments)
+        {
+            var boundArgument = BindExpression(argument);
+            boundArguments.Add(boundArgument);
+        }
+
+        if (arguments.Count != function.Parameters.Length)
+        {
+            _diagnostics.ReportWrongArgumentCount(syntax.Location, function.Name, function.Parameters.Length,
+                arguments.Count);
+            return new BoundErrorExpression();
+        }
+
+        for (int i = 0; i < arguments.Count; i++)
+        {
+            var argumentLocation = arguments[i].Location;
+            var argument = boundArguments[i];
+            var parameter = function.Parameters[i];
+
+            boundArguments[i] = BindConversion(argumentLocation, argument, parameter.Type);
         }
 
         return new BoundCallExpression(function, boundArguments.ToImmutable());

@@ -1,4 +1,6 @@
+using System.Collections.Immutable;
 using ProLang.Intermediate;
+using ProLang.Interop;
 using ProLang.Symbols;
 
 namespace ProLang.Interpreter;
@@ -172,7 +174,10 @@ internal sealed class Evaluator
                 {
                     return (int)leftOperand + (int)rightOperand;
                 }
-                return (string)leftOperand + (string)rightOperand;
+                // For string concatenation, convert operands to strings if needed
+                var leftStr = leftOperand as string ?? leftOperand?.ToString() ?? "";
+                var rightStr = rightOperand as string ?? rightOperand?.ToString() ?? "";
+                return leftStr + rightStr;
             case BoundBinaryOperatorKind.Subtraction:
                 return (int)leftOperand - (int)rightOperand;
             case BoundBinaryOperatorKind.Multiplication:
@@ -417,6 +422,12 @@ internal sealed class Evaluator
             return arr.Count;
         }
 
+        // Handle .NET function calls
+        if (node.Function is DotNetFunctionSymbol dotNetFunc)
+        {
+            return EvaluateDotNetCall(dotNetFunc, node.Arguments);
+        }
+
         var locals = new Dictionary<VariableSymbol, object>();
 
         for (int i = 0; i < node.Arguments.Length; i++)
@@ -438,6 +449,68 @@ internal sealed class Evaluator
 
         return result;
 
+    }
+
+    /// <summary>
+    /// Evaluates a .NET method/constructor call.
+    /// </summary>
+    private object? EvaluateDotNetCall(DotNetFunctionSymbol dotNetFunc, ImmutableArray<BoundExpression> arguments)
+    {
+        // Evaluate all arguments
+        var args = new object?[arguments.Length];
+        for (int i = 0; i < arguments.Length; i++)
+        {
+            args[i] = EvaluateExpression(arguments[i]);
+        }
+
+        // Handle constructor calls
+        if (dotNetFunc.ConstructorInfo != null)
+        {
+            var preparedArgs = DotNetTypeMapper.PrepareArguments(args, dotNetFunc.ConstructorInfo.GetParameters());
+            var result = dotNetFunc.ConstructorInfo.Invoke(preparedArgs);
+            return DotNetTypeMapper.ConvertFromDotNet(result);
+        }
+
+        // Handle static method calls
+        if (dotNetFunc.MethodInfo != null && dotNetFunc.IsStatic)
+        {
+            var preparedArgs = DotNetTypeMapper.PrepareArguments(args, dotNetFunc.MethodInfo.GetParameters());
+            var result = dotNetFunc.MethodInfo.Invoke(null, preparedArgs);
+            return DotNetTypeMapper.ConvertFromDotNet(result);
+        }
+
+        // Handle instance method calls
+        if (dotNetFunc.MethodInfo != null && !dotNetFunc.IsStatic)
+        {
+            if (args.Length == 0)
+                throw new InvalidOperationException($"Instance method '{dotNetFunc.Name}' requires a receiver");
+
+            var instance = args[0];
+            var methodArgs = new object?[args.Length - 1];
+            Array.Copy(args, 1, methodArgs, 0, methodArgs.Length);
+
+            var preparedArgs = DotNetTypeMapper.PrepareArguments(methodArgs, dotNetFunc.MethodInfo.GetParameters());
+            var result = dotNetFunc.MethodInfo.Invoke(instance, preparedArgs);
+            return DotNetTypeMapper.ConvertFromDotNet(result);
+        }
+
+        // Handle static field/property access
+        if (dotNetFunc.IsStatic && dotNetFunc.MethodInfo == null && dotNetFunc.ConstructorInfo == null)
+        {
+            var field = dotNetFunc.DeclaringType.GetField(dotNetFunc.Name);
+            if (field != null)
+            {
+                return DotNetTypeMapper.ConvertFromDotNet(field.GetValue(null));
+            }
+
+            var property = dotNetFunc.DeclaringType.GetProperty(dotNetFunc.Name);
+            if (property != null)
+            {
+                return DotNetTypeMapper.ConvertFromDotNet(property.GetValue(null));
+            }
+        }
+
+        throw new InvalidOperationException($"Cannot invoke .NET member '{dotNetFunc.Name}'");
     }
     
     private object EvaluateConversionExpression(BoundConversionExpression node)

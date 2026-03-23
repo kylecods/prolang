@@ -1,4 +1,0 @@
-import "io"
-import "simple_helper.prl"
-
-print("num = " + string(getNum()))
