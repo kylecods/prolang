@@ -1,0 +1,210 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "ProLang",
+  "scopeName": "source.prolang",
+  "fileTypes": [
+    "prl",
+    "prolang"
+  ],
+  "patterns": [
+    {
+      "include": "#comments"
+    },
+    {
+      "include": "#strings"
+    },
+    {
+      "include": "#html-script-tags"
+    },
+    {
+      "include": "#keywords"
+    },
+    {
+      "include": "#types"
+    },
+    {
+      "include": "#operators"
+    },
+    {
+      "include": "#numbers"
+    },
+    {
+      "include": "#identifiers"
+    }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        {
+          "name": "comment.block.prolang",
+          "begin": "/\\*",
+          "end": "\\*/",
+          "patterns": [
+            {
+              "include": "#comments"
+            }
+          ]
+        },
+        {
+          "name": "comment.line.double-slash.prolang",
+          "match": "//.*$"
+        }
+      ]
+    },
+    "strings": {
+      "patterns": [
+        {
+          "name": "string.quoted.double.prolang",
+          "begin": "\"",
+          "end": "\"",
+          "patterns": [
+            {
+              "name": "constant.character.escape.prolang",
+              "match": "\\\\."
+            },
+            {
+              "name": "invalid.illegal.unclosed-string.prolang",
+              "match": "$"
+            }
+          ]
+        }
+      ]
+    },
+    "html-script-tags": {
+      "patterns": [
+        {
+          "begin": "(?i)(<)(script)([^>]*>)",
+          "beginCaptures": {
+            "1": {
+              "name": "punctuation.definition.tag.begin.html"
+            },
+            "2": {
+              "name": "entity.name.tag.script.html"
+            },
+            "3": {
+              "name": "meta.tag.metadata.script.html"
+            }
+          },
+          "end": "(?i)(</)(script)(>)",
+          "endCaptures": {
+            "1": {
+              "name": "punctuation.definition.tag.begin.html"
+            },
+            "2": {
+              "name": "entity.name.tag.script.html"
+            },
+            "3": {
+              "name": "meta.tag.metadata.script.html"
+            }
+          },
+          "contentName": "source.prolang.embedded.html",
+          "patterns": [
+            {
+              "include": "source.prolang"
+            }
+          ]
+        }
+      ]
+    },
+    "keywords": {
+      "patterns": [
+        {
+          "name": "keyword.control.prolang",
+          "match": "\\b(if|elif|else|while|for|to|break|continue|return)\\b"
+        },
+        {
+          "name": "keyword.declaration.prolang",
+          "match": "\\b(let|func|import)\\b"
+        },
+        {
+          "name": "constant.language.prolang",
+          "match": "\\b(true|false)\\b"
+        }
+      ]
+    },
+    "types": {
+      "patterns": [
+        {
+          "name": "support.type.prolang",
+          "match": "\\b(int|bool|string|array|map|any)\\b"
+        }
+      ]
+    },
+    "operators": {
+      "patterns": [
+        {
+          "name": "keyword.operator.comparison.prolang",
+          "match": "(==|!=|<=|>=)"
+        },
+        {
+          "name": "keyword.operator.assignment.prolang",
+          "match": "(\\+=|-=|\\*=|/=|\\^=)"
+        },
+        {
+          "name": "keyword.operator.logical.prolang",
+          "match": "(&&|\\|\\||!)"
+        },
+        {
+          "name": "keyword.operator.html.prolang",
+          "match": "(</|/>)"
+        },
+        {
+          "name": "keyword.operator.interpolation.prolang",
+          "match": "(\\$\\{)"
+        },
+        {
+          "name": "keyword.operator.arithmetic.prolang",
+          "match": "(\\+|-|\\*|/|%|\\^)"
+        },
+        {
+          "name": "keyword.operator.assignment.prolang",
+          "match": "(=)"
+        },
+        {
+          "name": "keyword.operator.accessor.prolang",
+          "match": "(\\.)"
+        },
+        {
+          "name": "punctuation.separator.prolang",
+          "match": "(,|:|;)"
+        },
+        {
+          "name": "punctuation.bracket.prolang",
+          "match": "(\\[|\\]|\\{|\\}|\\(|\\))"
+        },
+        {
+          "name": "keyword.operator.bitwise.prolang",
+          "match": "(&|\\||~|\\^)"
+        },
+        {
+          "name": "keyword.operator.angle.prolang",
+          "match": "(<|>)"
+        },
+        {
+          "name": "keyword.operator.dollar.prolang",
+          "match": "(\\$)"
+        }
+      ]
+    },
+    "numbers": {
+      "patterns": [
+        {
+          "name": "constant.numeric.integer.prolang",
+          "match": "\\b\\d+\\b"
+        },
+        {
+          "name": "constant.numeric.float.prolang",
+          "match": "\\b\\d+\\.\\d+\\b"
+        }
+      ]
+    },
+    "identifiers": {
+      "patterns": [
+        {
+          "name": "variable.other.prolang",
+          "match": "\\b[a-zA-Z_][a-zA-Z0-9_]*\\b"
+        }
+      ]
+    }
+  }
+}

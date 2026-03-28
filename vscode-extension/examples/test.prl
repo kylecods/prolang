@@ -1,0 +1,90 @@
+/*
+ * Test file for ProLang VS Code Extension
+ * This file tests syntax highlighting and language features
+ */
+
+import "io"
+import "array"
+
+// Test variable declarations
+let number: int = 42
+let text: string = "Hello, ProLang!"
+let flag: bool = true
+let inferred = "Type inference works"
+
+// Test arrays and maps
+let numbers: array<int> = [1, 2, 3, 4, 5]
+let data: map<string, any> = {"key": "value", "count": 100}
+
+// Test functions
+func greet(name: string) : string {
+    return "Hello, " + name + "!"
+}
+
+func factorial(n: int) : int {
+    if(n == 0) {
+        return 1
+    }
+    return n * factorial(n - 1)
+}
+
+// Test control flow
+func testControlFlow() {
+    let x: int = 10
+    
+    if(x > 100) {
+        print("Large")
+    } elif(x > 50) {
+        print("Medium")
+    } else {
+        print("Small")
+    }
+    
+    let i = 0
+    while(i < 10) {
+        if(i == 5) {
+            break
+        }
+        i = i + 1
+    }
+    
+    for(j = 1 to 5) {
+        print("Iteration: " + string(j))
+    }
+}
+
+// Test operators
+func testOperators() {
+    let a = 10
+    let b = 3
+    
+    // Arithmetic
+    let sum = a + b
+    let diff = a - b
+    let prod = a * b
+    let div = a / b
+    let mod = a % b
+    
+    // Comparison
+    let isEqual = (a == b)
+    let notEqual = (a != b)
+    let lessThan = (a < b)
+    let greaterThan = (a > b)
+    
+    // Logical
+    let andResult = true && false
+    let orResult = true || false
+    let notResult = !false
+}
+
+// Test HTML script tag
+<script>
+    let embeddedCode = "This is ProLang inside HTML"
+    print(embeddedCode)
+</script>
+
+// Main execution
+print(greet("World"))
+print("Factorial of 5: " + string(factorial(5)))
+testControlFlow()
+testOperators()

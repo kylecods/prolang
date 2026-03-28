@@ -1,0 +1,194 @@
+{
+  "name": "prolang",
+  "displayName": "ProLang",
+  "description": "Language support for ProLang programming language",
+  "version": "0.1.0",
+  "publisher": "prolang-team",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Snippets",
+    "Debuggers"
+  ],
+  "keywords": [
+    "prolang",
+    "programming language"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/prolang/prolang.git"
+  },
+  "activationEvents": [
+    "onLanguage:prolang"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "languages": [
+      {
+        "id": "prolang",
+        "aliases": [
+          "ProLang",
+          "prolang"
+        ],
+        "extensions": [
+          ".prl",
+          ".prolang"
+        ],
+        "configuration": "./language-configuration.json",
+        "icon": {
+          "light": "./icons/prolang-icon.png",
+          "dark": "./icons/prolang-icon.png"
+        }
+      }
+    ],
+    "grammars": [
+      {
+        "language": "prolang",
+        "scopeName": "source.prolang",
+        "path": "./syntaxes/prolang.tmLanguage.json"
+      }
+    ],
+    "snippets": [
+      {
+        "language": "prolang",
+        "path": "./snippets/prolang.json"
+      }
+    ],
+    "configuration": {
+      "type": "object",
+      "title": "ProLang",
+      "properties": {
+        "prolang.languageServer.trace": {
+          "scope": "window",
+          "type": "string",
+          "default": "off",
+          "enum": [
+            "off",
+            "messages",
+            "verbose"
+          ],
+          "description": "Traces the communication between VS Code and the language server."
+        },
+        "prolang.enableBuiltInCompletions": {
+          "scope": "window",
+          "type": "boolean",
+          "default": true,
+          "description": "Enable completions for built-in modules (io, array, math, etc.)"
+        }
+      }
+    },
+    "debuggers": [
+      {
+        "type": "prolang",
+        "label": "ProLang Debug",
+        "program": "./out/debugAdapter.js",
+        "runtime": "node",
+        "configurationAttributes": {
+          "launch": {
+            "required": [
+              "program"
+            ],
+            "properties": {
+              "program": {
+                "type": "string",
+                "description": "Absolute path to a program file (.prl)",
+                "default": "${file}"
+              },
+              "stopOnEntry": {
+                "type": "boolean",
+                "description": "Automatically stop after launch",
+                "default": true
+              },
+              "args": {
+                "type": "array",
+                "description": "Command line arguments",
+                "items": {
+                  "type": "string"
+                },
+                "default": []
+              }
+            }
+          }
+        },
+        "initialConfigurations": [
+          {
+            "type": "prolang",
+            "request": "launch",
+            "name": "ProLang: Launch current file",
+            "program": "${file}",
+            "stopOnEntry": false
+          }
+        ],
+        "configurationSnippets": [
+          {
+            "label": "ProLang: Launch",
+            "description": "A new configuration for launching a ProLang program",
+            "body": {
+              "type": "prolang",
+              "request": "launch",
+              "name": "ProLang: ${2:Launch Program}",
+              "program": "^\"\\${workspaceFolder}/${1:program.prl}\""
+            }
+          }
+        ]
+      }
+    ],
+    "commands": [
+      {
+        "command": "prolang.runFile",
+        "title": "Run ProLang File",
+        "category": "ProLang"
+      },
+      {
+        "command": "prolang.buildProject",
+        "title": "Build ProLang Project",
+        "category": "ProLang"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "when": "resourceLangId == prolang",
+          "command": "prolang.runFile",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src --ext ts",
+    "package": "vsce package",
+    "publish": "vsce publish"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.80.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.45.0",
+    "typescript": "^5.1.6",
+    "@vscode/vsce": "^2.20.0"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.0",
+    "vscode-languageserver": "^9.0.0",
+    "vscode-languageserver-textdocument": "^1.0.9",
+    "@vscode/debugadapter": "^1.65.0",
+    "@vscode/debugprotocol": "^1.65.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "@types/vscode": "^1.80.0",
+    "@typescript-eslint/eslint-plugin": "^6.0.0",
+    "@typescript-eslint/parser": "^6.0.0",
+    "eslint": "^8.45.0",
+    "typescript": "^5.1.6",
+    "@vscode/vsce": "^2.20.0"
+  }
+}

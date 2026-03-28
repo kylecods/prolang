@@ -1,0 +1,117 @@
+{
+  "Function Declaration": {
+    "prefix": "func",
+    "body": "func ${1:name}(${2:param}: ${3:type}) : ${4:retType} {\n\t${0}\n}",
+    "description": "Declare a new function"
+  },
+  "Variable Declaration": {
+    "prefix": "let",
+    "body": "let ${1:name}: ${2:type} = ${3:value}",
+    "description": "Declare a new variable with explicit type"
+  },
+  "Variable Declaration (inferred)": {
+    "prefix": "letv",
+    "body": "let ${1:name} = ${2:value}",
+    "description": "Declare a new variable with inferred type"
+  },
+  "If Statement": {
+    "prefix": "if",
+    "body": "if(${1:condition}) {\n\t${0}\n}",
+    "description": "If statement"
+  },
+  "If-Else Statement": {
+    "prefix": "ifelse",
+    "body": "if(${1:condition}) {\n\t${2}\n} else {\n\t${0}\n}",
+    "description": "If-Else statement"
+  },
+  "If-Elif-Else": {
+    "prefix": "ifelif",
+    "body": "if(${1:condition}) {\n\t${2}\n} elif(${3:condition}) {\n\t${4}\n} else {\n\t${0}\n}",
+    "description": "If-Elif-Else statement"
+  },
+  "While Loop": {
+    "prefix": "while",
+    "body": "while(${1:condition}) {\n\t${0}\n}",
+    "description": "While loop"
+  },
+  "For Loop": {
+    "prefix": "for",
+    "body": "for(${1:i} = ${2:start} to ${3:end}) {\n\t${0}\n}",
+    "description": "For loop"
+  },
+  "Import": {
+    "prefix": "import",
+    "body": "import \"${1:module}\"",
+    "description": "Import a module"
+  },
+  "Import .NET": {
+    "prefix": "importdn",
+    "body": "import \"dotnet:${1:System}\"",
+    "description": "Import a .NET namespace"
+  },
+  "Print": {
+    "prefix": "print",
+    "body": "print(${0})",
+    "description": "Print to console"
+  },
+  "Print with string conversion": {
+    "prefix": "prints",
+    "body": "print(\"${1:message: \" + string(${2:value}))",
+    "description": "Print with string conversion"
+  },
+  "Array": {
+    "prefix": "array",
+    "body": "[${1:values}]",
+    "description": "Array literal"
+  },
+  "Array Declaration": {
+    "prefix": "arrayd",
+    "body": "let ${1:name}: array<${2:type}> = [${3:values}]",
+    "description": "Declare an array"
+  },
+  "Map": {
+    "prefix": "map",
+    "body": "{${1:key}: ${2:value}}",
+    "description": "Map literal"
+  },
+  "Map Declaration": {
+    "prefix": "mapd",
+    "body": "let ${1:name}: map<${2:keyType}, ${3:valueType}> = {${4:entries}}",
+    "description": "Declare a map"
+  },
+  "Function with no return": {
+    "prefix": "funcv",
+    "body": "func ${1:name}(${2:param}: ${3:type}) {\n\t${0}\n}",
+    "description": "Declare a function without return type"
+  },
+  "Recursive Function": {
+    "prefix": "funcrec",
+    "body": "func ${1:name}(${2:param}: ${3:type}) : ${4:retType} {\n\tif(${5:baseCondition}) {\n\t\treturn ${6:baseValue}\n\t}\n\treturn ${7:recursiveCall}\n}",
+    "description": "Recursive function template"
+  },
+  "HTML Script Block": {
+    "prefix": "script",
+    "body": "<script>\n\t${0}\n</script>",
+    "description": "HTML script block with ProLang"
+  },
+  "Try-Catch (placeholder)": {
+    "prefix": "trycatch",
+    "body": "// TODO: Error handling\n${0}",
+    "description": "Error handling placeholder"
+  },
+  "Main function": {
+    "prefix": "main",
+    "body": "func main() {\n\t${0}\n}",
+    "description": "Main function"
+  },
+  "Import IO": {
+    "prefix": "importio",
+    "body": "import \"io\"",
+    "description": "Import IO module"
+  },
+  "Import Array": {
+    "prefix": "importarray",
+    "body": "import \"array\"",
+    "description": "Import Array module"
+  }
+}

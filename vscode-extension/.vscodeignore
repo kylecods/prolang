@@ -1,0 +1,16 @@
+.vscode/**/*
+.vscode-test/**/*
+src/**/*
+**/*.ts
+**/*.map
+.gitignore
+.eslintrc.json
+.yarnrc
+yarn.lock
+package-lock.json
+test/**/*
+docs/**/*
+CHANGELOG.md
+TODO.md
+.eslintignore
+.editorconfig
