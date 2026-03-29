@@ -11,13 +11,15 @@ public sealed class BoundProgram
         ImmutableArray<Diagnostic> diagnostics,
         FunctionSymbol mainFunction,
         FunctionSymbol scriptFunction,
-        ImmutableDictionary<FunctionSymbol, BoundBlockStatement> functions)
+        ImmutableDictionary<FunctionSymbol, BoundBlockStatement> functions,
+        ImmutableArray<StructSymbol> structTypes)
     {
         Previous = previous;
         Diagnostics = diagnostics;
         MainFunction = mainFunction;
         ScriptFunction = scriptFunction;
         Functions = functions;
+        StructTypes = structTypes;
     }
 
     public BoundProgram Previous { get; }
@@ -29,4 +31,6 @@ public sealed class BoundProgram
     public FunctionSymbol ScriptFunction { get; }
 
     public ImmutableDictionary<FunctionSymbol,BoundBlockStatement> Functions { get; }
+
+    public ImmutableArray<StructSymbol> StructTypes { get; }
 }

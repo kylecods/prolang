@@ -39,6 +39,8 @@ namespace ProLang.Compiler
 
         private Dictionary<VariableSymbol, VariableDefinition> _locals = new();
 
+        private Dictionary<StructSymbol, TypeDefinition> _structTypes = new();
+
         private TypeDefinition _typeDefinition;
 
         private Dictionary<BoundLabel, Instruction> _labels = new();
@@ -231,6 +233,13 @@ namespace ProLang.Compiler
             if (_knownTypes.TryGetValue(type, out var typeReference))
                 return typeReference;
 
+            if (type is StructSymbol structType && _structTypes.TryGetValue(structType, out var structTypeDef))
+            {
+                var structTypeRef = _assemblyDefinition.MainModule.ImportReference(structTypeDef);
+                _knownTypes.Add(type, structTypeRef);
+                return structTypeRef;
+            }
+
             TypeReference? resolved = null;
 
             if (type.TypeArguments.Length == 0)
@@ -269,6 +278,30 @@ namespace ProLang.Compiler
             return resolved;
         }
 
+        private void EmitStructType(StructSymbol structSymbol)
+        {
+            var typeDef = new TypeDefinition(
+                "",
+                structSymbol.Name,
+                Mono.Cecil.TypeAttributes.SequentialLayout | Mono.Cecil.TypeAttributes.Sealed | Mono.Cecil.TypeAttributes.Public,
+                ResolveType("System.ValueType")
+            );
+
+            foreach (var field in structSymbol.Fields)
+            {
+                var fieldType = GetTypeReference(field.Type);
+                var fieldDef = new FieldDefinition(
+                    field.Name,
+                    Mono.Cecil.FieldAttributes.Public,
+                    fieldType
+                );
+                typeDef.Fields.Add(fieldDef);
+            }
+
+            _assemblyDefinition.MainModule.Types.Add(typeDef);
+            _structTypes.Add(structSymbol, typeDef);
+        }
+
         public static ImmutableArray<Diagnostic> Emit(BoundProgram program, string moduleName, string[] references, string outputPath)
         {
             if (program.Diagnostics.Any())
@@ -294,6 +327,11 @@ namespace ProLang.Compiler
             _typeDefinition = new TypeDefinition("", "Program", CecilTypeAttributes.Abstract | CecilTypeAttributes.Sealed, objectType);
 
             _assemblyDefinition.MainModule.Types.Add(_typeDefinition);
+
+            foreach (var structType in program.StructTypes)
+            {
+                EmitStructType(structType);
+            }
 
             foreach (var functionWithBody in program.Functions)
             {
@@ -502,7 +540,18 @@ namespace ProLang.Compiler
 
             ilProcessor.Body.Variables.Add(variableDefinition);
 
+            if (node.Variable.Type is StructSymbol)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Ldloca, variableDefinition);
+                EmitInstruction(ilProcessor, OpCodes.Initobj, typeReference);
+            }
+
             EmitExpression(ilProcessor, node.Initializer);
+
+            if (node.Variable.Type == TypeSymbol.Any && typeReference.IsValueType)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Box, typeReference);
+            }
 
             EmitInstruction(ilProcessor, OpCodes.Stloc, variableDefinition);
         }
@@ -544,6 +593,15 @@ namespace ProLang.Compiler
                     break;
                 case BoundNodeKind.BoundIndexAssignmentExpression:
                     EmitIndexAssignmentExpression(ilProcessor, (BoundIndexAssignmentExpression)node);
+                    break;
+                case BoundNodeKind.BoundStructCreationExpression:
+                    EmitStructCreationExpression(ilProcessor, (BoundStructCreationExpression)node);
+                    break;
+                case BoundNodeKind.BoundFieldAccessExpression:
+                    EmitFieldAccessExpression(ilProcessor, (BoundFieldAccessExpression)node);
+                    break;
+                case BoundNodeKind.BoundFieldAssignmentExpression:
+                    EmitFieldAssignmentExpression(ilProcessor, (BoundFieldAssignmentExpression)node);
                     break;
                 default:
                     throw new NotSupportedException($"Unexpected node kind {node.Kind}");
@@ -1149,6 +1207,97 @@ namespace ProLang.Compiler
             else
             {
                 throw new NotImplementedException($"Unexpected literal type: {node.Type}");
+            }
+        }
+
+        private void EmitStructCreationExpression(ILProcessor ilProcessor, BoundStructCreationExpression node)
+        {
+            var structSymbol = node.StructType;
+            var typeDef = _structTypes[structSymbol];
+            var typeRef = _assemblyDefinition.MainModule.ImportReference(typeDef);
+
+            var localVar = new VariableDefinition(typeRef);
+            ilProcessor.Body.Variables.Add(localVar);
+
+            foreach (var field in structSymbol.Fields)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Ldloca, localVar);
+
+                var fieldIndex = structSymbol.Fields.IndexOf(field);
+                EmitExpression(ilProcessor, node.FieldValues[fieldIndex]);
+
+                var fieldType = GetTypeReference(field.Type);
+                if (field.Type != TypeSymbol.Any && !fieldType.IsValueType)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Box, fieldType);
+                }
+
+                var fieldRef = new FieldReference(field.Name, fieldType);
+                fieldRef.DeclaringType = typeRef;
+                EmitInstruction(ilProcessor, OpCodes.Stfld, fieldRef);
+            }
+
+            EmitInstruction(ilProcessor, OpCodes.Ldloc, localVar);
+        }
+
+        private void EmitFieldAccessExpression(ILProcessor ilProcessor, BoundFieldAccessExpression node)
+        {
+            EmitExpression(ilProcessor, node.Expression);
+
+            var structSymbol = (StructSymbol)node.Expression.Type;
+            var typeDef = _structTypes[structSymbol];
+            var typeRef = _assemblyDefinition.MainModule.ImportReference(typeDef);
+            var fieldType = GetTypeReference(node.Field.Type);
+            var fieldRef = new FieldReference(node.FieldName, fieldType);
+            fieldRef.DeclaringType = typeRef;
+
+            EmitInstruction(ilProcessor, OpCodes.Ldfld, fieldRef);
+
+            if (node.Type == TypeSymbol.Any && fieldType.IsValueType)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Box, fieldType);
+            }
+        }
+
+        private void EmitFieldAssignmentExpression(ILProcessor ilProcessor, BoundFieldAssignmentExpression node)
+        {
+            var structSymbol = (StructSymbol)node.Expression.Type;
+            var typeDef = _structTypes[structSymbol];
+            var typeRef = _assemblyDefinition.MainModule.ImportReference(typeDef);
+            var fieldType = GetTypeReference(node.Field.Type);
+            var fieldRef = new FieldReference(node.FieldName, fieldType);
+            fieldRef.DeclaringType = typeRef;
+
+            if (node.Expression is BoundVariableExpression varExpr)
+            {
+                VariableDefinition? varDef = null;
+                if (varExpr.Variable is ParameterSymbol)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Ldarga, ((ParameterSymbol)varExpr.Variable).Ordinal);
+                }
+                else
+                {
+                    varDef = _locals[varExpr.Variable];
+                    EmitInstruction(ilProcessor, OpCodes.Ldloca, varDef);
+                }
+
+                EmitExpression(ilProcessor, node.Value);
+                EmitInstruction(ilProcessor, OpCodes.Dup);
+
+                var tempVar = new VariableDefinition(fieldType);
+                ilProcessor.Body.Variables.Add(tempVar);
+                EmitInstruction(ilProcessor, OpCodes.Stloc, tempVar);
+
+                EmitInstruction(ilProcessor, OpCodes.Stfld, fieldRef);
+
+                EmitInstruction(ilProcessor, OpCodes.Ldloc, tempVar);
+            }
+            else
+            {
+                EmitExpression(ilProcessor, node.Expression);
+                EmitInstruction(ilProcessor, OpCodes.Dup);
+                EmitExpression(ilProcessor, node.Value);
+                EmitInstruction(ilProcessor, OpCodes.Stfld, fieldRef);
             }
         }
     }

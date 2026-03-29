@@ -19,3 +19,4 @@ build_errors.txt
 *.dll
 
 examples/06-structs/plan.md
+.opencode/plans/compilation_plan.md

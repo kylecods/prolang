@@ -212,7 +212,7 @@ internal sealed class Binder
 
 
 
-        return new BoundProgram(previous,diagnostics.ToImmutable(), globalScope.MainFunction, globalScope.ScriptFunction, functionBodies.ToImmutable());
+        return new BoundProgram(previous,diagnostics.ToImmutable(), globalScope.MainFunction, globalScope.ScriptFunction, functionBodies.ToImmutable(), globalScope.StructTypes);
     }
 
     private void BindFunctionDeclaration(FunctionDeclarationSyntax syntax)
