@@ -72,6 +72,7 @@ public enum SyntaxKind
     ContinueKeyword,
     ReturnKeyword,
     ImportKeyword,
+    StructKeyword,
 
     //html keywords
     ScriptKeyword,
@@ -117,6 +118,11 @@ public enum SyntaxKind
     NameType,
     GenericType,
     Parameter,
+    StructDeclaration,
+    FieldDeclaration,
+    StructCreationExpression,
+    FieldInitializer,
+    FieldAccessExpression,
     
     //html groups
     HtmlStartTag,

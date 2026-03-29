@@ -1,0 +1,22 @@
+import "io"
+
+struct Point {
+    x: int;
+    y: int;
+}
+
+struct Person {
+    name: string;
+    age: int;
+}
+
+let p: Point = Point { x: 10, y: 20 }
+print("p.x = " + string(p.x))
+print("p.y = " + string(p.y))
+
+p.x = 30
+print("p.x after mutation = " + string(p.x))
+
+let person: Person = Person { name: "John", age: 25 }
+print("person.name = " + person.name)
+print("person.age = " + string(person.age))

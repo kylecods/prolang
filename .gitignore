@@ -18,3 +18,4 @@ build_errors.txt
 *.exe
 *.dll
 
+examples/06-structs/plan.md

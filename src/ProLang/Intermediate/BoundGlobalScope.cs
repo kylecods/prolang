@@ -12,7 +12,8 @@ public sealed class BoundGlobalScope
             FunctionSymbol scriptFunction,
             ImmutableArray<FunctionSymbol> functions, 
             ImmutableArray<VariableSymbol> variables, 
-            ImmutableArray<BoundStatement> statements)
+            ImmutableArray<BoundStatement> statements,
+            ImmutableArray<StructSymbol> structTypes)
     {
         Previous = previous;
         Diagnostics = diagnostics;
@@ -21,6 +22,7 @@ public sealed class BoundGlobalScope
         Functions = functions;
         Variables = variables;
         Statements = statements;
+        StructTypes = structTypes;
     }
 
     public BoundGlobalScope? Previous { get; }
@@ -36,4 +38,6 @@ public sealed class BoundGlobalScope
     public ImmutableArray<VariableSymbol> Variables { get; }
     
     public ImmutableArray<BoundStatement> Statements { get; }
+    
+    public ImmutableArray<StructSymbol> StructTypes { get; }
 }

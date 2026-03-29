@@ -148,6 +148,27 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Report(location, message);
     }
 
+    public void ReportDuplicateFieldName(TextLocation location, string structName, string fieldName)
+    {
+        var message = $"Field '{fieldName}' is already declared in struct '{structName}'";
+
+        Report(location, message);
+    }
+
+    public void ReportUndefinedField(TextLocation location, string structName, string fieldName)
+    {
+        var message = $"Field '{fieldName}' does not exist in struct '{structName}'";
+
+        Report(location, message);
+    }
+
+    public void ReportInvalidFieldAccess(TextLocation location, TypeSymbol type)
+    {
+        var message = $"Cannot access field on type '{type}'. '{type}' is not a struct type.";
+
+        Report(location, message);
+    }
+
     public void ReportInvalidBreakOrContinue(TextLocation location, string text)
     {
         var message = $"The keyword '{text}' can only be used inside of loops";

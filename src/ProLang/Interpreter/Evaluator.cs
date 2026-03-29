@@ -255,6 +255,12 @@ internal sealed class Evaluator
                 return EvaluateIndexExpression((BoundIndexExpression)node);
             case BoundNodeKind.BoundIndexAssignmentExpression:
                 return EvaluateIndexAssignmentExpression((BoundIndexAssignmentExpression)node);
+            case BoundNodeKind.BoundStructCreationExpression:
+                return EvaluateStructCreationExpression((BoundStructCreationExpression)node);
+            case BoundNodeKind.BoundFieldAccessExpression:
+                return EvaluateFieldAccessExpression((BoundFieldAccessExpression)node);
+            case BoundNodeKind.BoundFieldAssignmentExpression:
+                return EvaluateFieldAssignmentExpression((BoundFieldAssignmentExpression)node);
             default:
                 throw new Exception($"Unexpected node {node.Kind}");
         }
@@ -543,6 +549,46 @@ internal sealed class Evaluator
         }
 
         throw new Exception($"Unexpected type {node.Type}");
+    }
+
+    private object EvaluateStructCreationExpression(BoundStructCreationExpression node)
+    {
+        var fieldValues = new Dictionary<string, object>();
+
+        for (int i = 0; i < node.StructType.Fields.Length; i++)
+        {
+            var field = node.StructType.Fields[i];
+            var value = EvaluateExpression(node.FieldValues[i]);
+            fieldValues[field.Name] = value;
+        }
+
+        return fieldValues;
+    }
+
+    private object EvaluateFieldAccessExpression(BoundFieldAccessExpression node)
+    {
+        var structInstance = EvaluateExpression(node.Expression);
+
+        if (structInstance is Dictionary<string, object> fields)
+        {
+            return fields[node.FieldName]!;
+        }
+
+        throw new Exception($"Cannot access field on non-struct type {structInstance?.GetType()}");
+    }
+
+    private object EvaluateFieldAssignmentExpression(BoundFieldAssignmentExpression node)
+    {
+        var structInstance = EvaluateExpression(node.Expression);
+        var value = EvaluateExpression(node.Value);
+
+        if (structInstance is Dictionary<string, object> fields)
+        {
+            fields[node.FieldName] = value;
+            return value;
+        }
+
+        throw new Exception($"Cannot assign to field on non-struct type {structInstance?.GetType()}");
     }
 
     private void Assign(VariableSymbol variable, object value)

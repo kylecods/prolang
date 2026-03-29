@@ -28,5 +28,8 @@ public enum  BoundNodeKind
     BoundArrayExpression,
     BoundMapExpression,
     BoundIndexExpression,
-    BoundIndexAssignmentExpression
+    BoundIndexAssignmentExpression,
+    BoundStructCreationExpression,
+    BoundFieldAccessExpression,
+    BoundFieldAssignmentExpression
 }

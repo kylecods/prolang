@@ -200,6 +200,12 @@ internal abstract class BoundTreeRewriter
                 return RewriteIndexExpression((BoundIndexExpression)node);
             case BoundNodeKind.BoundIndexAssignmentExpression:
                 return RewriteIndexAssignmentExpression((BoundIndexAssignmentExpression)node);
+            case BoundNodeKind.BoundStructCreationExpression:
+                return RewriteStructCreationExpression((BoundStructCreationExpression)node);
+            case BoundNodeKind.BoundFieldAccessExpression:
+                return RewriteFieldAccessExpression((BoundFieldAccessExpression)node);
+            case BoundNodeKind.BoundFieldAssignmentExpression:
+                return RewriteFieldAssignmentExpression((BoundFieldAssignmentExpression)node);
             default:
                 throw new Exception($"Unexpected node: {node.Kind}");
         }
@@ -400,5 +406,65 @@ internal abstract class BoundTreeRewriter
     protected virtual BoundExpression RewriteErrorExpression(BoundErrorExpression node)
     {
         return node;
+    }
+
+    protected virtual BoundExpression RewriteStructCreationExpression(BoundStructCreationExpression node)
+    {
+        ImmutableArray<BoundExpression>.Builder? builder = null;
+
+        for (int i = 0; i < node.FieldValues.Length; i++)
+        {
+            var oldFieldValue = node.FieldValues[i];
+            var newFieldValue = RewriteExpression(oldFieldValue);
+            if (newFieldValue != oldFieldValue)
+            {
+                if (builder == null)
+                {
+                    builder = ImmutableArray.CreateBuilder<BoundExpression>(node.FieldValues.Length);
+
+                    for (int j = 0; j < i; j++)
+                    {
+                        builder.Add(node.FieldValues[j]);
+                    }
+                }
+            }
+
+            if (builder != null)
+            {
+                builder.Add(newFieldValue);
+            }
+        }
+
+        if (builder == null)
+        {
+            return node;
+        }
+
+        return new BoundStructCreationExpression(node.StructType, builder.MoveToImmutable());
+    }
+
+    protected virtual BoundExpression RewriteFieldAccessExpression(BoundFieldAccessExpression node)
+    {
+        var expression = RewriteExpression(node.Expression);
+
+        if (expression == node.Expression)
+        {
+            return node;
+        }
+
+        return new BoundFieldAccessExpression(expression, node.FieldName, node.Field);
+    }
+
+    protected virtual BoundExpression RewriteFieldAssignmentExpression(BoundFieldAssignmentExpression node)
+    {
+        var expression = RewriteExpression(node.Expression);
+        var value = RewriteExpression(node.Value);
+
+        if (expression == node.Expression && value == node.Value)
+        {
+            return node;
+        }
+
+        return new BoundFieldAssignmentExpression(expression, node.FieldName, node.Field, value);
     }
 }

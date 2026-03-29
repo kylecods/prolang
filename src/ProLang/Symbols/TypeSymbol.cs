@@ -2,7 +2,7 @@ using System.Collections.Immutable;
 
 namespace ProLang.Symbols;
 
-public sealed class TypeSymbol : Symbol
+public class TypeSymbol : Symbol
 {
     public static readonly TypeSymbol Error = new("?");
     public static readonly TypeSymbol Bool = new("bool");

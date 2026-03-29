@@ -7,6 +7,7 @@ internal sealed class BoundScope
 {
     private Dictionary<string, VariableSymbol>? _variables;
     private Dictionary<string, FunctionSymbol>? _functions;
+    private Dictionary<string, StructSymbol>? _types;
 
     public BoundScope(BoundScope? parent)
     {
@@ -82,6 +83,40 @@ internal sealed class BoundScope
         return Parent.TryLookupFunction(name, out function);
     }
 
+    public bool TryDeclareType(StructSymbol type)
+    {
+        if (_types == null)
+        {
+            _types = new Dictionary<string, StructSymbol>();
+        }
+
+        if (_types.ContainsKey(type.Name))
+        {
+            return false;
+        }
+        
+        _types.Add(type.Name, type);
+
+        return true;
+    }
+
+    public bool TryLookupType(string name, out StructSymbol? type)
+    {
+        type = null;
+
+        if (_types != null && _types.TryGetValue(name, out type))
+        {
+            return true;
+        }
+
+        if (Parent == null)
+        {
+            return false;
+        }
+
+        return Parent.TryLookupType(name, out type);
+    }
+
     public ImmutableArray<VariableSymbol> GetDeclaredVariables()
     {
         if (_variables == null)
@@ -99,5 +134,15 @@ internal sealed class BoundScope
         }
 
         return _functions.Values.ToImmutableArray();
+    }
+
+    public ImmutableArray<StructSymbol> GetDeclaredTypes()
+    {
+        if (_types == null)
+        {
+            return ImmutableArray<StructSymbol>.Empty;
+        }
+
+        return _types.Values.ToImmutableArray();
     }
 }

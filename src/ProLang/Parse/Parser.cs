@@ -123,6 +123,11 @@ public sealed class Parser
             return ParseFunctionDeclaration();
         }
 
+        if (Current.Kind == SyntaxKind.StructKeyword)
+        {
+            return ParseStructDeclaration();
+        }
+
         return ParseGlobalStatement();
     }
 
@@ -147,6 +152,27 @@ public sealed class Parser
 
         return new FunctionDeclarationSyntax(_syntaxTree,functionKeyword, identifier, openParenthesisToken, parameters,
             closeParenthesisToken, type, (BlockStatementSyntax)body);
+    }
+
+    private StructDeclarationSyntax ParseStructDeclaration()
+    {
+        var structKeyword = Match(SyntaxKind.StructKeyword);
+        var identifier = Match(SyntaxKind.IdentifierToken);
+        var openCurlyToken = Match(SyntaxKind.LeftCurlyToken);
+
+        var fields = ImmutableArray.CreateBuilder<FieldDeclarationSyntax>();
+
+        while (Current.Kind != SyntaxKind.RightCurlyToken && Current.Kind != SyntaxKind.EofToken)
+        {
+            var fieldIdentifier = Match(SyntaxKind.IdentifierToken);
+            var fieldType = ParseTypeClause();
+            var semiColon = Match(SyntaxKind.SemiColonToken);
+            fields.Add(new FieldDeclarationSyntax(_syntaxTree, fieldIdentifier, fieldType));
+        }
+
+        var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
+
+        return new StructDeclarationSyntax(_syntaxTree, structKeyword, identifier, openCurlyToken, fields.ToImmutable(), closeCurlyToken);
     }
     
     private SeparatedSyntaxList<ParameterSyntax> ParseParameterList()
@@ -495,8 +521,12 @@ public sealed class Parser
             case SyntaxKind.LeftCurlyToken:
                 return ParseMapLiteral();
             case SyntaxKind.IdentifierToken:
+                if (Peek(1).Kind == SyntaxKind.LeftCurlyToken)
+                {
+                    return ParseStructCreationExpression();
+                }
+                return ParsePostFixExpression();
             default:
-                
                 return ParsePostFixExpression();
         }
     }
@@ -540,6 +570,37 @@ public sealed class Parser
         var entries = ParseMapEntries();
         var rightCurly = Match(SyntaxKind.RightCurlyToken);
         return new MapExpressionSyntax(_syntaxTree, leftCurly, entries, rightCurly);
+    }
+
+    private StructCreationExpressionSyntax ParseStructCreationExpression()
+    {
+        var typeName = Match(SyntaxKind.IdentifierToken);
+        var openCurlyToken = Match(SyntaxKind.LeftCurlyToken);
+
+        var initializers = ImmutableArray.CreateBuilder<FieldInitializerSyntax>();
+
+        var parseNextField = true;
+
+        while (parseNextField && Current.Kind != SyntaxKind.RightCurlyToken && Current.Kind != SyntaxKind.EofToken)
+        {
+            var fieldName = Match(SyntaxKind.IdentifierToken);
+            var colonToken = Match(SyntaxKind.ColonToken);
+            var value = ParseExpression();
+            initializers.Add(new FieldInitializerSyntax(_syntaxTree, fieldName, colonToken, value));
+
+            if (Current.Kind == SyntaxKind.CommaToken)
+            {
+                var comma = Match(SyntaxKind.CommaToken);
+            }
+            else
+            {
+                parseNextField = false;
+            }
+        }
+
+        var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
+
+        return new StructCreationExpressionSyntax(_syntaxTree, typeName, openCurlyToken, initializers.ToImmutable(), closeCurlyToken);
     }
 
     private SeparatedSyntaxList<MapEntrySyntax> ParseMapEntries()
@@ -588,14 +649,23 @@ public sealed class Parser
                 var rightBracket = Match(SyntaxKind.RightBracketToken);
                 expression = new IndexExpressionSyntax(_syntaxTree, expression, leftBracket, index, rightBracket);
             }
-            else if (Current.Kind == SyntaxKind.DotToken && Peek(1).Kind == SyntaxKind.IdentifierToken && Peek(2).Kind == SyntaxKind.LeftParenthesisToken)
+            else if (Current.Kind == SyntaxKind.DotToken && Peek(1).Kind == SyntaxKind.IdentifierToken)
             {
-                var dotToken = Match(SyntaxKind.DotToken);
-                var methodName = Match(SyntaxKind.IdentifierToken);
-                var openParen = Match(SyntaxKind.LeftParenthesisToken);
-                var arguments = ParseArguments();
-                var closeParen = Match(SyntaxKind.RightParenthesisToken);
-                expression = new MethodCallExpressionSyntax(_syntaxTree, expression, dotToken, methodName, openParen, arguments, closeParen);
+                if (Peek(2).Kind == SyntaxKind.LeftParenthesisToken)
+                {
+                    var dotToken = Match(SyntaxKind.DotToken);
+                    var methodName = Match(SyntaxKind.IdentifierToken);
+                    var openParen = Match(SyntaxKind.LeftParenthesisToken);
+                    var arguments = ParseArguments();
+                    var closeParen = Match(SyntaxKind.RightParenthesisToken);
+                    expression = new MethodCallExpressionSyntax(_syntaxTree, expression, dotToken, methodName, openParen, arguments, closeParen);
+                }
+                else
+                {
+                    var dotToken = Match(SyntaxKind.DotToken);
+                    var fieldName = Match(SyntaxKind.IdentifierToken);
+                    expression = new FieldAccessExpressionSyntax(_syntaxTree, expression, dotToken, fieldName);
+                }
             }
             else
             {

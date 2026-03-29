@@ -23,6 +23,8 @@ internal sealed class Binder
 
     private int _labelCounter;
 
+    private ImmutableArray<StructSymbol>.Builder? _structTypes;
+
     public Binder(bool isScript, BoundScope parent, FunctionSymbol? function)
     {
         _scope = new BoundScope(parent);
@@ -43,6 +45,14 @@ internal sealed class Binder
         var parentScope = CreateParentScope(previous, importedModules);
 
         var binder = new Binder(isScript, parentScope, null);
+
+        var structDeclarations =
+            syntaxTrees.SelectMany(st => st.Root.Declarations).OfType<StructDeclarationSyntax>();
+
+        foreach (var structDecl in structDeclarations)
+        {
+            binder.BindStructDeclaration(structDecl);
+        }
 
         var functionDeclarations =
             syntaxTrees.SelectMany(st => st.Root.Declarations).OfType<FunctionDeclarationSyntax>();
@@ -138,13 +148,14 @@ internal sealed class Binder
 
         var diagnostics = binder.Diagnostics.ToImmutableArray();
         var variables = binder._scope.GetDeclaredVariables();
+        var structTypes = binder._structTypes?.ToImmutable() ?? ImmutableArray<StructSymbol>.Empty;
 
         if (previous != null)
         {
             diagnostics = diagnostics.InsertRange(0, previous.Diagnostics);
         }
 
-        return new BoundGlobalScope(previous, diagnostics, mainFunction, scriptFunction, functions, variables, statements.ToImmutableArray());
+        return new BoundGlobalScope(previous, diagnostics, mainFunction, scriptFunction, functions, variables, statements.ToImmutableArray(), structTypes);
     }
 
     public static BoundProgram BindProgram(bool isScript, BoundProgram previous, BoundGlobalScope? globalScope)
@@ -238,6 +249,47 @@ internal sealed class Binder
         }
     }
 
+    private void BindStructDeclaration(StructDeclarationSyntax syntax)
+    {
+        var name = syntax.Identifier.Text;
+
+        var fields = ImmutableArray.CreateBuilder<StructField>();
+
+        var seenFieldNames = new HashSet<string>();
+
+        foreach (var fieldSyntax in syntax.Fields)
+        {
+            var fieldName = fieldSyntax.Identifier.Text;
+            var fieldType = BindTypeClause(fieldSyntax.Type);
+
+            if (!seenFieldNames.Add(fieldName))
+            {
+                _diagnostics.ReportDuplicateFieldName(fieldSyntax.Identifier.Location, name, fieldName);
+            }
+            else
+            {
+                var field = new StructField(fieldName, fieldType);
+                fields.Add(field);
+            }
+        }
+
+        var structSymbol = new StructSymbol(name, fields.ToImmutable());
+
+        if (_structTypes == null)
+        {
+            _structTypes = ImmutableArray.CreateBuilder<StructSymbol>();
+        }
+
+        if (!_scope.TryDeclareType(structSymbol))
+        {
+            _diagnostics.ReportSymbolAlreadyDeclared(syntax.Identifier.Location, name);
+        }
+        else
+        {
+            _structTypes.Add(structSymbol);
+        }
+    }
+
     private static BoundScope CreateParentScope(BoundGlobalScope? previous, ImmutableHashSet<string>? importedModules = null)
     {
         var stack = new Stack<BoundGlobalScope>();
@@ -263,6 +315,11 @@ internal sealed class Binder
             foreach (var variable in previous.Variables)
             {
                 scope.TryDeclareVariable(variable);
+            }
+
+            foreach (var structType in previous.StructTypes)
+            {
+                scope.TryDeclareType(structType);
             }
             parent = scope;
         }
@@ -346,7 +403,8 @@ internal sealed class Binder
                 var isAllowedExpression = es.Expression.Kind == BoundNodeKind.BoundErrorExpression ||
                                             es.Expression.Kind == BoundNodeKind.BoundCallExpression ||
                                             es.Expression.Kind == BoundNodeKind.BoundAssignmentExpression ||
-                                            es.Expression.Kind == BoundNodeKind.BoundIndexAssignmentExpression;
+                                            es.Expression.Kind == BoundNodeKind.BoundIndexAssignmentExpression ||
+                                            es.Expression.Kind == BoundNodeKind.BoundFieldAssignmentExpression;
 
                 if (!isAllowedExpression)
                 {
@@ -636,6 +694,11 @@ internal sealed class Binder
             case "map":
                 return TypeSymbol.Map;
             default:
+                if (_scope.TryLookupType(name, out var structSymbol))
+                {
+                    return structSymbol;
+                }
+
                 // Try to find as a .NET type
                 var dotNetType = DotNetAssemblyRegistry.Instance.FindType(name);
                 if (dotNetType != null)
@@ -699,6 +762,10 @@ internal sealed class Binder
                 return BindIndexExpression((IndexExpressionSyntax)syntax);
             case SyntaxKind.MethodCallExpression:
                 return BindMethodCallExpression((MethodCallExpressionSyntax)syntax);
+            case SyntaxKind.StructCreationExpression:
+                return BindStructCreationExpression((StructCreationExpressionSyntax)syntax);
+            case SyntaxKind.FieldAccessExpression:
+                return BindFieldAccessExpression((FieldAccessExpressionSyntax)syntax);
             default:
                 throw new Exception($"Unknown syntax kind {syntax.Kind}");
         }
@@ -798,9 +865,63 @@ internal sealed class Binder
 
             return new BoundIndexAssignmentExpression(expression, index, value);
         }
+        else if (boundLhs is BoundFieldAccessExpression fieldAccess)
+        {
+            var value = BindConversion(syntax.Right.Location, boundRhs, fieldAccess.Field.Type);
+            return new BoundFieldAssignmentExpression(fieldAccess.Expression, fieldAccess.FieldName, fieldAccess.Field, value);
+        }
 
         _diagnostics.ReportInvalidAssignmentTarget(syntax.Left.Location);
         return boundRhs;
+    }
+
+    private BoundExpression BindStructCreationExpression(StructCreationExpressionSyntax syntax)
+    {
+        var typeName = syntax.TypeName.Text;
+        var structType = LookupType(typeName) as StructSymbol;
+
+        if (structType == null)
+        {
+            _diagnostics.ReportUndefinedType(syntax.TypeName.Location, typeName);
+            return new BoundErrorExpression();
+        }
+
+        var fieldValues = ImmutableArray.CreateBuilder<BoundExpression>();
+
+        foreach (var initializer in syntax.Initializers)
+        {
+            var value = BindExpression(initializer.Expression);
+            fieldValues.Add(value);
+        }
+
+        return new BoundStructCreationExpression(structType, fieldValues.ToImmutable());
+    }
+
+    private BoundExpression BindFieldAccessExpression(FieldAccessExpressionSyntax syntax)
+    {
+        var expression = BindExpression(syntax.Expression);
+
+        if (expression.Type == TypeSymbol.Error)
+        {
+            return new BoundErrorExpression();
+        }
+
+        var fieldName = syntax.FieldName.Text;
+
+        if (!_scope.TryLookupType(expression.Type.Name, out var structType))
+        {
+            _diagnostics.ReportInvalidFieldAccess(syntax.Expression.Location, expression.Type);
+            return new BoundErrorExpression();
+        }
+
+        var field = structType.Fields.FirstOrDefault(f => f.Name == fieldName);
+        if (field == null)
+        {
+            _diagnostics.ReportUndefinedField(syntax.FieldName.Location, structType.Name, fieldName);
+            return new BoundErrorExpression();
+        }
+
+        return new BoundFieldAccessExpression(expression, fieldName, field);
     }
 
     private BoundExpression BindParenthesizedExpression(ParenthesisExpressionSyntax syntax)

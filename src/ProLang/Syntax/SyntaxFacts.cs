@@ -144,6 +144,8 @@ internal static class SyntaxFacts
                 return "return";
             case SyntaxKind.ImportKeyword:
                 return "import";
+            case SyntaxKind.StructKeyword:
+                return "struct";
             default:
                 return null;
         }
@@ -183,6 +185,8 @@ internal static class SyntaxFacts
                 return SyntaxKind.ReturnKeyword;
             case "import":
                 return SyntaxKind.ImportKeyword;
+            case "struct":
+                return SyntaxKind.StructKeyword;
             default:
                 return SyntaxKind.IdentifierToken;
          }
