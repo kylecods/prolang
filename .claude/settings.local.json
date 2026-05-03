@@ -10,7 +10,8 @@
       "Bash(dotnet script *)",
       "Bash(csc check_assembly_locations.cs)",
       "Bash(./check_assembly_locations.exe)",
-      "Bash(dotnet new *)"
+      "Bash(dotnet new *)",
+      "Bash(dotnet test-final.dll)"
     ]
   }
 }

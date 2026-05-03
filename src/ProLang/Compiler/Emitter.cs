@@ -868,11 +868,33 @@ namespace ProLang.Compiler
                 {
                     EmitInstruction(ilProcessor, OpCodes.Callvirt, charAtMethod);
 
-                    // Convert char to string by calling ToString()
-                    var toStringMethod = ResolveMethod("System.Char", "ToString", Array.Empty<string>());
-                    if (toStringMethod != null)
+                    // Convert char to string
+                    // We need to call string.Create or use a static method to convert char to string
+                    // For now, use char.ToString() which should work
+                    var charType = ResolveType("System.Char");
+                    if (charType != null)
                     {
-                        EmitInstruction(ilProcessor, OpCodes.Callvirt, toStringMethod);
+                        // Call the ToString method on the char value (non-virtual call for value types)
+                        var toStringMethod = ResolveMethod("System.Char", "ToString", Array.Empty<string>());
+                        if (toStringMethod != null)
+                        {
+                            // For value types, we need to use Call, not Callvirt
+                            // But first we need to use the proper overload or convert differently
+                            // Use string.Create or string.Concat approach
+                            // Actually, let's use System.Convert.ToString(object)
+                            var convertMethod = ResolveMethod("System.Convert", "ToString", new[] { "System.Object" });
+                            if (convertMethod != null)
+                            {
+                                // Box the char first
+                                EmitInstruction(ilProcessor, OpCodes.Box, charType);
+                                EmitInstruction(ilProcessor, OpCodes.Call, convertMethod);
+                            }
+                            else
+                            {
+                                // Fallback: just call ToString on the char
+                                EmitInstruction(ilProcessor, OpCodes.Call, toStringMethod);
+                            }
+                        }
                     }
                 }
             }
