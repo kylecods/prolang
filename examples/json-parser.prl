@@ -1,0 +1,104 @@
+import "io"
+
+// JSON Parser - Demonstrates String Methods for Text Processing
+
+func isWhitespace(ch: string) : bool {
+    return ch == " " || ch == "\t" || ch == "\n" || ch == "\r"
+}
+
+func isDigit(ch: string) : bool {
+    return ch == "0" || ch == "1" || ch == "2" || ch == "3" || ch == "4" ||
+           ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9"
+}
+
+func skipWhitespace(json: string, pos: int) : int {
+    while(pos < json.length()) {
+        let ch = json.charAt(pos)
+        if(!isWhitespace(ch)) {
+            break
+        }
+        pos = pos + 1
+    }
+    return pos
+}
+
+func findClosingQuote(json: string, startPos: int) : int {
+    let pos = startPos + 1
+    let qc = """"
+
+    while(pos < json.length()) {
+        let ch = json.charAt(pos)
+        if(ch == qc) {
+            return pos
+        }
+        pos = pos + 1
+    }
+    return -1
+}
+
+func extractQuotedString(json: string, startPos: int) : string {
+    let closePos = findClosingQuote(json, startPos)
+    if(closePos == -1) {
+        return ""
+    }
+    return json.substring(startPos + 1, closePos)
+}
+
+// === Demo ===
+
+print("=== JSON Processing with String Methods ===")
+print("")
+
+// Demo: String Analysis
+print("=== Demo: String Analysis ===")
+let json = "{name: Alice, age: 30}"
+print("Input: " + json)
+print("Length: " + string(json.length()))
+print("First char: " + json.charAt(0))
+print("Substring (1-5): " + json.substring(1, 5))
+print("Index of 'name': " + string(json.indexOf("name")))
+print("Index of 'age': " + string(json.indexOf("age")))
+
+// Demo: Whitespace Handling
+print("")
+print("=== Demo: Whitespace Handling ===")
+let testText = "   hello"
+print("Text: " + testText)
+let newPos = skipWhitespace(testText, 0)
+print("After skip, position: " + string(newPos))
+print("Char at position: " + testText.charAt(newPos))
+
+// Demo: Character Classification
+print("")
+print("=== Demo: Character Classification ===")
+let space = " "
+let digit = "5"
+print("Space is whitespace: " + string(isWhitespace(space)))
+print("5 is digit: " + string(isDigit(digit)))
+print("a is digit: " + string(isDigit("a")))
+
+// Demo: Data Structure
+print("")
+print("=== Demo: Data Structure ===")
+let person = {}
+person["name"] = "Alice"
+person["age"] = "30"
+print("Name: " + string(person["name"]))
+print("Age: " + string(person["age"]))
+
+// Demo: Array Processing
+print("")
+print("=== Demo: Array Processing ===")
+let items = []
+items.push("apple")
+items.push("banana")
+items.push("cherry")
+print("Array size: " + string(items.length()))
+let idx = 0
+while(idx < items.length()) {
+    print("  [" + string(idx) + "]: " + string(items[idx]))
+    idx = idx + 1
+}
+
+print("")
+print("✅ String Methods Enable Efficient JSON-like Data Processing!")

@@ -1087,6 +1087,14 @@ internal sealed class Binder
         { "length", BuiltInFunctions.Length },
     };
 
+    private static readonly Dictionary<string, FunctionSymbol> StringMethods = new(StringComparer.Ordinal)
+    {
+        { "length", BuiltInFunctions.StringLength },
+        { "charAt", BuiltInFunctions.StringCharAt },
+        { "substring", BuiltInFunctions.StringSubstring },
+        { "indexOf", BuiltInFunctions.StringIndexOf },
+    };
+
     private BoundExpression BindMethodCallExpression(MethodCallExpressionSyntax syntax)
     {
         var methodName = syntax.MethodName.Text;
@@ -1116,6 +1124,38 @@ internal sealed class Binder
         if (receiver.Type.Name == "array")
         {
             if (!ArrayMethods.TryGetValue(methodName, out var function))
+            {
+                _diagnostics.ReportUndefinedMethod(syntax.MethodName.Location, methodName, receiver.Type);
+                return new BoundErrorExpression();
+            }
+
+            var expectedArgCount = function.Parameters.Length - 1;
+
+            if (syntax.Arguments.Count != expectedArgCount)
+            {
+                _diagnostics.ReportWrongMethodArgumentCount(syntax.Location, methodName, expectedArgCount, syntax.Arguments.Count);
+                return new BoundErrorExpression();
+            }
+
+            var boundArguments = ImmutableArray.CreateBuilder<BoundExpression>();
+
+            var receiverParam = function.Parameters[0];
+            boundArguments.Add(BindConversion(syntax.Expression.Location, receiver, receiverParam.Type));
+
+            for (int i = 0; i < syntax.Arguments.Count; i++)
+            {
+                var argument = BindExpression(syntax.Arguments[i]);
+                var parameter = function.Parameters[i + 1];
+                boundArguments.Add(BindConversion(syntax.Arguments[i].Location, argument, parameter.Type));
+            }
+
+            return new BoundCallExpression(function, boundArguments.ToImmutable());
+        }
+
+        // Handle string methods
+        if (receiver.Type == TypeSymbol.String)
+        {
+            if (!StringMethods.TryGetValue(methodName, out var function))
             {
                 _diagnostics.ReportUndefinedMethod(syntax.MethodName.Location, methodName, receiver.Type);
                 return new BoundErrorExpression();

@@ -428,6 +428,40 @@ internal sealed class Evaluator
             return arr.Count;
         }
 
+        // String methods
+        if (node.Function == BuiltInFunctions.StringLength)
+        {
+            var str = (string)EvaluateExpression(node.Arguments[0]);
+            return str.Length;
+        }
+
+        if (node.Function == BuiltInFunctions.StringCharAt)
+        {
+            var str = (string)EvaluateExpression(node.Arguments[0]);
+            var index = (int)EvaluateExpression(node.Arguments[1]);
+            if (index >= 0 && index < str.Length)
+                return str[index].ToString();
+            return "";
+        }
+
+        if (node.Function == BuiltInFunctions.StringSubstring)
+        {
+            var str = (string)EvaluateExpression(node.Arguments[0]);
+            var start = (int)EvaluateExpression(node.Arguments[1]);
+            var end = (int)EvaluateExpression(node.Arguments[2]);
+            if (start >= 0 && end <= str.Length && start <= end)
+                return str.Substring(start, end - start);
+            return "";
+        }
+
+        if (node.Function == BuiltInFunctions.StringIndexOf)
+        {
+            var str = (string)EvaluateExpression(node.Arguments[0]);
+            var needle = (string)EvaluateExpression(node.Arguments[1]);
+            var idx = str.IndexOf(needle);
+            return idx >= 0 ? idx : -1;
+        }
+
         // Handle .NET function calls
         if (node.Function is DotNetFunctionSymbol dotNetFunc)
         {

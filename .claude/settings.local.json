@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet run *)",
+      "Bash(cat)",
+      "Read(//tmp/**)",
+      "Bash(dotnet build *)",
+      "Bash(dotnet --info)",
+      "Bash(xargs -I {} sh -c 'echo \"=== {} ===\" && dotnet tool run ilspect -- {} 2>/dev/null | grep -i \"class.*String\" | head -1')",
+      "Bash(dotnet script *)",
+      "Bash(csc check_assembly_locations.cs)",
+      "Bash(./check_assembly_locations.exe)",
+      "Bash(dotnet new *)"
+    ]
+  }
+}

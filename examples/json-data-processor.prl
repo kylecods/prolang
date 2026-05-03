@@ -1,0 +1,58 @@
+import "io"
+
+// Since ProLang lacks string parsing capabilities, this example
+// demonstrates how to work with JSON-like data structures in ProLang
+// by constructing them programmatically rather than parsing.
+
+struct Person {
+    name: string;
+    age: int;
+}
+
+struct Contact {
+    people: array<Person>;
+    count: int;
+}
+
+// Create a JSON-like data structure
+let personA = Person { name: "Alice", age: 30 }
+let personB = Person { name: "Bob", age: 25 }
+
+let people = [personA, personB]
+let contact = Contact { people: people, count: 2 }
+
+// Demonstrate accessing the data
+print("=== JSON-like Data in ProLang ===")
+print("Total people: " + string(contact.count))
+
+let i = 0
+while(i < contact.people.length()) {
+    let p = contact.people[i]
+    print("Person " + string(i + 1) + ": " + p.name + ", age " + string(p.age))
+    i = i + 1
+}
+
+// Demonstrate maps as objects
+let user = {}
+user["username"] = "alice"
+user["email"] = "alice@example.com"
+user["verified"] = true
+user["posts"] = 42
+
+print("")
+print("=== Map-based JSON-like Object ===")
+print("Username: " + string(user["username"]))
+print("Email: " + string(user["email"]))
+print("Posts: " + string(user["posts"]))
+
+// Demonstrate arrays of mixed types
+let data = []
+data.push("hello")
+data.push(42)
+data.push(true)
+
+print("")
+print("=== Heterogeneous Array ===")
+print("First element: " + string(data[0]))
+print("Second element: " + string(data[1]))
+print("Third element: " + string(data[2]))

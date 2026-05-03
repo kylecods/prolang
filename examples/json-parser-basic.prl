@@ -1,0 +1,95 @@
+import "io"
+
+// Basic JSON Parser - Now possible with string methods!
+// This demonstrates how string methods enable text processing
+
+struct JsonValue {
+    type: string;
+    content: string;
+}
+
+// Parse a simple key:value pair from JSON-like format
+// Example: "key":"value"
+func parseKeyValue(text: string) : JsonValue {
+    // Find the colon
+    let colonIdx = text.indexOf(":")
+
+    if(colonIdx == -1) {
+        return JsonValue { type: "error", content: "No colon found" }
+    }
+
+    // Extract key (remove quotes and surrounding space)
+    let keyStart = 0
+    let keyEnd = colonIdx
+    let key = text.substring(keyStart, keyEnd)
+
+    // Extract value
+    let valueStart = colonIdx + 1
+    let valueEnd = text.length()
+    let value = text.substring(valueStart, valueEnd)
+
+    return JsonValue { type: "pair", content: key + " => " + value }
+}
+
+// Find and extract a string value
+func extractString(text: string, prefix: string) : string {
+    let startIdx = text.indexOf(prefix)
+
+    if(startIdx == -1) {
+        return ""
+    }
+
+    // Find the opening quote
+    let quoteStart = startIdx + prefix.length()
+
+    // Find closing quote
+    let quoteEnd = text.indexOf("\"")
+
+    if(quoteEnd > quoteStart) {
+        return text.substring(quoteStart, quoteEnd)
+    }
+
+    return ""
+}
+
+// Count occurrences of a character
+func countChar(text: string, ch: string) : int {
+    let count = 0
+    let i = 0
+
+    while(i < text.length()) {
+        if(text.charAt(i) == ch) {
+            count = count + 1
+        }
+        i = i + 1
+    }
+
+    return count
+}
+
+// Main demo
+print("=== JSON Parser with String Methods ===")
+print("")
+
+// Test 1: Parse key-value pair
+let jsonPair = "{" + "\"" + "name" + "\"" + ":" + "\"" + "Alice" + "\"" + "}"
+print("Input: " + jsonPair)
+print("Length: " + string(jsonPair.length()))
+let parsed = parseKeyValue(jsonPair)
+print("Parsed: " + parsed.content)
+
+// Test 2: Count braces
+print("")
+let openBraces = countChar(jsonPair, "{")
+let closeBraces = countChar(jsonPair, "}")
+print("Open braces: " + string(openBraces))
+print("Close braces: " + string(closeBraces))
+
+// Test 3: Find values
+print("")
+let jsonObj = "{" + "\"" + "email" + "\"" + ":" + "\"" + "alice@example.com" + "\"" + "}"
+print("JSON: " + jsonObj)
+print("Email substring found: " + text.substring(7, 24))
+
+print("")
+print("✅ Basic JSON parsing is now possible with string methods!")

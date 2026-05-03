@@ -2,7 +2,35 @@
   <Target Name="CreateManifestResourceNames" />
 
   <Target Name="CoreCompile" DependsOnTargets="$(CoreCompileDependsOn)">
-    <Exec Command="dotnet run --project &quot;$(MSBuildThisFileDirectory)\..\src\ProLang\ProLang.csproj&quot; -- @(Compile->'&quot;%(Identity)&quot;', ' ') /o &quot;@(IntermediateAssembly)&quot;"
+    <!-- Get the reference assembly paths from the .NET SDK -->
+    <PropertyGroup>
+      <DotNetRoot Condition="'$(DotNetRoot)' == ''">$([System.IO.Path]::Combine($([System.Environment]::GetFolderPath(System.Environment+SpecialFolder.ProgramFiles)), 'dotnet'))</DotNetRoot>
+      <NetCoreAppVersion>$([System.Runtime.InteropServices.RuntimeInformation]::FrameworkDescription.Split('.')[1])</NetCoreAppVersion>
+      <RefAssemblyPath Condition="'$(RefAssemblyPath)' == ''">$(DotNetRoot)\packs\Microsoft.NETCore.App.Ref\10.0.7\ref\net10.0</RefAssemblyPath>
+    </PropertyGroup>
+
+    <!-- Build reference paths string for ProLang compiler -->
+    <!-- Include essential .NET assemblies for ProLang compilation -->
+    <ItemGroup>
+      <_RefAssemblies Include="$(RefAssemblyPath)\System.Runtime.dll" />
+      <_RefAssemblies Include="$(RefAssemblyPath)\System.Console.dll" />
+      <_RefAssemblies Include="$(RefAssemblyPath)\System.Collections.dll" />
+      <_RefAssemblies Include="$(RefAssemblyPath)\System.Collections.Concurrent.dll" />
+      <_RefAssemblies Include="$(RefAssemblyPath)\System.Linq.dll" />
+      <_RefAssemblies Include="$(RefAssemblyPath)\System.Text.RegularExpressions.dll" />
+      <_RefAssemblies Include="$(RefAssemblyPath)\System.IO.FileSystem.dll" />
+      <_RefAssemblies Include="$(RefAssemblyPath)\System.Threading.dll" />
+      <_RefAssemblies Include="$(RefAssemblyPath)\System.Net.Primitives.dll" />
+      <_RefAssemblies Include="$(RefAssemblyPath)\System.Text.Json.dll" />
+      <_RefAssemblies Include="$(RefAssemblyPath)\Microsoft.CSharp.dll" />
+    </ItemGroup>
+
+    <!-- Build the reference arguments -->
+    <PropertyGroup>
+      <_ReferenceArgs>@(_RefAssemblies->'-r=&quot;%(Identity)&quot;', ' ')</_ReferenceArgs>
+    </PropertyGroup>
+
+    <Exec Command="dotnet run --project &quot;$(MSBuildThisFileDirectory)\..\src\ProLang\ProLang.csproj&quot; -- @(Compile->'&quot;%(Identity)&quot;', ' ') $(_ReferenceArgs) -o=&quot;@(IntermediateAssembly)&quot;"
           WorkingDirectory="$(MSBuildProjectDirectory)" />
   </Target>
 

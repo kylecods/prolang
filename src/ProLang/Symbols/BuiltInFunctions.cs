@@ -49,5 +49,29 @@ internal static class BuiltInFunctions
         ImmutableArray.Create(new ParameterSymbol("arr", TypeSymbol.Any, 0)),
         TypeSymbol.Int);
 
+    // String methods
+    public static readonly FunctionSymbol StringLength = new("length",
+        ImmutableArray.Create(new ParameterSymbol("str", TypeSymbol.String, 0)),
+        TypeSymbol.Int);
+
+    public static readonly FunctionSymbol StringCharAt = new("charAt",
+        ImmutableArray.Create(
+            new ParameterSymbol("str", TypeSymbol.String, 0),
+            new ParameterSymbol("index", TypeSymbol.Int, 1)),
+        TypeSymbol.String);
+
+    public static readonly FunctionSymbol StringSubstring = new("substring",
+        ImmutableArray.Create(
+            new ParameterSymbol("str", TypeSymbol.String, 0),
+            new ParameterSymbol("start", TypeSymbol.Int, 1),
+            new ParameterSymbol("end", TypeSymbol.Int, 2)),
+        TypeSymbol.String);
+
+    public static readonly FunctionSymbol StringIndexOf = new("indexOf",
+        ImmutableArray.Create(
+            new ParameterSymbol("str", TypeSymbol.String, 0),
+            new ParameterSymbol("needle", TypeSymbol.String, 1)),
+        TypeSymbol.Int);
+
     internal static IEnumerable<FunctionSymbol> GetAll() => BuiltInModule.GetAllFunctions();
 }

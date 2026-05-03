@@ -6,7 +6,6 @@ using ProLang.Interop;
 using ProLang.Parse;
 using ProLang.Symbols;
 using System.Collections.Immutable;
-using System.Reflection;
 using CecilTypeAttributes = Mono.Cecil.TypeAttributes;
 using CecilMethodAttributes = Mono.Cecil.MethodAttributes;
 using CecilParameterAttributes = Mono.Cecil.ParameterAttributes;
@@ -83,34 +82,89 @@ namespace ProLang.Compiler
 
         private void LoadRuntimeAssemblies()
         {
-            // Find reference assemblies in the SDK
-            var sdkRoot = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                ".dotnet", "packs", "Microsoft.NETCore.App.Ref");
+            string? assemblyLoadPath = null;
 
-            string? refAssembliesPath = null;
+            // First, try to find the runtime assemblies in Program Files\dotnet\shared
+            var programFilesRoot = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                "dotnet", "shared", "Microsoft.NETCore.App");
 
-            if (Directory.Exists(sdkRoot))
+            if (Directory.Exists(programFilesRoot))
             {
-                // Find the latest version
-                refAssembliesPath = Directory.GetDirectories(sdkRoot)
-                    .OrderByDescending(d => d)
-                    .Select(d => Path.Combine(d, "ref"))
-                    .Where(Directory.Exists)
-                    .SelectMany(d => Directory.GetDirectories(d))
+                // Find the latest version of the runtime
+                var latestVersion = Directory.GetDirectories(programFilesRoot)
                     .OrderByDescending(d => d)
                     .FirstOrDefault();
+                if (latestVersion != null)
+                {
+                    assemblyLoadPath = latestVersion;
+                }
             }
 
-            if (refAssembliesPath == null || !Directory.Exists(refAssembliesPath))
+            // Second, try SDK packs
+            if (assemblyLoadPath == null || !Directory.Exists(assemblyLoadPath))
             {
-                // Fallback to runtime directory
-                refAssembliesPath = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
+                var sdkRoot = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
+                    "dotnet", "packs", "Microsoft.NETCore.App.Ref");
+
+                if (Directory.Exists(sdkRoot))
+                {
+                    // Find the latest version
+                    var latestVersion = Directory.GetDirectories(sdkRoot)
+                        .OrderByDescending(d => d)
+                        .FirstOrDefault();
+                    if (latestVersion != null)
+                    {
+                        var refDir = Path.Combine(latestVersion, "ref");
+                        var framework = Directory.GetDirectories(refDir)
+                            .OrderByDescending(d => d)
+                            .FirstOrDefault();
+                        if (framework != null)
+                        {
+                            assemblyLoadPath = framework;
+                        }
+                    }
+                }
+            }
+
+            // Third, fallback to user profile
+            if (assemblyLoadPath == null || !Directory.Exists(assemblyLoadPath))
+            {
+                var userRoot = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+                    ".dotnet", "packs", "Microsoft.NETCore.App.Ref");
+
+                if (Directory.Exists(userRoot))
+                {
+                    var latestVersion = Directory.GetDirectories(userRoot)
+                        .OrderByDescending(d => d)
+                        .FirstOrDefault();
+                    if (latestVersion != null)
+                    {
+                        var refDir = Path.Combine(latestVersion, "ref");
+                        var framework = Directory.GetDirectories(refDir)
+                            .OrderByDescending(d => d)
+                            .FirstOrDefault();
+                        if (framework != null)
+                        {
+                            assemblyLoadPath = framework;
+                        }
+                    }
+                }
+            }
+
+            // Fourth, fallback to runtime directory
+            if (assemblyLoadPath == null || !Directory.Exists(assemblyLoadPath))
+            {
+                assemblyLoadPath = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
             }
 
             // Load essential .NET assemblies for interop
+            // Note: System.Private.CoreLib must be loaded first as it contains the core types
             var requiredAssemblies = new[]
             {
+                "System.Private.CoreLib.dll",  // Contains the actual type definitions
                 "System.Runtime.dll",
                 "System.Console.dll",
                 "System.Collections.dll",
@@ -126,30 +180,30 @@ namespace ProLang.Compiler
 
             var loadedAssemblyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-            foreach (var assemblyName in requiredAssemblies)
+            if (Directory.Exists(assemblyLoadPath))
             {
-                var assemblyPath = Path.Combine(refAssembliesPath, assemblyName);
-                if (File.Exists(assemblyPath))
+                foreach (var assemblyName in requiredAssemblies)
                 {
-                    try
+                    var assemblyPath = Path.Combine(assemblyLoadPath, assemblyName);
+                    if (File.Exists(assemblyPath))
                     {
-                        var assembly = AssemblyDefinition.ReadAssembly(assemblyPath, new ReaderParameters { ReadSymbols = false });
-                        var simpleName = assembly.Name.Name;
-                        if (!loadedAssemblyNames.Contains(simpleName))
+                        try
                         {
-                            _assemblies.Add(assembly);
-                            loadedAssemblyNames.Add(simpleName);
+                            var assembly = AssemblyDefinition.ReadAssembly(assemblyPath, new ReaderParameters { ReadSymbols = false });
+                            var simpleName = assembly.Name.Name;
+                            if (!loadedAssemblyNames.Contains(simpleName))
+                            {
+                                _assemblies.Add(assembly);
+                                loadedAssemblyNames.Add(simpleName);
+                            }
                         }
-                    }
-                    catch (Exception)
-                    {
-                        // Ignore if we can't load the assembly
+                        catch (Exception)
+                        {
+                            // Ignore if we can't load the assembly
+                        }
                     }
                 }
             }
-
-            // Do NOT load runtime directory assemblies - they cause duplicates with reference assemblies
-            // The reference assemblies from SDK packs are sufficient and cleaner
         }
 
         private TypeReference? ResolveType(string metaDataName)
@@ -798,6 +852,45 @@ namespace ProLang.Compiler
                 var listType = GetTypeReference(TypeSymbol.Array);
                 _listGetCountMethod ??= GetGenericMethod(listType, "get_Count", 0);
                 EmitInstruction(ilProcessor, OpCodes.Callvirt, _listGetCountMethod);
+            }
+            else if (node.Function == BuiltInFunctions.StringLength)
+            {
+                var lengthMethod = ResolveMethod("System.String", "get_Length", Array.Empty<string>());
+                if (lengthMethod != null)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Callvirt, lengthMethod);
+                }
+            }
+            else if (node.Function == BuiltInFunctions.StringCharAt)
+            {
+                var charAtMethod = ResolveMethod("System.String", "get_Chars", new[] { "System.Int32" });
+                if (charAtMethod != null)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Callvirt, charAtMethod);
+
+                    // Convert char to string by calling ToString()
+                    var toStringMethod = ResolveMethod("System.Char", "ToString", Array.Empty<string>());
+                    if (toStringMethod != null)
+                    {
+                        EmitInstruction(ilProcessor, OpCodes.Callvirt, toStringMethod);
+                    }
+                }
+            }
+            else if (node.Function == BuiltInFunctions.StringSubstring)
+            {
+                var substringMethod = ResolveMethod("System.String", "Substring", new[] { "System.Int32", "System.Int32" });
+                if (substringMethod != null)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Callvirt, substringMethod);
+                }
+            }
+            else if (node.Function == BuiltInFunctions.StringIndexOf)
+            {
+                var indexOfMethod = ResolveMethod("System.String", "IndexOf", new[] { "System.String" });
+                if (indexOfMethod != null)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Callvirt, indexOfMethod);
+                }
             }
             else if (node.Function is DotNetFunctionSymbol dotNetFunc)
             {
