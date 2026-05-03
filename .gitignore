@@ -20,3 +20,4 @@ build_errors.txt
 
 examples/06-structs/plan.md
 .opencode/plans/compilation_plan.md
+.claude/settings.local.json
