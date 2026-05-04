@@ -95,6 +95,7 @@ let myBuffer: RingBuffer = RingBuffer {
     count: 0,
     capacity: 5
 }
+
 print("Created buffer with capacity 5")
 print("=== Buffer State ===")
 print("Capacity: " + string(myBuffer.capacity))
