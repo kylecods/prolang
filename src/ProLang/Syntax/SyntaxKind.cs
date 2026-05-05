@@ -61,6 +61,7 @@ public enum SyntaxKind
     LetKeyword,
     FalseKeyword,
     TrueKeyword,
+    NullKeyword,
     WhileKeyword,
     ForKeyword,
     IfKeyword,

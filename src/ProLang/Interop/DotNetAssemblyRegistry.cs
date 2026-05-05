@@ -15,6 +15,9 @@ public sealed class DotNetAssemblyRegistry
     private readonly ConcurrentDictionary<string, Assembly> _loadedAssemblies = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, Type[]> _typeCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, Type?> _typeLookupCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, Type?> _simpleNameCache = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<RuntimeTypeHandle, MethodInfo[]> _staticMethodCache = new();
+    private readonly ConcurrentDictionary<RuntimeTypeHandle, PropertyInfo[]> _staticPropertyCache = new();
     private readonly HashSet<string> _runtimeAssemblyPaths;
 
     private DotNetAssemblyRegistry()
@@ -241,6 +244,31 @@ public sealed class DotNetAssemblyRegistry
     }
 
     /// <summary>
+    /// Finds a public type by simple name (case-insensitive) across all loaded assemblies.
+    /// Results are cached so subsequent lookups for the same name are O(1).
+    /// </summary>
+    public Type? FindTypeBySimpleName(string simpleName)
+    {
+        if (_simpleNameCache.TryGetValue(simpleName, out var cached))
+            return cached;
+
+        Type? found = null;
+        foreach (var assembly in _loadedAssemblies.Values.Distinct())
+        {
+            try
+            {
+                found = assembly.GetTypes().FirstOrDefault(t =>
+                    t.IsPublic && t.Name.Equals(simpleName, StringComparison.OrdinalIgnoreCase));
+                if (found != null) break;
+            }
+            catch { }
+        }
+
+        _simpleNameCache[simpleName] = found;
+        return found;
+    }
+
+    /// <summary>
     /// Gets all public types in a namespace across all loaded assemblies.
     /// </summary>
     public IEnumerable<Type> GetTypesInNamespace(string namespaceName)
@@ -278,16 +306,23 @@ public sealed class DotNetAssemblyRegistry
     /// </summary>
     public IReadOnlyList<MethodInfo> GetStaticMethods(Type type)
     {
+        if (_staticMethodCache.TryGetValue(type.TypeHandle, out var cached))
+            return cached;
+
+        MethodInfo[] methods;
         try
         {
-            return type.GetMethods(BindingFlags.Public | BindingFlags.Static)
+            methods = type.GetMethods(BindingFlags.Public | BindingFlags.Static)
                 .Where(m => !m.IsSpecialName && !m.IsGenericMethod)
-                .ToList();
+                .ToArray();
         }
         catch
         {
-            return Array.Empty<MethodInfo>();
+            methods = Array.Empty<MethodInfo>();
         }
+
+        _staticMethodCache[type.TypeHandle] = methods;
+        return methods;
     }
 
     /// <summary>
@@ -312,16 +347,23 @@ public sealed class DotNetAssemblyRegistry
     /// </summary>
     public IReadOnlyList<PropertyInfo> GetStaticProperties(Type type)
     {
+        if (_staticPropertyCache.TryGetValue(type.TypeHandle, out var cached))
+            return cached;
+
+        PropertyInfo[] props;
         try
         {
-            return type.GetProperties(BindingFlags.Public | BindingFlags.Static)
+            props = type.GetProperties(BindingFlags.Public | BindingFlags.Static)
                 .Where(p => p.CanRead)
-                .ToList();
+                .ToArray();
         }
         catch
         {
-            return [];
+            props = [];
         }
+
+        _staticPropertyCache[type.TypeHandle] = props;
+        return props;
     }
 
     /// <summary>

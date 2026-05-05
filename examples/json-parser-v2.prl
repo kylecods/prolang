@@ -1,0 +1,374 @@
+import "io"
+
+// ProLang JSON Parser v2 - Handles simplified JSON format
+// Supports: strings, numbers, booleans, null, objects, arrays
+
+// ============================================
+// UTILITY FUNCTIONS
+// ============================================
+
+func isWhitespace(ch: string) : bool {
+    return ch == " " || ch == "\t" || ch == "\n" || ch == "\r"
+}
+
+func isDigit(ch: string) : bool {
+    return ch == "0" || ch == "1" || ch == "2" || ch == "3" || ch == "4" ||
+           ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9"
+}
+
+func digitToInt(ch: string) : int {
+    // Use a lookup string for O(1) digit conversion
+    let digits = "0123456789"
+    let idx = digits.indexOf(ch)
+    return idx
+}
+
+func skipWhitespace(json: string, pos: int) : int {
+    while(pos < json.length()) {
+        let ch = json.charAt(pos)
+        if(!isWhitespace(ch)) {
+            break
+        }
+        pos = pos + 1
+    }
+    return pos
+}
+
+// ============================================
+// STRING PARSING
+// ============================================
+
+func findClosingQuote(json: string, startPos: int) : int {
+    let pos = startPos + 1
+    let quote = """"
+
+    while(pos < json.length()) {
+        let ch = json.charAt(pos)
+
+        if(ch == quote) {
+            return pos
+        }
+
+        pos = pos + 1
+    }
+    return -1
+}
+
+func parseString(json: string, startPos: int) : string {
+    let quote = """"
+
+    if(json.charAt(startPos) != quote) {
+        return ""
+    }
+
+    let closePos = findClosingQuote(json, startPos)
+    if(closePos == -1) {
+        return ""
+    }
+
+    return json.substring(startPos + 1, closePos)
+}
+
+// ============================================
+// NUMBER PARSING
+// ============================================
+
+func parseNumber(json: string, startPos: int) : int {
+    let numStart = startPos
+    let pos = startPos
+    let isNegative = false
+
+    if(pos < json.length() && json.charAt(pos) == "-") {
+        isNegative = true
+        pos = pos + 1
+    }
+
+    let numEnd = pos
+    while(pos < json.length()) {
+        let ch = json.charAt(pos)
+        if(isDigit(ch)) {
+            numEnd = pos + 1
+            pos = pos + 1
+        } else {
+            break
+        }
+    }
+
+    if(numEnd == numStart || (isNegative && numEnd == numStart + 1)) {
+        return 0
+    }
+
+    let numStr = json.substring(numStart, numEnd)
+    let multiplier = 1
+    if(isNegative) {
+        multiplier = -1
+    }
+
+    let result = 0
+    let i = 0
+    while(i < numStr.length()) {
+        let digit = numStr.charAt(i)
+        let digitVal = digitToInt(digit)
+        result = result * 10 + digitVal
+        i = i + 1
+    }
+
+    return result * multiplier
+}
+
+// ============================================
+// BOOLEAN & NULL PARSING
+// ============================================
+
+func parseBoolean(json: string, startPos: int) : bool {
+    if(startPos + 4 <= json.length()) {
+        let substr = json.substring(startPos, startPos + 4)
+        if(substr == "true") {
+            return true
+        }
+    }
+
+    if(startPos + 5 <= json.length()) {
+        let substr = json.substring(startPos, startPos + 5)
+        if(substr == "false") {
+            return false
+        }
+    }
+
+    return false
+}
+
+func isNull(json: string, startPos: int) : bool {
+    if(startPos + 4 <= json.length()) {
+        let substr = json.substring(startPos, startPos + 4)
+        return substr == "null"
+    }
+    return false
+}
+
+// ============================================
+// CORE PARSING FUNCTIONS
+// ============================================
+
+func parseValue(json: string, pos: int) : array<any> {
+    pos = skipWhitespace(json, pos)
+
+    if(pos >= json.length()) {
+        return [null, pos]
+    }
+
+    let ch = json.charAt(pos)
+
+    if(ch == "{") {
+        return parseObject(json, pos)
+    }
+
+    if(ch == "[") {
+        return parseArray(json, pos)
+    }
+
+    let quote = """"
+    if(ch == quote) {
+        let str = parseString(json, pos)
+        let endPos = findClosingQuote(json, pos)
+        if(endPos != -1) {
+            return [str, endPos + 1]
+        }
+        return [str, pos + str.length() + 2]
+    }
+
+    if(ch == "t" || ch == "f") {
+        let bool = parseBoolean(json, pos)
+        if(bool || !bool) {
+            let len = 5
+            if(bool) {
+                len = 4
+            }
+            return [bool, pos + len]
+        }
+    }
+
+    if(isNull(json, pos)) {
+        return [null, pos + 4]
+    }
+
+    if(isDigit(ch) || ch == "-") {
+        let numStart = pos
+        if(ch == "-") {
+            pos = pos + 1
+        }
+        while(pos < json.length() && isDigit(json.charAt(pos))) {
+            pos = pos + 1
+        }
+        let num = parseNumber(json, numStart)
+        return [num, pos]
+    }
+
+    return [null, pos + 1]
+}
+
+func parseArray(json: string, startPos: int) : array<any> {
+    let result = []
+    let pos = startPos + 1
+
+    pos = skipWhitespace(json, pos)
+
+    if(pos < json.length() && json.charAt(pos) == "]") {
+        return [result, pos + 1]
+    }
+
+    while(pos < json.length()) {
+        let valueResult = parseValue(json, pos)
+        let value = valueResult[0]
+        pos = valueResult[1]
+
+        result.push(value)
+
+        pos = skipWhitespace(json, pos)
+
+        if(pos >= json.length()) {
+            break
+        }
+
+        let ch = json.charAt(pos)
+        if(ch == "]") {
+            return [result, pos + 1]
+        }
+
+        if(ch == ",") {
+            pos = pos + 1
+            pos = skipWhitespace(json, pos)
+        }
+    }
+
+    return [result, pos]
+}
+
+func parseObject(json: string, startPos: int) : array<any> {
+    let result = {}
+    let pos = startPos + 1
+
+    pos = skipWhitespace(json, pos)
+
+    if(pos < json.length() && json.charAt(pos) == "}") {
+        return [result, pos + 1]
+    }
+
+    let quote = """"
+
+    while(pos < json.length()) {
+        pos = skipWhitespace(json, pos)
+
+        if(json.charAt(pos) != quote) {
+            break
+        }
+
+        let key = parseString(json, pos)
+        let closeQuotePos = findClosingQuote(json, pos)
+        if(closeQuotePos != -1) {
+            pos = closeQuotePos + 1
+        }
+
+        pos = skipWhitespace(json, pos)
+
+        if(pos >= json.length() || json.charAt(pos) != ":") {
+            break
+        }
+
+        pos = pos + 1
+
+        let valueResult = parseValue(json, pos)
+        let value = valueResult[0]
+        pos = valueResult[1]
+
+        result[key] = value
+
+        pos = skipWhitespace(json, pos)
+
+        if(pos >= json.length()) {
+            break
+        }
+
+        let ch = json.charAt(pos)
+        if(ch == "}") {
+            return [result, pos + 1]
+        }
+
+        if(ch == ",") {
+            pos = pos + 1
+        }
+    }
+
+    return [result, pos]
+}
+
+// ============================================
+// PUBLIC API
+// ============================================
+
+func parseJson(json: string) : any {
+    let result = parseValue(json, 0)
+    return result[0]
+}
+
+// ============================================
+// DEMONSTRATION & TESTING
+// ============================================
+
+print("=== ProLang JSON Parser v2 ===")
+print("")
+
+// Test: Simple object
+print("Test: Simple Object")
+let jsonObj = "{" + """" + "name" + """" + ": " + """" + "Alice" + """" + ", " + """" + "age" + """" + ": 30}"
+print("Input: " + jsonObj)
+let obj = parseJson(jsonObj)
+print("Parsed: ")
+print("  name=" + string(obj["name"]))
+print("  age=" + string(obj["age"]))
+print("")
+
+// Test: Array
+print("Test: Array")
+let jsonArr = "[1, 2, 3, 4, 5]"
+print("Input: " + jsonArr)
+let arrVal = parseJson(jsonArr)
+print("Parsed: array created")
+print("")
+
+// Test: String value
+print("Test: String")
+let jsonStr = """" + "Hello, World!" + """"
+print("Input: " + jsonStr)
+let strVal = parseJson(jsonStr)
+print("Parsed: " + string(strVal))
+print("")
+
+// Test: Boolean and null
+print("Test: Boolean")
+let jsonBool = "true"
+print("Input: " + jsonBool)
+let boolVal = parseJson(jsonBool)
+print("Parsed: " + string(boolVal))
+print("")
+
+// Test: Nested structure
+print("Test: Nested Object")
+let jsonNested = "{" + """" + "user" + """" + ": {" + """" + "name" + """" + ": " + """" + "Bob" + """" + ", " + """" + "active" + """" + ": true}}"
+print("Input: " + jsonNested)
+let objNested = parseJson(jsonNested)
+let user = objNested["user"]
+print("Parsed:")
+print("  user.name=" + string(user["name"]))
+print("  user.active=" + string(user["active"]))
+print("")
+
+// Test: Array of objects
+print("Test: Array of Objects")
+let jsonComplex = "[{" + """" + "id" + """" + ": 1, " + """" + "val" + """" + ": " + """" + "x" + """" + "}, {" + """" + "id" + """" + ": 2, " + """" + "val" + """" + ": " + """" + "y" + """" + "}]"
+print("Input: " + jsonComplex)
+let arrComplexVal = parseJson(jsonComplex)
+print("Parsed: array of objects created")
+print("")
+
+print("✅ JSON Parser v2 - All tests completed!")

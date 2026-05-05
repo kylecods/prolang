@@ -324,9 +324,23 @@ public sealed class Parser
 
         var elseKeyword = Match(SyntaxKind.ElseKeyword);
 
-        var blockStatement = ParseBlockStatement();
+        // Support "else if" as syntactic sugar for "else { if ... }"
+        if (Current.Kind == SyntaxKind.IfKeyword)
+        {
+            var ifStatement = ParseIfStatement();
+            var statements = ImmutableArray.Create<StatementSyntax>(ifStatement);
 
-        return new ElseClauseSyntax(_syntaxTree,elseKeyword, blockStatement);
+            // Create synthetic tokens for the block wrapper
+            var openBrace = new SyntaxToken(_syntaxTree, SyntaxKind.LeftCurlyToken, 0, "", null);
+            var closeBrace = new SyntaxToken(_syntaxTree, SyntaxKind.RightCurlyToken, 0, "", null);
+
+            var blockStatement = new BlockStatementSyntax(_syntaxTree, openBrace, statements, closeBrace);
+            return new ElseClauseSyntax(_syntaxTree, elseKeyword, blockStatement);
+        }
+
+        var regularBlock = ParseBlockStatement();
+
+        return new ElseClauseSyntax(_syntaxTree,elseKeyword, regularBlock);
     }
 
     private ElseIfClauseSyntax? ParseElIfClause()
@@ -507,6 +521,10 @@ public sealed class Parser
             case SyntaxKind.FalseKeyword:
             {
                 return ParseBooleanLiteral();
+            }
+            case SyntaxKind.NullKeyword:
+            {
+                return ParseNullLiteral();
             }
             case SyntaxKind.LeftParenthesisToken:
             {
@@ -757,6 +775,12 @@ public sealed class Parser
         var keywordToken = isTrue ? Match(SyntaxKind.TrueKeyword) : Match(SyntaxKind.FalseKeyword);
 
         return new LiteralExpressionSyntax(_syntaxTree,keywordToken, isTrue);
+    }
+
+    private ExpressionSyntax ParseNullLiteral()
+    {
+        var nullToken = Match(SyntaxKind.NullKeyword);
+        return new LiteralExpressionSyntax(_syntaxTree, nullToken, null);
     }
 
     private StatementSyntax ParseVariableStatement()

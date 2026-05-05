@@ -92,6 +92,8 @@ internal static class SyntaxFacts
                 return "let";
             case SyntaxKind.TrueKeyword:
                 return "true";
+            case SyntaxKind.NullKeyword:
+                return "null";
             case SyntaxKind.LessThanToken:
                 return "<";
             case SyntaxKind.GreaterThanToken:
@@ -161,6 +163,8 @@ internal static class SyntaxFacts
                 return SyntaxKind.TrueKeyword;
             case "false":
                 return SyntaxKind.FalseKeyword;
+            case "null":
+                return SyntaxKind.NullKeyword;
             case "while":
                 return SyntaxKind.WhileKeyword;
             case "for":

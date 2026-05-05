@@ -399,7 +399,7 @@ internal sealed class Lexer
 
     private void ReadIdentifierOrKeyword()
     {
-        while (char.IsLetter(Current))
+        while (char.IsLetterOrDigit(Current) || Current == '_')
         {
             _position++;
         }

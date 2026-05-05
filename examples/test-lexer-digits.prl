@@ -1,0 +1,12 @@
+import "io"
+
+// Test Phase D1: Identifiers with digits
+let json1 = "test1"
+let str2 = "test2"
+let arr3 = []
+let var_name4 = "underscore test"
+
+print("json1: " + json1)
+print("str2: " + str2)
+print("var_name4: " + var_name4)
+print("✅ Phase D1 - Identifiers with digits work!")

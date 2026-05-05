@@ -1099,16 +1099,21 @@ internal sealed class Binder
     {
         var methodName = syntax.MethodName.Text;
 
-        // First check if the expression is a NameExpression that could be a .NET type name
+        // First check if the expression is a NameExpression that could be a .NET type name.
+        // Only attempt .NET type resolution when the name is NOT a declared variable —
+        // variable names (json, arr, pos, …) are never .NET type names, and scanning all
+        // loaded assemblies for every one of them is the primary compilation bottleneck.
         if (syntax.Expression is NameExpressionSyntax nameExpr)
         {
             var typeName = nameExpr.IdentifierToken.Text;
 
-            // Try to resolve as .NET static method call (e.g., DateTime.Now, Math.Max)
-            var dotNetFunc = ResolveDotNetStaticMethod(typeName, methodName);
-            if (dotNetFunc != null)
+            if (!_scope.TryLookupVariable(typeName, out _))
             {
-                return BindDotNetFunctionCall(syntax, dotNetFunc, syntax.Arguments);
+                var dotNetFunc = ResolveDotNetStaticMethod(typeName, methodName);
+                if (dotNetFunc != null)
+                {
+                    return BindDotNetFunctionCall(syntax, dotNetFunc, syntax.Arguments);
+                }
             }
         }
 
@@ -1184,18 +1189,12 @@ internal sealed class Binder
             return new BoundCallExpression(function, boundArguments.ToImmutable());
         }
 
-        // Handle .NET static method calls via qualified name (e.g., Math.Max)
+        // Handle qualified function names registered in scope (e.g., "Math.Max").
+        // Do NOT call ResolveDotNetStaticMethod here — the receiver is already a bound
+        // variable, so it is definitely not a .NET type name.
         if (receiver is BoundVariableExpression varExpr)
         {
-            var typeName = varExpr.Variable.Name;
-            var dotNetFunc = ResolveDotNetStaticMethod(typeName, methodName);
-            if (dotNetFunc != null)
-            {
-                return BindDotNetFunctionCall(syntax, dotNetFunc, syntax.Arguments);
-            }
-
-            // Try namespace.Type.Method pattern
-            var qualifiedName = $"{typeName}.{methodName}";
+            var qualifiedName = $"{varExpr.Variable.Name}.{methodName}";
             if (_scope.TryLookupFunction(qualifiedName, out var func))
             {
                 return BindFunctionCall(syntax, func!, syntax.Arguments);
@@ -1228,20 +1227,7 @@ internal sealed class Binder
 
         if (dotNetType == null)
         {
-            // Search all loaded assemblies for the type (not just hardcoded prefixes)
-            foreach (var assembly in registry.GetLoadedAssemblies())
-            {
-                try
-                {
-                    dotNetType = assembly.GetTypes().FirstOrDefault(t =>
-                        t.IsPublic && t.Name.Equals(typeName, StringComparison.OrdinalIgnoreCase));
-                    if (dotNetType != null) break;
-                }
-                catch
-                {
-                    // Some assemblies may throw
-                }
-            }
+            dotNetType = registry.FindTypeBySimpleName(typeName);
         }
 
         if (dotNetType == null)

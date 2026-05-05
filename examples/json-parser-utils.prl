@@ -1,0 +1,15 @@
+// JSON Parser Utilities - Shared structures and functions
+
+// ParseResult struct: holds both a parsed value and the next position to continue parsing
+struct ParseResult {
+    value: any,
+    nextPos: int
+}
+
+// Helper function to create a ParseResult
+func parseResult(val: any, pos: int) : ParseResult {
+    let result = ParseResult{}
+    result.value = val
+    result.nextPos = pos
+    return result
+}
