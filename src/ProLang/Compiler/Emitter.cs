@@ -559,10 +559,12 @@ namespace ProLang.Compiler
 
             if (type is GenericInstanceType genericType)
             {
-                var specializedMethod = new MethodReference(methodReference.Name, methodReference.ReturnType, genericType);
-                specializedMethod.HasThis = methodReference.HasThis;
-                specializedMethod.ExplicitThis = methodReference.ExplicitThis;
-                specializedMethod.CallingConvention = methodReference.CallingConvention;
+                var specializedMethod = new MethodReference(methodReference.Name, methodReference.ReturnType, genericType)
+                {
+                    HasThis = methodReference.HasThis,
+                    ExplicitThis = methodReference.ExplicitThis,
+                    CallingConvention = methodReference.CallingConvention
+                };
 
                 foreach (var parameter in methodReference.Parameters)
                 {

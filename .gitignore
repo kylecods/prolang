@@ -23,3 +23,5 @@ examples/06-structs/plan.md
 .claude/settings.local.json
 vscode-extension/bun.lock
 src/ProLang.Benchmarks/BenchmarkDotNet.Artifacts/**
+OPTIMIZATIONS_IN_PROGRESS.md
+COMPREHENSIVE_BENCHMARKS.md

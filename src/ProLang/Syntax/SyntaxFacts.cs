@@ -1,7 +1,15 @@
+using System.Text.RegularExpressions;
+
 namespace ProLang.Syntax;
 
-internal static class SyntaxFacts
+internal static partial class SyntaxFacts
 {
+    [GeneratedRegex(@"^[a-zA-Z_][a-zA-Z0-9_]*$", RegexOptions.Compiled)]
+    private static partial Regex IdentifierPattern();
+
+    [GeneratedRegex(@"^-?\d+$", RegexOptions.Compiled)]
+    private static partial Regex NumberPattern();
+
     private static readonly Dictionary<string, SyntaxKind> KeywordLookup = new(StringComparer.Ordinal)
     {
         { "let", SyntaxKind.LetKeyword },
@@ -23,48 +31,38 @@ internal static class SyntaxFacts
         { "struct", SyntaxKind.StructKeyword },
     };
 
+    private static readonly Dictionary<SyntaxKind, int> UnaryOperatorPrecedenceMap = new()
+    {
+        { SyntaxKind.PlusToken, 6 },
+        { SyntaxKind.MinusToken, 6 },
+        { SyntaxKind.BangToken, 6 },
+    };
+
+    private static readonly Dictionary<SyntaxKind, int> BinaryOperatorPrecedenceMap = new()
+    {
+        { SyntaxKind.StarToken, 5 },
+        { SyntaxKind.SlashToken, 5 },
+        { SyntaxKind.PercentageToken, 5 },
+        { SyntaxKind.PlusToken, 4 },
+        { SyntaxKind.MinusToken, 4 },
+        { SyntaxKind.LessThanToken, 3 },
+        { SyntaxKind.LessThanEqualToken, 3 },
+        { SyntaxKind.GreaterThanToken, 3 },
+        { SyntaxKind.GreaterThanEqualToken, 3 },
+        { SyntaxKind.BangEqualsToken, 3 },
+        { SyntaxKind.EqualsEqualsToken, 3 },
+        { SyntaxKind.AmpersandAmpersandToken, 2 },
+        { SyntaxKind.PipePipeToken, 1 },
+    };
+
     public static int GetUnaryOperatorPrecedence(this SyntaxKind kind)
     {
-        switch (kind)
-        {
-            case SyntaxKind.PlusToken:
-            case SyntaxKind.MinusToken:
-            case SyntaxKind.BangToken:
-                return 6;
-            default:
-                return 0;
-        }
+        return UnaryOperatorPrecedenceMap.TryGetValue(kind, out var precedence) ? precedence : 0;
     }
-    
+
     public static int GetBinaryOperatorPrecedence(this SyntaxKind kind)
     {
-        switch (kind)
-        {
-            case SyntaxKind.StarToken:
-            case SyntaxKind.SlashToken:
-            case SyntaxKind.PercentageToken:
-                return 5;
-                
-            case SyntaxKind.PlusToken:
-            case SyntaxKind.MinusToken:
-                return 4;
-            
-            case SyntaxKind.LessThanToken:
-            case SyntaxKind.LessThanEqualToken:
-            case SyntaxKind.GreaterThanToken:
-            case SyntaxKind.GreaterThanEqualToken:
-            case SyntaxKind.BangEqualsToken:
-            case SyntaxKind.EqualsEqualsToken:
-                return 3;
-            
-            case SyntaxKind.AmpersandAmpersandToken:
-                return 2;
-            
-            case SyntaxKind.PipePipeToken:
-                return 1;
-            
-            default: return 0;
-        }
+        return BinaryOperatorPrecedenceMap.TryGetValue(kind, out var precedence) ? precedence : 0;
     }
     
      public static string? GetText(SyntaxKind kind)

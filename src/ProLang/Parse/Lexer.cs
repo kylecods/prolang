@@ -334,7 +334,10 @@ internal sealed class Lexer
     {
         _position++;
 
-        _stringBuilder.Clear();
+        const int stackBufferSize = 256;
+        Span<char> stackBuffer = stackalloc char[stackBufferSize];
+        int bufferIndex = 0;
+        bool overflowed = false;
 
         var done = false;
 
@@ -351,7 +354,22 @@ internal sealed class Lexer
                 case '"':
                     if (LookAhead == '"')
                     {
-                        _stringBuilder.Append(Current);
+                        if (!overflowed && bufferIndex < stackBufferSize)
+                        {
+                            stackBuffer[bufferIndex++] = Current;
+                        }
+                        else if (!overflowed)
+                        {
+                            overflowed = true;
+                            _stringBuilder.Clear();
+                            _stringBuilder.Append(stackBuffer[..bufferIndex]);
+                            _stringBuilder.Append(Current);
+                            bufferIndex++;
+                        }
+                        else
+                        {
+                            _stringBuilder.Append(Current);
+                        }
                         _position += 2;
                     }
                     else
@@ -361,14 +379,29 @@ internal sealed class Lexer
                     }
                     break;
                 default:
-                    _stringBuilder.Append(Current);
+                    if (!overflowed && bufferIndex < stackBufferSize)
+                    {
+                        stackBuffer[bufferIndex++] = Current;
+                    }
+                    else if (!overflowed)
+                    {
+                        overflowed = true;
+                        _stringBuilder.Clear();
+                        _stringBuilder.Append(stackBuffer[..bufferIndex]);
+                        _stringBuilder.Append(Current);
+                        bufferIndex++;
+                    }
+                    else
+                    {
+                        _stringBuilder.Append(Current);
+                    }
                     _position++;
                     break;
             }
         }
 
         _kind = SyntaxKind.StringToken;
-        _value = _stringBuilder.ToString();
+        _value = overflowed ? _stringBuilder.ToString() : new string(stackBuffer[..bufferIndex]);
     }
 
     private void ReadWhiteSpace()
