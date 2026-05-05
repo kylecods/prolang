@@ -2,6 +2,27 @@ namespace ProLang.Syntax;
 
 internal static class SyntaxFacts
 {
+    private static readonly Dictionary<string, SyntaxKind> KeywordLookup = new(StringComparer.Ordinal)
+    {
+        { "let", SyntaxKind.LetKeyword },
+        { "true", SyntaxKind.TrueKeyword },
+        { "false", SyntaxKind.FalseKeyword },
+        { "null", SyntaxKind.NullKeyword },
+        { "while", SyntaxKind.WhileKeyword },
+        { "for", SyntaxKind.ForKeyword },
+        { "script", SyntaxKind.ScriptKeyword },
+        { "if", SyntaxKind.IfKeyword },
+        { "elif", SyntaxKind.ElIfKeyword },
+        { "else", SyntaxKind.ElseKeyword },
+        { "to", SyntaxKind.ToKeyword },
+        { "func", SyntaxKind.FunctionKeyword },
+        { "break", SyntaxKind.BreakKeyword },
+        { "continue", SyntaxKind.ContinueKeyword },
+        { "return", SyntaxKind.ReturnKeyword },
+        { "import", SyntaxKind.ImportKeyword },
+        { "struct", SyntaxKind.StructKeyword },
+    };
+
     public static int GetUnaryOperatorPrecedence(this SyntaxKind kind)
     {
         switch (kind)
@@ -153,46 +174,8 @@ internal static class SyntaxFacts
         }
     }
 
-     public static SyntaxKind GetKeywordKind(string text)
-     {
-         switch (text)
-         {
-            case "let":
-                return SyntaxKind.LetKeyword;
-            case "true":
-                return SyntaxKind.TrueKeyword;
-            case "false":
-                return SyntaxKind.FalseKeyword;
-            case "null":
-                return SyntaxKind.NullKeyword;
-            case "while":
-                return SyntaxKind.WhileKeyword;
-            case "for":
-                return SyntaxKind.ForKeyword;
-            case "script":
-                return SyntaxKind.ScriptKeyword;
-            case "if":
-                return SyntaxKind.IfKeyword;
-            case "elif":
-                return SyntaxKind.ElIfKeyword;
-            case "else":
-                return SyntaxKind.ElseKeyword;
-            case "to":
-                return SyntaxKind.ToKeyword;
-            case "func":
-                return SyntaxKind.FunctionKeyword;
-            case "break":
-                return SyntaxKind.BreakKeyword;
-            case "continue":
-                return SyntaxKind.ContinueKeyword;
-            case "return":
-                return SyntaxKind.ReturnKeyword;
-            case "import":
-                return SyntaxKind.ImportKeyword;
-            case "struct":
-                return SyntaxKind.StructKeyword;
-            default:
-                return SyntaxKind.IdentifierToken;
-         }
-     }
+    public static SyntaxKind GetKeywordKind(string text)
+    {
+        return KeywordLookup.TryGetValue(text, out var kind) ? kind : SyntaxKind.IdentifierToken;
+    }
 }

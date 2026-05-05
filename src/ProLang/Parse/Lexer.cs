@@ -8,18 +8,20 @@ namespace ProLang.Parse;
 internal sealed class Lexer
 {
     private readonly SourceText _text;
-    
+
     private int _position;
-    
+
     private int _start;
-    
+
     private SyntaxKind _kind;
-    
+
     private object _value;
-    
+
     private DiagnosticBag _diagnostics = new ();
 
     private readonly SyntaxTree _syntaxTree;
+
+    private readonly StringBuilder _stringBuilder = new(32);
 
 
     public Lexer(SyntaxTree syntaxTree)
@@ -29,6 +31,12 @@ internal sealed class Lexer
     }
 
     public DiagnosticBag Diagnostics => _diagnostics;
+
+    private TextLocation CreateErrorLocation(int length = 1)
+    {
+        var span = new TextSpan(_position, length);
+        return new TextLocation(_text, span);
+    }
 
     private char Current => Peek(0);
 
@@ -294,19 +302,18 @@ internal sealed class Lexer
                 _position++;
                 break;
             default:
-                if (char.IsLetter(Current))
+                var c = Current;
+                if (char.IsLetter(c))
                 {
                     ReadIdentifierOrKeyword();
-                }else if (char.IsWhiteSpace(Current))
+                }
+                else if (char.IsWhiteSpace(c))
                 {
                     ReadWhiteSpace();
                 }
                 else
                 {
-                    var span = new TextSpan(_position, 1);
-                    var location = new TextLocation(_text, span);
-                    _diagnostics.ReportBadCharacter(location,Current);
-
+                    _diagnostics.ReportBadCharacter(CreateErrorLocation(1), c);
                     _position++;
                 }
                 break;
@@ -327,7 +334,7 @@ internal sealed class Lexer
     {
         _position++;
 
-        var sb = new StringBuilder();
+        _stringBuilder.Clear();
 
         var done = false;
 
@@ -338,15 +345,13 @@ internal sealed class Lexer
                 case '\0':
                 case '\r':
                 case '\n':
-                    var span = new TextSpan(_start, 1);
-                    var location = new TextLocation(_text, span);
-                    _diagnostics.ReportUnterminatedString(location);
+                    _diagnostics.ReportUnterminatedString(CreateErrorLocation(1));
                     done = true;
                     break;
                 case '"':
                     if (LookAhead == '"')
                     {
-                        sb.Append(Current);
+                        _stringBuilder.Append(Current);
                         _position += 2;
                     }
                     else
@@ -356,14 +361,14 @@ internal sealed class Lexer
                     }
                     break;
                 default:
-                    sb.Append(Current);
+                    _stringBuilder.Append(Current);
                     _position++;
                     break;
             }
         }
 
         _kind = SyntaxKind.StringToken;
-        _value = sb.ToString();
+        _value = _stringBuilder.ToString();
     }
 
     private void ReadWhiteSpace()
@@ -388,9 +393,8 @@ internal sealed class Lexer
 
         if (!int.TryParse(text, out var value))
         {
-            var span = new TextSpan(_start, length);
-            var location = new TextLocation(_text, span);
-            _diagnostics.ReportInvalidNumber(location,text,TypeSymbol.Int);
+            var location = CreateErrorLocation(length);
+            _diagnostics.ReportInvalidNumber(location, text, TypeSymbol.Int);
         }
 
         _value = value;

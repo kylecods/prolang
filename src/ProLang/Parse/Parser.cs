@@ -18,7 +18,7 @@ public sealed class Parser
 
     public Parser(SyntaxTree syntaxTree)
     {
-        var tokens = new List<SyntaxToken>();
+        var tokens = new List<SyntaxToken>(256);
 
         var lexer = new Lexer(syntaxTree);
 
@@ -51,7 +51,7 @@ public sealed class Parser
 
         if (index >= _tokens.Length)
         {
-            return _tokens[_tokens.Length + 1];
+            return _tokens[_tokens.Length - 1];
         }
 
         return _tokens[index];
