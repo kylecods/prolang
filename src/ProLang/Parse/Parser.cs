@@ -158,6 +158,18 @@ public sealed class Parser
     {
         var structKeyword = Match(SyntaxKind.StructKeyword);
         var identifier = Match(SyntaxKind.IdentifierToken);
+
+        SyntaxToken? lessThanToken = null;
+        var typeParameters = new SeparatedSyntaxList<SyntaxToken>(ImmutableArray<SyntaxNode>.Empty);
+        SyntaxToken? greaterThanToken = null;
+
+        if (Current.Kind == SyntaxKind.LessThanToken)
+        {
+            lessThanToken = Match(SyntaxKind.LessThanToken);
+            typeParameters = ParseTypeParameterList();
+            greaterThanToken = Match(SyntaxKind.GreaterThanToken);
+        }
+
         var openCurlyToken = Match(SyntaxKind.LeftCurlyToken);
 
         var fields = ImmutableArray.CreateBuilder<FieldDeclarationSyntax>();
@@ -172,7 +184,32 @@ public sealed class Parser
 
         var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
 
-        return new StructDeclarationSyntax(_syntaxTree, structKeyword, identifier, openCurlyToken, fields.ToImmutable(), closeCurlyToken);
+        return new StructDeclarationSyntax(_syntaxTree, structKeyword, identifier, lessThanToken, typeParameters, greaterThanToken, openCurlyToken, fields.ToImmutable(), closeCurlyToken);
+    }
+
+    private SeparatedSyntaxList<SyntaxToken> ParseTypeParameterList()
+    {
+        var nodesAndSeparators = ImmutableArray.CreateBuilder<SyntaxNode>();
+
+        var parseNextParameter = true;
+
+        while (parseNextParameter && Current.Kind != SyntaxKind.GreaterThanToken && Current.Kind != SyntaxKind.EofToken)
+        {
+            var parameter = Match(SyntaxKind.IdentifierToken);
+            nodesAndSeparators.Add(parameter);
+
+            if (Current.Kind == SyntaxKind.CommaToken)
+            {
+                var comma = Match(SyntaxKind.CommaToken);
+                nodesAndSeparators.Add(comma);
+            }
+            else
+            {
+                parseNextParameter = false;
+            }
+        }
+
+        return new SeparatedSyntaxList<SyntaxToken>(nodesAndSeparators.ToImmutable());
     }
     
     private SeparatedSyntaxList<ParameterSyntax> ParseParameterList()
@@ -227,6 +264,12 @@ public sealed class Parser
 
     private TypeSyntax ParseTypeSyntax()
     {
+        var baseType = ParseTypeBase();
+        return ParseArraySuffix(baseType);
+    }
+
+    private TypeSyntax ParseTypeBase()
+    {
         var identifier = Match(SyntaxKind.IdentifierToken);
         if (Current.Kind == SyntaxKind.LessThanToken)
         {
@@ -237,6 +280,18 @@ public sealed class Parser
         }
 
         return new NameTypeSyntax(_syntaxTree, identifier);
+    }
+
+    private TypeSyntax ParseArraySuffix(TypeSyntax baseType)
+    {
+        var type = baseType;
+        while (Current.Kind == SyntaxKind.LeftBracketToken)
+        {
+            var openBracket = Match(SyntaxKind.LeftBracketToken);
+            var closeBracket = Match(SyntaxKind.RightBracketToken);
+            type = new ArrayTypeSyntax(_syntaxTree, type, openBracket, closeBracket);
+        }
+        return type;
     }
 
     private SeparatedSyntaxList<TypeSyntax> ParseGenericArguments()

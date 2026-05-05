@@ -118,6 +118,7 @@ public enum SyntaxKind
     TypeClause,
     NameType,
     GenericType,
+    ArrayType,
     Parameter,
     StructDeclaration,
     FieldDeclaration,

@@ -1,0 +1,9 @@
+// Test: Generic struct with single type parameter
+struct Box<T> {
+    value: T;
+}
+
+func main() {
+    let x = 5
+    print(x)
+}

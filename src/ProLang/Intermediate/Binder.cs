@@ -255,8 +255,25 @@ internal sealed class Binder
     {
         var name = syntax.Identifier.Text;
 
-        var fields = ImmutableArray.CreateBuilder<StructField>();
+        var typeParameters = ImmutableArray.CreateBuilder<TypeParameterSymbol>();
+        foreach (var paramSyntax in syntax.TypeParameters)
+        {
+            var paramName = paramSyntax.Text;
+            var typeParam = new TypeParameterSymbol(paramName, typeParameters.Count);
+            typeParameters.Add(typeParam);
+        }
 
+        var savedScope = _scope;
+        if (typeParameters.Count > 0)
+        {
+            _scope = new BoundScope(_scope);
+            foreach (var typeParam in typeParameters)
+            {
+                _scope.TryDeclareTypeSymbol(typeParam);
+            }
+        }
+
+        var fields = ImmutableArray.CreateBuilder<StructField>();
         var seenFieldNames = new HashSet<string>();
 
         foreach (var fieldSyntax in syntax.Fields)
@@ -275,7 +292,9 @@ internal sealed class Binder
             }
         }
 
-        var structSymbol = new StructSymbol(name, fields.ToImmutable());
+        _scope = savedScope;
+
+        var structSymbol = new StructSymbol(name, typeParameters.ToImmutable(), fields.ToImmutable());
 
         if (_structTypes == null)
         {
@@ -671,7 +690,18 @@ internal sealed class Binder
                 arguments.Add(BindTypeSyntax(argSyntax));
             }
 
+            if (baseType is StructSymbol structSymbol)
+            {
+                return structSymbol.InstantiateGeneric(arguments.ToArray());
+            }
+
             return baseType.WithArgs(arguments.ToArray());
+        }
+
+        if (syntax is ArrayTypeSyntax arraySyntax)
+        {
+            var elementType = BindTypeSyntax(arraySyntax.ElementType);
+            return TypeSymbol.Array.WithArgs(elementType);
         }
 
         throw new Exception($"Unexpected type syntax {syntax.Kind}");
@@ -696,6 +726,11 @@ internal sealed class Binder
             case "map":
                 return TypeSymbol.Map;
             default:
+                if (_scope.TryLookupTypeSymbol(name, out var typeSymbol))
+                {
+                    return typeSymbol;
+                }
+
                 if (_scope.TryLookupType(name, out var structSymbol))
                 {
                     return structSymbol;
