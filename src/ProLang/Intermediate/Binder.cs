@@ -46,16 +46,16 @@ internal sealed class Binder
 
         var binder = new Binder(isScript, parentScope, null);
 
-        var structDeclarations =
-            syntaxTrees.SelectMany(st => st.Root.Declarations).OfType<StructDeclarationSyntax>();
+        // Single-pass collection of all declarations to avoid multiple SelectMany iterations
+        var allDeclarations = syntaxTrees.SelectMany(st => st.Root.Declarations).ToList();
+        var structDeclarations = allDeclarations.OfType<StructDeclarationSyntax>();
+        var functionDeclarations = allDeclarations.OfType<FunctionDeclarationSyntax>();
+        var globalStatements = allDeclarations.OfType<GlobalStatementSyntax>();
 
         foreach (var structDecl in structDeclarations)
         {
             binder.BindStructDeclaration(structDecl);
         }
-
-        var functionDeclarations =
-            syntaxTrees.SelectMany(st => st.Root.Declarations).OfType<FunctionDeclarationSyntax>();
 
         foreach (var function in functionDeclarations)
         {
@@ -68,9 +68,6 @@ internal sealed class Binder
 
         var statements = ImmutableArray.CreateBuilder<BoundStatement>();
 
-        var globalStatements =
-                syntaxTrees.SelectMany(st => st.Root.Declarations).OfType<GlobalStatementSyntax>();
-
         foreach (var statementSyntax in globalStatements)
         {
             var statement = binder.BindGlobalStatement(statementSyntax.Statement);
@@ -80,14 +77,19 @@ internal sealed class Binder
 
         //check any global Statements
 
-        var firstGlobalStatementPerSyntaxTree = syntaxTrees
-                                                .Select(st => st.Root.Declarations.OfType<GlobalDeclarationSyntax>().FirstOrDefault())
-                                                .Where(g => g != null)
-                                                .ToArray();
-
-        if (firstGlobalStatementPerSyntaxTree.Length > 1)
+        var firstGlobalStatementList = new List<GlobalDeclarationSyntax>();
+        foreach (var syntaxTree in syntaxTrees)
         {
-            foreach (var globalStatement in firstGlobalStatementPerSyntaxTree)
+            var globalDecl = syntaxTree.Root.Declarations.OfType<GlobalDeclarationSyntax>().FirstOrDefault();
+            if (globalDecl != null)
+            {
+                firstGlobalStatementList.Add(globalDecl);
+            }
+        }
+
+        if (firstGlobalStatementList.Count > 1)
+        {
+            foreach (var globalStatement in firstGlobalStatementList)
             {
                 binder.Diagnostics.ReportOnlyOneFileCanHaveGlobalStatements(globalStatement.Location);
             }
@@ -133,7 +135,7 @@ internal sealed class Binder
                 {
                     binder.Diagnostics.ReportCannotMixMainAndGlobalStatements(mainFunction.Declaration.Identifier.Location);
 
-                    foreach (var globalStatement in firstGlobalStatementPerSyntaxTree)
+                    foreach (var globalStatement in firstGlobalStatementList)
                     {
                         binder.Diagnostics.ReportCannotMixMainAndGlobalStatements(globalStatement.Location);
 

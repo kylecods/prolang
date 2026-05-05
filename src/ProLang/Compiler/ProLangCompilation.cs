@@ -1,6 +1,5 @@
 using System.Collections.Immutable;
 using ProLang.Intermediate;
-using ProLang.Interpreter;
 using ProLang.Interop;
 using ProLang.Parse;
 using ProLang.Symbols;
@@ -45,18 +44,6 @@ public sealed class ProLangCompilation
     {
         var (resolved, diagnostics, importedModules) = ResolveAllImports(syntaxTrees.ToImmutableArray());
         return new ProLangCompilation(isScript:false, previous: null, diagnostics, importedModules, resolved.ToArray());
-    }
-
-    public static ProLangCompilation CreateScript(ProLangCompilation previous, params SyntaxTree[] syntaxTrees)
-    {
-        var (resolved, diagnostics, importedModules) = ResolveAllImports(syntaxTrees.ToImmutableArray());
-
-        // Also include built-in modules
-        var allModules = BuiltInModule.GetAll().Select(m => m.Name)
-            .Concat(importedModules)
-            .ToImmutableHashSet(StringComparer.OrdinalIgnoreCase);
-
-        return new ProLangCompilation(isScript: true, previous: previous, diagnostics, allModules, resolved.ToArray());
     }
 
     private static (ImmutableArray<SyntaxTree> Trees, ImmutableArray<Diagnostic> Diagnostics, ImmutableHashSet<string> ImportedModules) ResolveAllImports(
@@ -253,46 +240,11 @@ public sealed class ProLangCompilation
         return Binder.BindProgram(IsScript, previous, GlobalScope);
     }
 
-    internal EvaluationResult Evaluate(Dictionary<VariableSymbol, object> variables)
-    {
-        if (_importDiagnostics.Any())
-        {
-            return new EvaluationResult(_importDiagnostics, null!);
-        }
-
-        var parseDiagnostics = SyntaxTrees.SelectMany(st => st.Diagnostics);
-
-        var diagnostics = parseDiagnostics.Concat(GlobalScope.Diagnostics).ToImmutableArray();
-        
-        if (diagnostics.Any())
-        { 
-            return new EvaluationResult(diagnostics, null!);
-        }
-
-        var program = GetProgram();
-
-        if (program.Diagnostics.Any())
-        {
-            return new EvaluationResult(program.Diagnostics.ToImmutableArray(), null!);
-        }
-
-        var evaluator = new Evaluator(program, variables);
-        
-        var value = evaluator.Evaluate();
-
-        return new EvaluationResult(ImmutableArray<Diagnostic>.Empty, value);
-
-    }
-    
     public void EmitTree(TextWriter writer)
     {
-        if (GlobalScope.MainFunction != null) 
-        { 
-            EmitTree(GlobalScope.MainFunction,writer);
-        }
-        else if (GlobalScope.ScriptFunction != null)
+        if (GlobalScope.MainFunction != null)
         {
-           EmitTree(GlobalScope.ScriptFunction,writer);
+            EmitTree(GlobalScope.MainFunction,writer);
         }
     }
     public void EmitTree(FunctionSymbol symbol, TextWriter writer)

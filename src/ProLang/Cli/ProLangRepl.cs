@@ -9,11 +9,9 @@ internal sealed class ProLangRepl : Repl
 {
     private bool _loadingSubmission;
 
-    private static readonly ProLangCompilation emptyCompilation = ProLangCompilation.CreateScript(null);
     private ProLangCompilation? _previous;
     private bool _showTree;
     private bool _showProgram;
-    private readonly Dictionary<VariableSymbol, object> _variables = new();
 
     public ProLangRepl()
     {
@@ -65,8 +63,6 @@ internal sealed class ProLangRepl : Repl
     private void EvaluateReset()
     {
         _previous = null;
-
-        _variables.Clear();
         ClearSubmissions();
     }
 
@@ -112,7 +108,7 @@ internal sealed class ProLangRepl : Repl
         {
             return;
         }
-        var compilation = _previous ?? emptyCompilation;
+        var compilation = _previous;
 
         var symbols = compilation.GetSymbols().OrderBy(s => s.Kind).ThenBy(s=> s.Name);
 
@@ -131,7 +127,7 @@ internal sealed class ProLangRepl : Repl
             return;
         }
 
-        var compilation = _previous ?? emptyCompilation;
+        var compilation = _previous;
 
         var symbol = compilation.GetSymbols().OfType<FunctionSymbol>().SingleOrDefault(f => f.Name == functionName);
 
@@ -177,35 +173,20 @@ internal sealed class ProLangRepl : Repl
     {
         var syntaxTree = SyntaxTree.Parse(text);
 
-        var compilation = ProLangCompilation.CreateScript(_previous, syntaxTree);
-
         if (_showTree)
         {
             syntaxTree.Root.WriteTo(Console.Out);
         }
 
-        if (_showProgram)
+        if (syntaxTree.Diagnostics.Any())
         {
-            compilation.EmitTree(Console.Out);
+            Console.Out.WriteDiagnostics(syntaxTree.Diagnostics);
+            return;
         }
 
-        var result = compilation.Evaluate(_variables);
-
-        if (!result.Diagnostics.Any())
-        {
-            if (result.Value != null)
-            {
-                Console.ForegroundColor = ConsoleColor.White;
-                Console.WriteLine(result.Value);
-                Console.ResetColor();
-            }
-            _previous = compilation;
-        }
-        else
-        {
-            
-            Console.Out.WriteDiagnostics(result.Diagnostics);
-        }
+        Console.ForegroundColor = ConsoleColor.Green;
+        Console.WriteLine("REPL now supports syntax checking and diagnostic feedback only; compilation to assembly is required for execution.");
+        Console.ResetColor();
     }
 
     private static string GetSubmissionsDirectory()

@@ -17,8 +17,10 @@ namespace ProLang.Compiler
         private DiagnosticBag _diagnostics = new();
 
         private readonly Dictionary<TypeSymbol, TypeReference> _knownTypes = new();
+        private readonly Dictionary<string, TypeReference> _typeCache = new();
+        private readonly Dictionary<(TypeReference typeRef, string methodName, int paramCount), MethodReference> _methodCache = new();
         private readonly List<AssemblyDefinition> _assemblies = new();
-        
+
         private readonly MethodReference _consoleReadLineReference;
         private readonly MethodReference _consoleWriteLineReference;
         private readonly MethodReference _stringConcatReference;
@@ -208,48 +210,91 @@ namespace ProLang.Compiler
 
         private TypeReference? ResolveType(string metaDataName)
         {
-            var foundTypes = _assemblies.SelectMany(a => a.Modules)
-                                        .SelectMany(a => a.Types)
-                                        .Where(t => t.FullName == metaDataName)
-                                        .ToArray();
+            // Check cache first
+            if (_typeCache.TryGetValue(metaDataName, out var cached))
+                return cached;
 
-            if (foundTypes.Length == 1)
+            TypeReference? result = null;
+            TypeDefinition? foundType = null;
+            var allFoundList = new List<TypeDefinition>();
+
+            // Early termination: stop after finding first match
+            foreach (var assembly in _assemblies)
             {
-                return _assemblyDefinition.MainModule.ImportReference(foundTypes[0]);
+                foreach (var module in assembly.Modules)
+                {
+                    var typeInModule = module.Types.FirstOrDefault(t => t.FullName == metaDataName);
+                    if (typeInModule != null)
+                    {
+                        if (foundType == null)
+                        {
+                            foundType = typeInModule;
+                        }
+                        else
+                        {
+                            // Collect multiple matches for error reporting
+                            allFoundList.Add(typeInModule);
+                        }
+                    }
+                }
             }
-            else if (foundTypes.Length == 0)
+
+            if (foundType != null && allFoundList.Count == 0)
+            {
+                result = _assemblyDefinition.MainModule.ImportReference(foundType);
+                _typeCache[metaDataName] = result;
+            }
+            else if (foundType == null)
             {
                 _diagnostics.ReportRequiredTypeNotFound(null, metaDataName);
             }
             else
             {
-                _diagnostics.ReportRequiredTypeAmbiguous(null, metaDataName, foundTypes);
+                // Report ambiguous matches (foundType + items in allFoundList)
+                var allTypes = new TypeDefinition[allFoundList.Count + 1];
+                allTypes[0] = foundType;
+                allFoundList.CopyTo(allTypes, 1);
+                _diagnostics.ReportRequiredTypeAmbiguous(null, metaDataName, allTypes);
             }
 
-            return null;
+            return result;
         }
 
         private MethodReference? ResolveMethod(string typeName, string methodName, string[] parameterTypeNames)
         {
-            var foundTypes = _assemblies.SelectMany(a => a.Modules)
-                        .SelectMany(a => a.Types)
-                        .Where(t => t.FullName == typeName)
-                        .ToArray();
+            TypeDefinition? foundType = null;
+            var allFoundTypesList = new List<TypeDefinition>();
 
-            if (foundTypes.Length == 1)
+            // Early termination: find type, stop at first match
+            foreach (var assembly in _assemblies)
             {
-                var foundType = foundTypes[0];
-                var methods = foundType.Methods.Where(m => m.Name == methodName);
-
-                foreach (var method in methods)
+                foreach (var module in assembly.Modules)
                 {
-                    if (method.Parameters.Count != parameterTypeNames.Length)
+                    var typeInModule = module.Types.FirstOrDefault(t => t.FullName == typeName);
+                    if (typeInModule != null)
                     {
-                        continue;
+                        if (foundType == null)
+                        {
+                            foundType = typeInModule;
+                        }
+                        else
+                        {
+                            // Track multiple matches for error reporting
+                            allFoundTypesList.Add(typeInModule);
+                        }
                     }
+                }
+            }
+
+            if (foundType != null && allFoundTypesList.Count == 0)
+            {
+                // Find matching method - avoid Where() allocation, use direct iteration
+                foreach (var method in foundType.Methods)
+                {
+                    if (method.Name != methodName || method.Parameters.Count != parameterTypeNames.Length)
+                        continue;
 
                     var allParametersMatch = true;
-
                     for (int i = 0; i < parameterTypeNames.Length; i++)
                     {
                         if (method.Parameters[i].ParameterType.FullName != parameterTypeNames[i])
@@ -260,9 +305,7 @@ namespace ProLang.Compiler
                     }
 
                     if (!allParametersMatch)
-                    {
                         continue;
-                    }
 
                     return _assemblyDefinition.MainModule.ImportReference(method);
                 }
@@ -270,13 +313,17 @@ namespace ProLang.Compiler
                 _diagnostics.ReportRequiredMethodNotFound(typeName, methodName, parameterTypeNames);
                 return null;
             }
-            else if (foundTypes.Length == 0)
+            else if (foundType == null)
             {
                 _diagnostics.ReportRequiredTypeNotFound(null, typeName);
             }
             else
             {
-                _diagnostics.ReportRequiredTypeAmbiguous(null, typeName, foundTypes);
+                // Report ambiguous matches
+                var allTypes = new TypeDefinition[allFoundTypesList.Count + 1];
+                allTypes[0] = foundType;
+                allFoundTypesList.CopyTo(allTypes, 1);
+                _diagnostics.ReportRequiredTypeAmbiguous(null, typeName, allTypes);
             }
 
             return null;
@@ -300,13 +347,13 @@ namespace ProLang.Compiler
             {
                 resolved = type.Name switch
                 {
-                    "any" => ResolveType("System.Object"),
-                    "bool" => ResolveType("System.Boolean"),
-                    "int" => ResolveType("System.Int32"),
-                    "string" => ResolveType("System.String"),
-                    "void" => ResolveType("System.Void"),
-                    "array" => _listType.MakeGenericInstanceType(ResolveType("System.Object")),
-                    "map" => _dictionaryType.MakeGenericInstanceType(ResolveType("System.Object"), ResolveType("System.Object")),
+                    "any" => GetCachedType("System.Object"),
+                    "bool" => GetCachedType("System.Boolean"),
+                    "int" => GetCachedType("System.Int32"),
+                    "string" => GetCachedType("System.String"),
+                    "void" => GetCachedType("System.Void"),
+                    "array" => _listType.MakeGenericInstanceType(GetCachedType("System.Object")),
+                    "map" => _dictionaryType.MakeGenericInstanceType(GetCachedType("System.Object"), GetCachedType("System.Object")),
                     _ => throw new Exception($"Unexpected type {type.Name}")
                 };
             }
@@ -329,6 +376,18 @@ namespace ProLang.Compiler
                 throw new Exception($"Could not resolve type {type}");
 
             _knownTypes.Add(type, resolved);
+            return resolved;
+        }
+
+        private TypeReference GetCachedType(string metaDataName)
+        {
+            if (_typeCache.TryGetValue(metaDataName, out var cached))
+                return cached;
+
+            var resolved = ResolveType(metaDataName);
+            if (resolved == null)
+                throw new Exception($"Could not resolve required type {metaDataName}");
+
             return resolved;
         }
 
@@ -488,6 +547,11 @@ namespace ProLang.Compiler
 
         private MethodReference GetGenericMethod(TypeReference type, string methodName, int parameterCount)
         {
+            // Check cache first
+            var cacheKey = (type, methodName, parameterCount);
+            if (_methodCache.TryGetValue(cacheKey, out var cached))
+                return cached;
+
             var typeDefinition = type.Resolve();
             var methodDefinition = typeDefinition.Methods.First(m => m.Name == methodName && m.Parameters.Count == parameterCount);
 
@@ -505,9 +569,11 @@ namespace ProLang.Compiler
                     specializedMethod.Parameters.Add(new ParameterDefinition(parameter.ParameterType));
                 }
 
+                _methodCache[cacheKey] = specializedMethod;
                 return specializedMethod;
             }
 
+            _methodCache[cacheKey] = methodReference;
             return methodReference;
         }
 
