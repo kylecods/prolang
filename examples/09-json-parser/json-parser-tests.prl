@@ -1,8 +1,6 @@
 import "io"
-
-// Import the JSON parser from json-parser.prl
-// Note: In ProLang, you would need to include the parser implementation
-// For now, this file assumes the parseJson function is available
+import "fs"
+import "json-parser.prl"
 
 // ============================================
 // TEST UTILITIES
@@ -136,5 +134,5 @@ print("✅ All 10 basic tests passed!")
 print("")
 print("=== File Reading Test ===")
 print("To test file reading:")
-print("  let data = parseJsonFile(\"path/to/file.json\")")
-print("  print(string(data))")
+let fileResult = parseJsonFile("D:\\MOVEMENT\\DESKTOP\\PERSONAL\\prolang\\examples\\09-json-parser\\json-parser.runtimeconfig.json")
+print("Output: " + string(fileResult))

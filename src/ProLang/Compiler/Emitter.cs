@@ -792,6 +792,11 @@ namespace ProLang.Compiler
             ilProcessor.Emit(opCode, variable);
         }
 
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, ParameterDefinition parameter)
+        {
+            ilProcessor.Emit(opCode, parameter);
+        }
+
         private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, int value)
         {
             ilProcessor.Emit(opCode, value);
@@ -831,9 +836,19 @@ namespace ProLang.Compiler
             var fromType = node.Expression.Type;
             var toType = node.Type;
 
-            if (fromType == TypeSymbol.Any || toType == TypeSymbol.Any)
+            if (toType == TypeSymbol.String && (fromType == TypeSymbol.Int || fromType == TypeSymbol.Bool || fromType == TypeSymbol.Any))
             {
-                // handle boxing
+                if (fromType == TypeSymbol.Int || fromType == TypeSymbol.Bool)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Box, GetTypeReference(fromType));
+                }
+
+                var toStringMethod = GetTypeReference(TypeSymbol.Any).Resolve().Methods.First(m => m.Name == "ToString" && m.Parameters.Count == 0);
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, _assemblyDefinition.MainModule.ImportReference(toStringMethod));
+            }
+            else if (fromType == TypeSymbol.Any || toType == TypeSymbol.Any)
+            {
+                // handle boxing/unboxing between primitives and any
                 if (fromType == TypeSymbol.Int || fromType == TypeSymbol.Bool)
                 {
                     EmitInstruction(ilProcessor, OpCodes.Box, GetTypeReference(fromType));
@@ -842,16 +857,6 @@ namespace ProLang.Compiler
                 {
                     EmitInstruction(ilProcessor, OpCodes.Unbox_Any, GetTypeReference(toType));
                 }
-            }
-            else if (toType == TypeSymbol.String && (fromType == TypeSymbol.Int || fromType == TypeSymbol.Bool || fromType == TypeSymbol.Any))
-            {
-                if (fromType == TypeSymbol.Int || fromType == TypeSymbol.Bool)
-                {
-                    EmitInstruction(ilProcessor, OpCodes.Box, GetTypeReference(fromType));
-                }
-                
-                var toStringMethod = GetTypeReference(TypeSymbol.Any).Resolve().Methods.First(m => m.Name == "ToString" && m.Parameters.Count == 0);
-                EmitInstruction(ilProcessor, OpCodes.Callvirt, _assemblyDefinition.MainModule.ImportReference(toStringMethod));
             }
         }
 
@@ -971,6 +976,19 @@ namespace ProLang.Compiler
                 var substringMethod = ResolveMethod("System.String", "Substring", new[] { "System.Int32", "System.Int32" });
                 if (substringMethod != null)
                 {
+                    // Stack: [string, start, end]  (ProLang uses end-exclusive index)
+                    // .NET Substring(start, length) needs length = end - start
+                    var intType = GetTypeReference(TypeSymbol.Int);
+                    var tempEnd = new VariableDefinition(intType);
+                    var tempStart = new VariableDefinition(intType);
+                    ilProcessor.Body.Variables.Add(tempEnd);
+                    ilProcessor.Body.Variables.Add(tempStart);
+                    EmitInstruction(ilProcessor, OpCodes.Stloc, tempEnd);
+                    EmitInstruction(ilProcessor, OpCodes.Stloc, tempStart);
+                    EmitInstruction(ilProcessor, OpCodes.Ldloc, tempStart);
+                    EmitInstruction(ilProcessor, OpCodes.Ldloc, tempEnd);
+                    EmitInstruction(ilProcessor, OpCodes.Ldloc, tempStart);
+                    EmitInstruction(ilProcessor, OpCodes.Sub);
                     EmitInstruction(ilProcessor, OpCodes.Callvirt, substringMethod);
                 }
             }
@@ -981,6 +999,24 @@ namespace ProLang.Compiler
                 {
                     EmitInstruction(ilProcessor, OpCodes.Callvirt, indexOfMethod);
                 }
+            }
+            else if (node.Function == BuiltInFunctions.FileExists)
+            {
+                var method = ResolveMethod("System.IO.File", "Exists", new[] { "System.String" });
+                if (method != null)
+                    EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
+            else if (node.Function == BuiltInFunctions.ReadFile)
+            {
+                var method = ResolveMethod("System.IO.File", "ReadAllText", new[] { "System.String" });
+                if (method != null)
+                    EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
+            else if (node.Function == BuiltInFunctions.WriteFile)
+            {
+                var method = ResolveMethod("System.IO.File", "WriteAllText", new[] { "System.String", "System.String" });
+                if (method != null)
+                    EmitInstruction(ilProcessor, OpCodes.Call, method);
             }
             else if (node.Function is DotNetFunctionSymbol dotNetFunc)
             {
@@ -1280,13 +1316,39 @@ namespace ProLang.Compiler
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.Equals)
             {
-                EmitInstruction(ilProcessor, OpCodes.Ceq);
+                if (node.Left.Type == TypeSymbol.String || node.Right.Type == TypeSymbol.String)
+                {
+                    var eqMethod = ResolveMethod("System.String", "op_Equality", new[] { "System.String", "System.String" });
+                    if (eqMethod != null)
+                        EmitInstruction(ilProcessor, OpCodes.Call, eqMethod);
+                    else
+                        EmitInstruction(ilProcessor, OpCodes.Ceq);
+                }
+                else
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Ceq);
+                }
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.NotEquals)
             {
-                EmitInstruction(ilProcessor, OpCodes.Ceq);
-                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
-                EmitInstruction(ilProcessor, OpCodes.Ceq);
+                if (node.Left.Type == TypeSymbol.String || node.Right.Type == TypeSymbol.String)
+                {
+                    var neqMethod = ResolveMethod("System.String", "op_Inequality", new[] { "System.String", "System.String" });
+                    if (neqMethod != null)
+                        EmitInstruction(ilProcessor, OpCodes.Call, neqMethod);
+                    else
+                    {
+                        EmitInstruction(ilProcessor, OpCodes.Ceq);
+                        EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
+                        EmitInstruction(ilProcessor, OpCodes.Ceq);
+                    }
+                }
+                else
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Ceq);
+                    EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
+                    EmitInstruction(ilProcessor, OpCodes.Ceq);
+                }
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.LessThan)
             {
@@ -1343,19 +1405,25 @@ namespace ProLang.Compiler
 
         private void EmitAssignmentExpression(ILProcessor ilProcessor, BoundAssignmentExpression node)
         {
-            var variableDefinition = _locals[node.Variable];
-
             EmitExpression(ilProcessor, node.Expression);
-
             EmitInstruction(ilProcessor, OpCodes.Dup);
-            EmitInstruction(ilProcessor, OpCodes.Stloc, variableDefinition);
+
+            if (node.Variable is ParameterSymbol parameter)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Starg, ilProcessor.Body.Method.Parameters[parameter.Ordinal]);
+            }
+            else
+            {
+                var variableDefinition = _locals[node.Variable];
+                EmitInstruction(ilProcessor, OpCodes.Stloc, variableDefinition);
+            }
         }
 
         private void EmitVariableExpression(ILProcessor ilProcessor, BoundVariableExpression node)
         {
             if (node.Variable is ParameterSymbol parameter)
             {
-                EmitInstruction(ilProcessor, OpCodes.Ldarg, parameter.Ordinal);
+                EmitInstruction(ilProcessor, OpCodes.Ldarg, ilProcessor.Body.Method.Parameters[parameter.Ordinal]);
             }
             else
             {
@@ -1454,9 +1522,9 @@ namespace ProLang.Compiler
             if (node.Expression is BoundVariableExpression varExpr)
             {
                 VariableDefinition? varDef = null;
-                if (varExpr.Variable is ParameterSymbol)
+                if (varExpr.Variable is ParameterSymbol paramSym)
                 {
-                    EmitInstruction(ilProcessor, OpCodes.Ldarga, ((ParameterSymbol)varExpr.Variable).Ordinal);
+                    EmitInstruction(ilProcessor, OpCodes.Ldarga, ilProcessor.Body.Method.Parameters[paramSym.Ordinal]);
                 }
                 else
                 {

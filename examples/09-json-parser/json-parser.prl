@@ -1,4 +1,3 @@
-import "io"
 
 // ============================================
 // STRUCTURES & HELPERS
@@ -10,9 +9,7 @@ struct ParseResult {
 }
 
 func parseResult(val: any, pos: int) : ParseResult {
-    let result = ParseResult{}
-    result.value = val
-    result.nextPos = pos
+    let result = ParseResult { value: val, nextPos: pos }
     return result
 }
 

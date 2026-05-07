@@ -157,12 +157,12 @@ internal sealed class Binder
             diagnostics = diagnostics.InsertRange(0, previous.Diagnostics);
         }
 
-        return new BoundGlobalScope(previous, diagnostics, mainFunction, scriptFunction, functions, variables, statements.ToImmutableArray(), structTypes);
+        return new BoundGlobalScope(previous, diagnostics, mainFunction, scriptFunction, functions, variables, statements.ToImmutableArray(), structTypes, importedModules);
     }
 
     public static BoundProgram BindProgram(bool isScript, BoundProgram previous, BoundGlobalScope? globalScope)
     {
-        var parentScope = CreateParentScope(globalScope);
+        var parentScope = CreateParentScope(globalScope, globalScope?.ImportedModules);
 
         var functionBodies = ImmutableDictionary.CreateBuilder<FunctionSymbol, BoundBlockStatement>();
 
@@ -927,7 +927,11 @@ internal sealed class Binder
 
         foreach (var initializer in syntax.Initializers)
         {
+            var fieldName = initializer.FieldName.Text;
+            var matchedField = structType.Fields.FirstOrDefault(f => f.Name == fieldName);
             var value = BindExpression(initializer.Expression);
+            if (matchedField != null)
+                value = BindConversion(initializer.Expression.Location, value, matchedField.Type);
             fieldValues.Add(value);
         }
 
@@ -1033,7 +1037,9 @@ internal sealed class Binder
 
     private BoundExpression BindCallExpression(CallExpressionSyntax syntax)
     {
-        if (syntax.Arguments.Count == 1 && LookupType(syntax.Identifier.Text) is TypeSymbol type)
+        if (syntax.Arguments.Count == 1
+            && !_scope.TryLookupFunction(syntax.Identifier.Text, out _)
+            && LookupType(syntax.Identifier.Text) is TypeSymbol type)
         {
             return BindConversion(syntax.Arguments[0], type, true);
         }

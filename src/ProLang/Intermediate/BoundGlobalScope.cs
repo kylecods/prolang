@@ -6,14 +6,15 @@ namespace ProLang.Intermediate;
 
 public sealed class BoundGlobalScope
 {
-    public BoundGlobalScope(BoundGlobalScope? previous, 
-            ImmutableArray<Diagnostic> diagnostics, 
+    public BoundGlobalScope(BoundGlobalScope? previous,
+            ImmutableArray<Diagnostic> diagnostics,
             FunctionSymbol mainFunction,
             FunctionSymbol scriptFunction,
-            ImmutableArray<FunctionSymbol> functions, 
-            ImmutableArray<VariableSymbol> variables, 
+            ImmutableArray<FunctionSymbol> functions,
+            ImmutableArray<VariableSymbol> variables,
             ImmutableArray<BoundStatement> statements,
-            ImmutableArray<StructSymbol> structTypes)
+            ImmutableArray<StructSymbol> structTypes,
+            ImmutableHashSet<string>? importedModules = null)
     {
         Previous = previous;
         Diagnostics = diagnostics;
@@ -23,10 +24,11 @@ public sealed class BoundGlobalScope
         Variables = variables;
         Statements = statements;
         StructTypes = structTypes;
+        ImportedModules = importedModules;
     }
 
     public BoundGlobalScope? Previous { get; }
-    
+
     public ImmutableArray<Diagnostic> Diagnostics { get;  }
 
     public FunctionSymbol MainFunction { get; }
@@ -34,10 +36,12 @@ public sealed class BoundGlobalScope
     public FunctionSymbol ScriptFunction { get; }
 
     public ImmutableArray<FunctionSymbol> Functions { get; }
-    
+
     public ImmutableArray<VariableSymbol> Variables { get; }
-    
+
     public ImmutableArray<BoundStatement> Statements { get; }
-    
+
     public ImmutableArray<StructSymbol> StructTypes { get; }
+
+    public ImmutableHashSet<string>? ImportedModules { get; }
 }

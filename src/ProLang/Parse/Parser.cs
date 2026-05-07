@@ -176,10 +176,16 @@ public sealed class Parser
 
         while (Current.Kind != SyntaxKind.RightCurlyToken && Current.Kind != SyntaxKind.EofToken)
         {
+            var startToken = Current;
             var fieldIdentifier = Match(SyntaxKind.IdentifierToken);
             var fieldType = ParseTypeClause();
-            var semiColon = Match(SyntaxKind.SemiColonToken);
+            // Accept both semicolons and commas as field separators
+            if (Current.Kind == SyntaxKind.SemiColonToken || Current.Kind == SyntaxKind.CommaToken)
+                NextToken();
             fields.Add(new FieldDeclarationSyntax(_syntaxTree, fieldIdentifier, fieldType));
+            // Guard: if no progress was made, skip the offending token to avoid infinite loop
+            if (Current == startToken)
+                NextToken();
         }
 
         var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);

@@ -1,28 +1,26 @@
 import "io"
 
-// Test ParseResult struct
-// struct ParseResult {
-//     value: any,
-//     nextPos: int
-// }
+//Test ParseResult struct
+struct ParseResult {
+    value: any,
+    nextPos: int
+}
 
-// func parseResult(val: any, pos: int) : ParseResult {
-//     let result = ParseResult{}
-//     result.value = val
-//     result.nextPos = pos
-//     return result
-// }
+func parseResult(val: any, pos: int) : ParseResult {
+    let result = ParseResult { value: val, nextPos: pos }
+    return result
+}
 
-// print("=== Testing ParseResult Struct ===")
+print("=== Testing ParseResult Struct ===")
 
-// let result1 = parseResult("hello", 5)
-// print("Result 1:")
-// print("  value: " + string(result1.value))
-// print("  nextPos: " + string(result1.nextPos))
+let result1 = parseResult("hello", 5)
+print("Result 1:")
+print("  value: " + string(result1.value))
+print("  nextPos: " + result1.nextPos)
 
-// let result2 = parseResult(42, 10)
-// print("Result 2:")
-// print("  value: " + string(result2.value))
-// print("  nextPos: " + string(result2.nextPos))
+let result2 = parseResult(42, 10)
+print("Result 2:")
+print("  value: " + string(result2.value))
+print("  nextPos: " + string(result2.nextPos))
 
 print("✅ ParseResult struct works!")
