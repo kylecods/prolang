@@ -161,7 +161,7 @@ func parseNull(json: string, pos: int) : ParseResult {
 // ============================================
 
 func parseArray(json: string, pos: int) : ParseResult {
-    let arr = []
+    let arr: array<any> = []
     pos = pos + 1
     pos = skipWhitespace(json, pos)
 
@@ -201,7 +201,7 @@ func parseArray(json: string, pos: int) : ParseResult {
 // ============================================
 
 func parseObject(json: string, pos: int) : ParseResult {
-    let obj = {}
+    let obj: map<string, any> = {}
     pos = pos + 1
     pos = skipWhitespace(json, pos)
 
@@ -297,6 +297,94 @@ func parseValue(json: string, pos: int) : ParseResult {
 }
 
 // ============================================
+// JSON SERIALIZATION (Object -> String)
+// ============================================
+
+func stringContains(str: string, substr: string) : bool {
+    return str.indexOf(substr) >= 0
+}
+
+func jsonStringifyArray(arr: array<any>) : string {
+    let result = "["
+    let i = 0
+
+    while(i < arr.length()) {
+        if(i > 0) {
+            result = result + ", "
+        }
+        let elem = arr[i]
+        let elemType = string(elem)
+
+        if(stringContains(elemType, "String")) {
+            result = result + """" + string(elem) + """"
+        } else if(elemType == "True") {
+            result = result + "true"
+        } else if(elemType == "False") {
+            result = result + "false"
+        } else {
+            result = result + string(elem)
+        }
+
+        i = i + 1
+    }
+
+    result = result + "]"
+    return result
+}
+
+func jsonStringify(value: any) : string {
+    let valueType = string(value)
+
+    // Check if it's a string
+    if(stringContains(valueType, "String")) {
+        return """" + value + """"
+    }
+
+    // Check if it's a boolean
+    if(valueType == "True") {
+        return "true"
+    }
+    if(valueType == "False") {
+        return "false"
+    }
+
+    // Check if it's null or empty
+    if(valueType == "" || valueType == "null") {
+        return "null"
+    }
+
+    // For arrays and objects, return a simple representation
+    // Full serialization requires typed parameters
+    if(stringContains(valueType, "List")) {
+        return "[...]"
+    }
+
+    if(stringContains(valueType, "Dictionary")) {
+        return "{...}"
+    }
+
+    // Otherwise it's a number
+    return string(value)
+}
+
+// For typed arrays
+func arrayToJson(arr: array<int>) : string {
+    let result = "["
+    let i = 0
+
+    while(i < arr.length()) {
+        if(i > 0) {
+            result = result + ", "
+        }
+        result = result + string(arr[i])
+        i = i + 1
+    }
+
+    result = result + "]"
+    return result
+}
+
+// ============================================
 // PUBLIC API
 // ============================================
 
@@ -304,4 +392,27 @@ func parseJson(json: string) : any {
     let result = parseValue(json, 0)
     return result.value
 }
+
+// ============================================
+// VALUE SERIALIZATION
+// ============================================
+
+func serializeValue(value: any) : string {
+    let str = string(value)
+
+    if(str == "True") {
+        return "true"
+    }
+
+    if(str == "False") {
+        return "false"
+    }
+
+    if(str == "") {
+        return "null"
+    }
+
+    return str
+}
+
 
