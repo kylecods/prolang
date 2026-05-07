@@ -3,7 +3,9 @@ struct Box<T> {
     value: T;
 }
 
-func main() {
-    let x = 5
-    print(x)
+let box : Box<int> = Box<int> 
+{ 
+    value: 5
 }
+
+print(box.value)

@@ -1,8 +1,0 @@
-import "io"
-
-// Simple test without string methods
-
-let x = 5
-let y = "hello"
-print("Number: " + string(x))
-print("Text: " + y)
