@@ -1,0 +1,8 @@
+import "io"
+
+func main() {
+    let stringValue: any = "text"
+    // This should throw InvalidCastException at runtime
+    let wrongCast = stringValue as int
+    print("This won't print")
+}

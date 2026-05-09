@@ -74,6 +74,7 @@ public enum SyntaxKind
     ReturnKeyword,
     ImportKeyword,
     StructKeyword,
+    AsKeyword,
 
     //html keywords
     ScriptKeyword,
@@ -92,6 +93,7 @@ public enum SyntaxKind
     IndexExpression,
     MethodCallExpression,
     MapEntry,
+    CastExpression,
     
     //statements
     VariableDeclaration,

@@ -169,6 +169,13 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Report(location, message);
     }
 
+    public void ReportCanOnlyCastFromAnyType(TextLocation location, TypeSymbol type)
+    {
+        var message = $"Cannot cast from type '{type}'. Cast expressions can only be used with 'any' type.";
+
+        Report(location, message);
+    }
+
     public void ReportInvalidBreakOrContinue(TextLocation location, string text)
     {
         var message = $"The keyword '{text}' can only be used inside of loops";

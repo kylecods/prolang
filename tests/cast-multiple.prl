@@ -1,0 +1,19 @@
+import "io"
+
+func getValue(): any {
+    return 42
+}
+
+func main() {
+    let intValue: any = 42
+    let castedInt = intValue as int
+    print("Int cast: " + string(castedInt))
+
+    let stringValue: any = "test"
+    let castedString = stringValue as string
+    print("String cast: " + castedString)
+
+    let funcValue: any = getValue()
+    let castedFuncInt = funcValue as int
+    print("Function result cast: " + string(castedFuncInt))
+}

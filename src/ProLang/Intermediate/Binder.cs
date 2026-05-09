@@ -883,6 +883,8 @@ internal sealed class Binder
                 return BindStructCreationExpression((StructCreationExpressionSyntax)syntax);
             case SyntaxKind.FieldAccessExpression:
                 return BindFieldAccessExpression((FieldAccessExpressionSyntax)syntax);
+            case SyntaxKind.CastExpression:
+                return BindCastExpression((CastExpressionSyntax)syntax);
             default:
                 throw new Exception($"Unknown syntax kind {syntax.Kind}");
         }
@@ -1043,6 +1045,26 @@ internal sealed class Binder
         }
 
         return new BoundFieldAccessExpression(expression, fieldName, field);
+    }
+
+    private BoundExpression BindCastExpression(CastExpressionSyntax syntax)
+    {
+        var expression = BindExpression(syntax.Expression);
+        var targetType = BindTypeClause(syntax.Type);
+
+        if (expression.Type == TypeSymbol.Error || targetType == null || targetType == TypeSymbol.Error)
+        {
+            return new BoundErrorExpression();
+        }
+
+        // Cast expressions only work with 'any' type as source
+        if (expression.Type != TypeSymbol.Any)
+        {
+            _diagnostics.ReportCanOnlyCastFromAnyType(syntax.Location, expression.Type);
+            return new BoundErrorExpression();
+        }
+
+        return new BoundCastExpression(expression, targetType);
     }
 
     private BoundExpression BindParenthesizedExpression(ParenthesisExpressionSyntax syntax)

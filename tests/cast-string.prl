@@ -1,0 +1,7 @@
+import "io"
+
+func main() {
+    let x: any = "hello"
+    let y = x as string
+    print("Cast string: " + y)
+}

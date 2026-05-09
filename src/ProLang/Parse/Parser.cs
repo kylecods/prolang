@@ -541,16 +541,27 @@ public sealed class Parser
         {
             left = ParsePrimaryExpression();
         }
-        
+
         while (true)
         {
-            var precedence = Current.Kind.GetBinaryOperatorPrecedence();
-            if (precedence == 0 || precedence <= parentPrecedence)
-                break;
-            var operatorToken = NextToken();
-            var right = ParseBinaryExpression(precedence);
+            // Check for cast expression (as operator has high precedence)
+            if (Current.Kind == SyntaxKind.AsKeyword)
+            {
+                var asKeyword = NextToken();
+                var typeSyntax = ParseTypeSyntax();
+                var targetType = new TypeClauseSyntax(_syntaxTree, null!, typeSyntax);
+                left = new CastExpressionSyntax(_syntaxTree, left, asKeyword, targetType);
+            }
+            else
+            {
+                var precedence = Current.Kind.GetBinaryOperatorPrecedence();
+                if (precedence == 0 || precedence <= parentPrecedence)
+                    break;
+                var operatorToken = NextToken();
+                var right = ParseBinaryExpression(precedence);
 
-            left = new BinaryExpressionSyntax(_syntaxTree,left, operatorToken, right);
+                left = new BinaryExpressionSyntax(_syntaxTree,left, operatorToken, right);
+            }
         }
 
         return left;

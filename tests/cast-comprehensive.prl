@@ -1,0 +1,28 @@
+import "io"
+
+func processValue(value: any): string {
+    // Safely cast from any type to specific types
+    let asInt = value as int
+    return "Value as int: " + string(asInt)
+}
+
+func main() {
+    // Test 1: Cast int
+    let intValue: any = 100
+    let castedInt = intValue as int
+    print("Test 1 - Int cast: " + string(castedInt))
+
+    // Test 2: Cast string
+    let stringValue: any = "hello"
+    let castedString = stringValue as string
+    print("Test 2 - String cast: " + castedString)
+
+    // Test 3: Cast from function result
+    let funcResult: any = 42
+    let castFuncResult = funcResult as int
+    print("Test 3 - Function result cast: " + string(castFuncResult))
+
+    // Test 4: Use cast in function
+    let result = processValue(99)
+    print("Test 4 - " + result)
+}

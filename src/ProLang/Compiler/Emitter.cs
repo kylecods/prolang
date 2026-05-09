@@ -880,6 +880,9 @@ namespace ProLang.Compiler
                 case BoundNodeKind.BoundFieldAssignmentExpression:
                     EmitFieldAssignmentExpression(ilProcessor, (BoundFieldAssignmentExpression)node);
                     break;
+                case BoundNodeKind.BoundCastExpression:
+                    EmitCastExpression(ilProcessor, (BoundCastExpression)node);
+                    break;
                 default:
                     throw new NotSupportedException($"Unexpected node kind {node.Kind}");
             }
@@ -1012,6 +1015,35 @@ namespace ProLang.Compiler
                 {
                     EmitInstruction(ilProcessor, OpCodes.Unbox_Any, GetTypeReference(toType));
                 }
+            }
+        }
+
+        private void EmitCastExpression(ILProcessor ilProcessor, BoundCastExpression node)
+        {
+            EmitExpression(ilProcessor, node.Expression);
+
+            var targetType = node.TargetType;
+
+            // Safe casting from 'any' type to target type
+            if (targetType == TypeSymbol.Int || targetType == TypeSymbol.Bool)
+            {
+                // Unbox from object to value type - throws InvalidCastException if type mismatch
+                EmitInstruction(ilProcessor, OpCodes.Unbox_Any, GetTypeReference(targetType));
+            }
+            else if (targetType == TypeSymbol.String)
+            {
+                // Cast to string - value is already object
+                EmitInstruction(ilProcessor, OpCodes.Isinst, GetTypeReference(targetType));
+            }
+            else if (targetType.Name == "array" || targetType.Name == "map")
+            {
+                // For collection types, just cast with isinst (reference types)
+                EmitInstruction(ilProcessor, OpCodes.Isinst, GetTypeReference(targetType));
+            }
+            else
+            {
+                // For other types (structs, etc.), use isinst
+                EmitInstruction(ilProcessor, OpCodes.Isinst, GetTypeReference(targetType));
             }
         }
 

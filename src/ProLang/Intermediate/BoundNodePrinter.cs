@@ -90,6 +90,9 @@ internal static class BoundNodePrinter
             case BoundNodeKind.BoundIndexAssignmentExpression:
                 WriteIndexAssignmentExpression((BoundIndexAssignmentExpression)node, writer);
                 break;
+            case BoundNodeKind.BoundCastExpression:
+                WriteCastExpression((BoundCastExpression)node, writer);
+                break;
             default:
                 throw new Exception($"Unexpected node {node.Kind}");
             break;
@@ -357,10 +360,19 @@ internal static class BoundNodePrinter
     private static void WriteConversionExpression(BoundConversionExpression node, IndentedTextWriter writer)
     {
         writer.WriteIdentifier(node.Type.Name);
-        
+
         writer.WritePunctuation("(");
         node.Expression.WriteTo(writer);
         writer.WritePunctuation(")");
+    }
+
+    private static void WriteCastExpression(BoundCastExpression node, IndentedTextWriter writer)
+    {
+        node.Expression.WriteTo(writer);
+        writer.Write(" ");
+        writer.WriteKeyword("as");
+        writer.Write(" ");
+        writer.WriteIdentifier(node.TargetType.Name);
     }
 
     private static void WriteReturnStatement(BoundReturnStatement node, IndentedTextWriter writer)
