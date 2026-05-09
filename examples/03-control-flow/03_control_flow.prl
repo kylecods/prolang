@@ -28,9 +28,10 @@ while(b <= 5){
 
 //for loops
 print("Testing for loops: ")
-let v = 0
-for(v = 1 to 10) {
-    print("For value: " + string(v))
+let lowerBound = 1
+let upBound = 10
+for(let v = lowerBound to upBound) {
+    print("For value: " + v)
 }
 
 //Break and continue

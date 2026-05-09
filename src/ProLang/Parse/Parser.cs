@@ -917,15 +917,39 @@ public sealed class Parser
     {
         var forKeyword = Match(SyntaxKind.ForKeyword);
         var openToken = Match(SyntaxKind.LeftParenthesisToken);
-        var identifier = Match(SyntaxKind.IdentifierToken);
-        var equalToken = Match(SyntaxKind.EqualsToken);
+
+        SyntaxToken identifier;
+        SyntaxToken equalToken;
+
+        // Check if this is a variable declaration: for(let i = 0 to 10)
+        if (Current.Kind == SyntaxKind.LetKeyword)
+        {
+            NextToken(); // consume 'let'
+            identifier = Match(SyntaxKind.IdentifierToken);
+
+            // Check for type annotation (optional): for(let i: int = 0 to 10)
+            if (Current.Kind == SyntaxKind.ColonToken)
+            {
+                NextToken(); // consume ':'
+                ParseTypeClause(); // parse and discard the type (we only care about the identifier)
+            }
+
+            equalToken = Match(SyntaxKind.EqualsToken);
+        }
+        else
+        {
+            // Original behavior: for(i = 0 to 10) where i is pre-declared
+            identifier = Match(SyntaxKind.IdentifierToken);
+            equalToken = Match(SyntaxKind.EqualsToken);
+        }
+
         var lowerBound = ParseExpression();
         var toKeyword = Match(SyntaxKind.ToKeyword);
         var upBound = ParseExpression();
         var closeToken = Match(SyntaxKind.RightParenthesisToken);
         var body = ParseProLangStatement();
 
-        return new ForStatementSyntax(_syntaxTree,forKeyword, openToken, identifier, equalToken, lowerBound, toKeyword, upBound,closeToken,
+        return new ForStatementSyntax(_syntaxTree, forKeyword, openToken, identifier, equalToken, lowerBound, toKeyword, upBound, closeToken,
             body);
     }
 
