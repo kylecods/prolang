@@ -97,15 +97,17 @@ internal sealed class Binder
 
         //Check for main/script with global statements
 
-        var functions = binder._scope.GetDeclaredFunctions();
+        var initialFunctions = binder._scope.GetDeclaredFunctions();
 
         FunctionSymbol mainFunction;
+        FunctionSymbol userMainFunction;  // Track the user-defined main before renaming to __UserMain
 
         FunctionSymbol scriptFunction;
 
         if (isScript)
         {
             mainFunction = null;
+            userMainFunction = null;
 
             if (globalStatements.Any())
             {
@@ -118,15 +120,62 @@ internal sealed class Binder
         }
         else
         {
-            mainFunction = functions.FirstOrDefault(f => f.Name == "main");
+            var userMain = initialFunctions.FirstOrDefault(f => f.Name == "main");
             scriptFunction = null;
 
-            if (mainFunction != null)
+            if (userMain != null)
             {
-                if (mainFunction.Type != TypeSymbol.Void || mainFunction.Parameters.Any())
+                // Validate main function signature:
+                // - Must return void
+                // - Must have 0 parameters OR 1 parameter of type array<string>
+                bool validSignature = userMain.Type == TypeSymbol.Void;
+
+                if (validSignature && userMain.Parameters.Any())
                 {
-                    binder.Diagnostics.ReportMainFunctionMustHaveCorrectSignature(mainFunction.Declaration.Identifier.Location);
+                    if (userMain.Parameters.Length != 1)
+                    {
+                        validSignature = false;
+                    }
+                    else
+                    {
+                        var param = userMain.Parameters[0];
+                        // Check if parameter is array<string>
+                        var arrayStringType = new TypeSymbol("array", ImmutableArray.Create(TypeSymbol.String));
+                        if (param.Type != arrayStringType)
+                        {
+                            validSignature = false;
+                        }
+                    }
                 }
+
+                if (!validSignature)
+                {
+                    binder.Diagnostics.ReportMainFunctionMustHaveCorrectSignature(userMain.Declaration.Identifier.Location);
+                }
+
+                // Create __UserMain symbol with the same signature as main
+                // This internal symbol will be the actual implementation
+                userMainFunction = new FunctionSymbol("__UserMain", userMain.Parameters, userMain.Type, userMain.Declaration);
+
+                // Remove the user's "main" from the scope and replace with "__UserMain"
+                // We need to update the scope to use __UserMain instead
+                binder._scope = new BoundScope(binder._scope.Parent);
+                foreach (var fn in initialFunctions)
+                {
+                    if (fn.Name != "main")
+                    {
+                        binder._scope.TryDeclareFunction(fn);
+                    }
+                }
+                binder._scope.TryDeclareFunction(userMainFunction);
+
+                // Now set mainFunction to the user's main (will track as __UserMain)
+                mainFunction = userMainFunction;
+            }
+            else
+            {
+                userMainFunction = null;
+                mainFunction = null;
             }
 
             if (globalStatements.Any())
@@ -135,18 +184,39 @@ internal sealed class Binder
                 {
                     binder.Diagnostics.ReportCannotMixMainAndGlobalStatements(mainFunction.Declaration.Identifier.Location);
 
-                    foreach (var globalStatement in firstGlobalStatementList)
+                    foreach (var globalStatement in globalStatements)
                     {
                         binder.Diagnostics.ReportCannotMixMainAndGlobalStatements(globalStatement.Location);
-
                     }
                 }
                 else
                 {
-                    mainFunction = new FunctionSymbol("main", ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Void, null);
+                    // Global statements without explicit main() - error
+                    // (they need to execute somewhere)
+                    binder.Diagnostics.ReportGlobalStatementsRequireMainFunction(globalStatements.First().Location);
                 }
             }
+            // If no global statements and no main(), it's a library - this is allowed
+            // Libraries can just define functions and types
         }
+
+        // Get the updated functions list (may now contain __UserMain instead of main)
+        var updatedFunctions = binder._scope.GetDeclaredFunctions();
+
+        // Create synthetic __Main entry point if we have a user main function
+        FunctionSymbol syntheticMainFunction = null;
+        if (!isScript && mainFunction != null)
+        {
+            // Create synthetic __Main that will be the actual entry point
+            // It takes string[] args from CLR but doesn't expose them to user
+            syntheticMainFunction = new FunctionSymbol("__Main", ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Void, null);
+
+            // Add synthetic __Main to scope and functions list
+            binder._scope.TryDeclareFunction(syntheticMainFunction);
+        }
+
+        // Get final functions list (now includes __Main if it exists)
+        var functions = binder._scope.GetDeclaredFunctions();
 
         var diagnostics = binder.Diagnostics.ToImmutableArray();
         var variables = binder._scope.GetDeclaredVariables();
@@ -157,7 +227,11 @@ internal sealed class Binder
             diagnostics = diagnostics.InsertRange(0, previous.Diagnostics);
         }
 
-        return new BoundGlobalScope(previous, diagnostics, mainFunction, scriptFunction, functions, variables, statements.ToImmutableArray(), structTypes, importedModules);
+        // Return the synthetic __Main as the main function (if it exists)
+        // This ensures the entry point is properly set to __Main
+        var finalMainFunction = syntheticMainFunction ?? mainFunction;
+
+        return new BoundGlobalScope(previous, diagnostics, finalMainFunction, scriptFunction, functions, variables, statements.ToImmutableArray(), structTypes, importedModules);
     }
 
     public static BoundProgram BindProgram(bool isScript, BoundProgram previous, BoundGlobalScope? globalScope)
@@ -170,9 +244,15 @@ internal sealed class Binder
 
         foreach (var function in globalScope.Functions)
         {
+            // Skip synthetic functions - they will be handled by the Emitter
+            if (function.Declaration == null)
+            {
+                continue;
+            }
+
             var binder = new Binder(isScript, parentScope, function);
 
-            var body = binder.BindStatement(function.Declaration!.Body);
+            var body = binder.BindStatement(function.Declaration.Body);
 
             var loweredBody = Lowerer.Lower(body);
 

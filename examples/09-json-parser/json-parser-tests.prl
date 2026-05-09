@@ -33,150 +33,155 @@ func parseJsonFile(filePath: string) : any {
     return parseJson(content)
 }
 
-// ============================================
-// TEST SUITE
-// ============================================
+func main()
+{
+    
+    // ============================================
+    // TEST SUITE
+    // ============================================
 
-print("=== ProLang JSON Parser - Test Suite ===")
-print("")
+    print("=== ProLang JSON Parser - Test Suite ===")
+    print("")
 
-// Test 1: Simple string
-print("Test 1: Parse String")
-let json_str = """" + "Hello World" + """"
-print("Input: " + json_str)
-let parsed_str = parseJson(json_str)
-print("Output: " + serializeValue(parsed_str))
-print("✓ Passed")
-print("")
+    // Test 1: Simple string
+    print("Test 1: Parse String")
+    let json_str = """" + "Hello World" + """"
+    print("Input: " + json_str)
+    let parsed_str = parseJson(json_str)
+    print("Output: " + serializeValue(parsed_str))
+    print("✓ Passed")
+    print("")
 
-// Test 2: Number
-print("Test 2: Parse Number")
-let json_num = "42"
-print("Input: " + json_num)
-let parsed_num = parseJson(json_num)
-print("Output: " + serializeValue(parsed_num))
-print("✓ Passed")
-print("")
+    // Test 2: Number
+    print("Test 2: Parse Number")
+    let json_num = "42"
+    print("Input: " + json_num)
+    let parsed_num = parseJson(json_num)
+    print("Output: " + serializeValue(parsed_num))
+    print("✓ Passed")
+    print("")
 
-// Test 3: Negative Number
-print("Test 3: Parse Negative Number")
-let json_neg = "-17"
-print("Input: " + json_neg)
-let parsed_neg = parseJson(json_neg)
-print("Output: " + serializeValue(parsed_neg))
-print("✓ Passed")
-print("")
+    // Test 3: Negative Number
+    print("Test 3: Parse Negative Number")
+    let json_neg = "-17"
+    print("Input: " + json_neg)
+    let parsed_neg = parseJson(json_neg)
+    print("Output: " + serializeValue(parsed_neg))
+    print("✓ Passed")
+    print("")
 
-// Test 4: Boolean true
-print("Test 4: Parse Boolean (true)")
-let json_bool_true = "true"
-print("Input: " + json_bool_true)
-let parsed_bool_true = parseJson(json_bool_true)
-print("Output: " + serializeValue(parsed_bool_true))
-print("✓ Passed")
-print("")
+    // Test 4: Boolean true
+    print("Test 4: Parse Boolean (true)")
+    let json_bool_true = "true"
+    print("Input: " + json_bool_true)
+    let parsed_bool_true = parseJson(json_bool_true)
+    print("Output: " + serializeValue(parsed_bool_true))
+    print("✓ Passed")
+    print("")
 
-// Test 5: Boolean false
-print("Test 5: Parse Boolean (false)")
-let json_bool_false = "false"
-print("Input: " + json_bool_false)
-let parsed_bool_false = parseJson(json_bool_false)
-print("Output: " + serializeValue(parsed_bool_false))
-print("✓ Passed")
-print("")
+    // Test 5: Boolean false
+    print("Test 5: Parse Boolean (false)")
+    let json_bool_false = "false"
+    print("Input: " + json_bool_false)
+    let parsed_bool_false = parseJson(json_bool_false)
+    print("Output: " + serializeValue(parsed_bool_false))
+    print("✓ Passed")
+    print("")
 
-// Test 6: Null
-print("Test 6: Parse Null")
-let json_null = "null"
-print("Input: " + json_null)
-let parsed_null = parseJson(json_null)
-print("Output: " + serializeValue(parsed_null))
-print("✓ Passed")
-print("")
+    // Test 6: Null
+    print("Test 6: Parse Null")
+    let json_null = "null"
+    print("Input: " + json_null)
+    let parsed_null = parseJson(json_null)
+    print("Output: " + serializeValue(parsed_null))
+    print("✓ Passed")
+    print("")
 
-// Test 7: Array
-print("Test 7: Parse Array")
-let json_array = "[1, 2, 3]"
-print("Input: " + json_array)
-let parsed_array = array(parseJson(json_array))
-let i : int = 0
-while(i < parsed_array.length()){
-    print("Parsed array " + i + " value: " + parsed_array[i])
-    i = i + 1
+    // Test 7: Array
+    print("Test 7: Parse Array")
+    let json_array = "[1, 2, 3]"
+    print("Input: " + json_array)
+    let parsed_array = array(parseJson(json_array))
+    let i : int = 0
+    while(i < parsed_array.length()){
+        print("Parsed array " + i + " value: " + parsed_array[i])
+        i = i + 1
+    }
+    print("✓ Passed")
+    print("")
+
+    // Test 8: Object
+    print("Test 8: Parse Object")
+    let json_obj = "{" + """" + "name" + """" + ": " + """" + "Alice" + """" + "}"
+    print("Input: " + json_obj)
+    let parsed_obj = parseJson(json_obj)
+    print("Output: " + serializeValue(parsed_obj))
+    print("✓ Passed")
+    print("")
+
+    // Test 9: Nested structure
+    print("Test 9: Parse Nested Structure")
+    let json_nested = "{" + """" + "user" + """" + ": {" + """" + "name" + """" + ": " + """" + "Bob" + """" + ", " + """" + "active" + """" + ": true}}"
+    print("Input: " + json_nested)
+    let parsed_nested = parseJson(json_nested)
+    print("Output: " + serializeValue(parsed_nested))
+    print("✓ Passed")
+    print("")
+
+    // Test 10: Complex nested structure
+    print("Test 10: Parse Complex Structure")
+    let json_complex = "[{" + """" + "id" + """" + ": 1, " + """" + "name" + """" + ": " + """" + "Alice" + """" + "}, {" + """" + "id" + """" + ": 2, " + """" + "name" + """" + ": " + """" + "Bob" + """" + "}]"
+    print("Input: " + json_complex)
+    let parsed_complex = parseJson(json_complex)
+    print("Output: " + serializeValue(parsed_complex))
+    print("✓ Passed")
+    print("")
+
+    print("=== Test Summary ===")
+    print("✅ All 13 tests passed!")
+    print("")
+    print("=== Serialization Tests (ProLang -> JSON) ===")
+    print("")
+
+    // Test 11: Serialize Typed Array to JSON
+    print("Test 11: Serialize Typed Array to JSON")
+    let typed_arr: array<int> = [10, 20, 30]
+    let json_from_arr = arrayToJson(typed_arr)
+    print("ProLang array: " + serializeValue(typed_arr))
+    print("JSON string: " + json_from_arr)
+    print("✓ Passed")
+    print("")
+
+    // Test 12: Roundtrip - Parse JSON to ProLang
+    print("Test 12: Deserialize JSON to ProLang Objects")
+    let original_json = "[5, 15, 25, 35]"
+    print("Original JSON: " + original_json)
+    let parsed = parseJson(original_json)
+    print("Parsed to ProLang: " + serializeValue(parsed))
+    print("Type at runtime: " + string(parsed))
+    print("✓ Passed")
+    print("")
+
+    // Test 13: Serialize Primitive Values
+    print("Test 13: Serialize Primitive Values")
+    let str_val = "hello"
+    let int_val = 42
+    let bool_val = true
+    print("String to JSON: " + jsonStringify(str_val))
+    print("Number to JSON: " + jsonStringify(int_val))
+    print("Boolean to JSON: " + jsonStringify(bool_val))
+    print("✓ Passed")
+    print("")
+
+    print("=== Notes on Value Access ===")
+    print("")
+    print("To access individual values from parsed JSON:")
+    print("1. Arrays: Use arr[index] notation to get elements")
+    print("2. Objects: Use obj[key] notation to get properties")
+    print("3. Nested: Use chaining like arr[0][key]")
+    print("")
+    print("To serialize ProLang objects back to JSON:")
+    print("Use jsonStringify() to convert values to JSON strings")
+    print("")
+
 }
-print("✓ Passed")
-print("")
-
-// Test 8: Object
-print("Test 8: Parse Object")
-let json_obj = "{" + """" + "name" + """" + ": " + """" + "Alice" + """" + "}"
-print("Input: " + json_obj)
-let parsed_obj = parseJson(json_obj)
-print("Output: " + serializeValue(parsed_obj))
-print("✓ Passed")
-print("")
-
-// Test 9: Nested structure
-print("Test 9: Parse Nested Structure")
-let json_nested = "{" + """" + "user" + """" + ": {" + """" + "name" + """" + ": " + """" + "Bob" + """" + ", " + """" + "active" + """" + ": true}}"
-print("Input: " + json_nested)
-let parsed_nested = parseJson(json_nested)
-print("Output: " + serializeValue(parsed_nested))
-print("✓ Passed")
-print("")
-
-// Test 10: Complex nested structure
-print("Test 10: Parse Complex Structure")
-let json_complex = "[{" + """" + "id" + """" + ": 1, " + """" + "name" + """" + ": " + """" + "Alice" + """" + "}, {" + """" + "id" + """" + ": 2, " + """" + "name" + """" + ": " + """" + "Bob" + """" + "}]"
-print("Input: " + json_complex)
-let parsed_complex = parseJson(json_complex)
-print("Output: " + serializeValue(parsed_complex))
-print("✓ Passed")
-print("")
-
-print("=== Test Summary ===")
-print("✅ All 13 tests passed!")
-print("")
-print("=== Serialization Tests (ProLang -> JSON) ===")
-print("")
-
-// Test 11: Serialize Typed Array to JSON
-print("Test 11: Serialize Typed Array to JSON")
-let typed_arr: array<int> = [10, 20, 30]
-let json_from_arr = arrayToJson(typed_arr)
-print("ProLang array: " + serializeValue(typed_arr))
-print("JSON string: " + json_from_arr)
-print("✓ Passed")
-print("")
-
-// Test 12: Roundtrip - Parse JSON to ProLang
-print("Test 12: Deserialize JSON to ProLang Objects")
-let original_json = "[5, 15, 25, 35]"
-print("Original JSON: " + original_json)
-let parsed = parseJson(original_json)
-print("Parsed to ProLang: " + serializeValue(parsed))
-print("Type at runtime: " + string(parsed))
-print("✓ Passed")
-print("")
-
-// Test 13: Serialize Primitive Values
-print("Test 13: Serialize Primitive Values")
-let str_val = "hello"
-let int_val = 42
-let bool_val = true
-print("String to JSON: " + jsonStringify(str_val))
-print("Number to JSON: " + jsonStringify(int_val))
-print("Boolean to JSON: " + jsonStringify(bool_val))
-print("✓ Passed")
-print("")
-
-print("=== Notes on Value Access ===")
-print("")
-print("To access individual values from parsed JSON:")
-print("1. Arrays: Use arr[index] notation to get elements")
-print("2. Objects: Use obj[key] notation to get properties")
-print("3. Nested: Use chaining like arr[0][key]")
-print("")
-print("To serialize ProLang objects back to JSON:")
-print("Use jsonStringify() to convert values to JSON strings")
-print("")

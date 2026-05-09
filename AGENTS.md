@@ -28,6 +28,18 @@
 - **.NET 10.0** or later (use `dotnet --version` to check)
 - **ProLang compiler** (built from source or pre-built)
 
+### Program Structure
+
+**Important**: All ProLang programs must have an explicit `main()` function. Global statements (code outside of functions) are not allowed.
+
+```prolang
+import "io"
+
+func main() {
+    print("Hello, World!")
+}
+```
+
 ### Compile a ProLang Program
 
 ```bash
@@ -316,9 +328,13 @@ Get-ChildItem -Path examples -Directory | ForEach-Object {
 **File**: `examples/hello/hello.prl`
 
 ```prolang
-print("Hello, World!")
-let x = 42
-print("The answer is: " + string(x))
+import "io"
+
+func main() {
+    print("Hello, World!")
+    let x = 42
+    print("The answer is: " + string(x))
+}
 ```
 
 **Run**:
@@ -332,6 +348,8 @@ dotnet hello.dll
 **File**: `examples/04-functions/functions.prl`
 
 ```prolang
+import "io"
+
 func factorial(n: int) : int {
     if(n <= 1) {
         return 1
@@ -339,7 +357,9 @@ func factorial(n: int) : int {
     return n * factorial(n - 1)
 }
 
-print("5! = " + string(factorial(5)))
+func main() {
+    print("5! = " + string(factorial(5)))
+}
 ```
 
 ### 3. Structs and Types
@@ -374,6 +394,128 @@ print(json_str)  // Output: [10, 20, 30]
 
 ---
 
+## Main Function & Entry Point
+
+### Executables vs Libraries
+
+ProLang supports two types of compilations:
+
+**Executables** (with `main()` function):
+- Requires an explicit `main()` function
+- Has an entry point and can be run directly with `dotnet program.dll`
+- Can have global statements if they're inside main()
+
+**Libraries** (without `main()` function):
+- No `main()` function needed
+- Defines functions, types, and structs for reuse
+- Cannot have global statements
+- Compiled as DLL but cannot be executed directly
+- Can be imported and used by other programs
+
+### Main Function in Executables
+
+Every executable program must define an explicit `main()` function. This is the entry point for program execution.
+
+#### Signature Variants
+
+**No arguments** (most common):
+```prolang
+func main() {
+    print("Program starts here")
+}
+```
+
+**With command-line arguments**:
+```prolang
+func main(args: array<string>) {
+    let argCount = length(args)
+    print("Received " + string(argCount) + " arguments")
+    
+    if argCount > 0 {
+        print("First argument: " + args[0])
+    }
+}
+```
+
+### Output Collection & Flushing
+
+All `print()` calls are collected internally and flushed to the console after `main()` completes. This ensures:
+- **Atomic output**: All output appears at once without interleaving
+- **Testability**: Output can be captured for testing
+- **Proper ordering**: Multiple `print()` calls maintain their order
+
+Example output behavior:
+```prolang
+func main() {
+    print("Line 1")
+    print("Line 2")
+    print("Line 3")
+}
+// Output:
+// Line 1
+// Line 2
+// Line 3
+```
+
+---
+
+## Creating Libraries
+
+Libraries in ProLang are files without a `main()` function. They define reusable functions, types, and structs:
+
+```prolang
+// math-lib.prl - A reusable library
+import "io"
+
+func add(a: int, b: int) : int {
+    return a + b
+}
+
+func multiply(a: int, b: int) : int {
+    return a * b
+}
+
+struct Point {
+    x: int,
+    y: int
+}
+
+func distance(p1: Point, p2: Point) : int {
+    // Simplified distance calculation
+    let dx = p1.x - p2.x
+    let dy = p1.y - p2.y
+    return dx + dy
+}
+```
+
+**Compile as library:**
+```bash
+dotnet run --project src/ProLang/ProLang.csproj -- math-lib.prl -o math-lib.dll
+```
+
+**Using the library from a program:**
+```prolang
+import "io"
+
+// Math functions available (would be imported in real scenario)
+func add(a: int, b: int) : int {
+    return a + b
+}
+
+func main() {
+    let result = add(10, 20)
+    print("Result: " + string(result))
+}
+```
+
+### Library Restrictions
+
+- ❌ **No `main()` function** - Libraries are not executable
+- ❌ **No global statements** - Code must be in functions
+- ✅ **Functions, types, and structs** - Libraries define reusable components
+
+---
+
 ## Troubleshooting
 
 ### Common Errors
@@ -402,6 +544,21 @@ dotnet run --project src/ProLang/ProLang.csproj -- \
 - Use properly typed variables when possible
 - For `any` types, use type detection before calling methods
 - Check type with `string(value)` to see the actual .NET type
+
+#### "All statements must be inside a main() function"
+
+**Cause**: Global statements (code outside of functions) are not allowed
+
+**Solution**:
+```prolang
+// WRONG - this will fail:
+print("Hello")
+
+// CORRECT - wrap in main():
+func main() {
+    print("Hello")
+}
+```
 
 #### "Cannot convert type 'any' to 'array<any>'"
 
@@ -446,6 +603,12 @@ dotnet minimal.dll
 ---
 
 ## Language Features
+
+### Program Organization
+
+ProLang supports **implicit program type detection**:
+- **Executable**: File with `main()` function → can be run with `dotnet program.dll`
+- **Library**: File without `main()` function → DLL for code reuse
 
 ### Type System
 
@@ -628,11 +791,19 @@ Output: [result]
 - ✅ Provides .NET interoperability
 - ✅ Has 9+ example programs
 - ✅ Works on Linux, macOS, Windows
+- ✅ Centralizes output through main() entry point
+- ✅ Supports command-line arguments via main() parameters
 
-**For Agents**: Use this guide to efficiently compile, test, and debug ProLang code. The compilation pipeline is well-structured and errors are generally clear about what needs fixing.
+**Key Requirements**:
+- All programs must have an explicit `main()` function
+- Global statements (code outside functions) are not allowed
+- `main()` can optionally accept `args: array<string>` for command-line arguments
+- All output is collected and flushed after main() completes
+
+**For Agents**: Use this guide to efficiently compile, test, and debug ProLang code. The compilation pipeline is well-structured and errors are generally clear about what needs fixing. Remember to always wrap code in an explicit `main()` function.
 
 ---
 
-**Last Updated**: 2026-05-07  
+**Last Updated**: 2026-05-09  
 **Compiler Version**: net10.0  
-**Status**: ✅ Production Ready
+**Status**: ✅ Production Ready (with centralized output & command-line argument support)

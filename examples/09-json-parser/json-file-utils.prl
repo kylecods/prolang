@@ -1,4 +1,5 @@
 import "io"
+import "fs"
 import "json-parser.prl"
 // JSON File Utilities - Read and parse JSON files from disk
 // Requires: json-parser.prl (parseJson function)
@@ -55,39 +56,43 @@ func getType(value: any) : string {
     return "unknown"
 }
 
-// ============================================
-// DEMO & USAGE
-// ============================================
+func main()
+{
+    
+    // ============================================
+    // DEMO & USAGE
+    // ============================================
 
-print("=== JSON File Utilities ===")
-print("")
-print("Usage:")
-print("  1. parseJsonFile(\"path/to/file.json\") - Load and parse JSON file")
-print("  2. readJsonFile(\"path/to/file.json\") - Just read file content")
-print("")
-print("Example:")
-print("  let data = parseJsonFile(\"data.json\")")
-print("  print(string(data))")
-print("")
+    print("=== JSON File Utilities ===")
+    print("")
+    print("Usage:")
+    // print("  1. parseJsonFile(\"path/to/file.json\") - Load and parse JSON file")
+    // print("  2. readJsonFile(\"path/to/file.json\") - Just read file content")
+    print("")
+    print("Example:")
+    // print("  let data = parseJsonFile(\"data.json\")")
+    print("  print(string(data))")
+    print("")
 
-// Test file operations
-print("Testing file utilities...")
-print("")
+    // Test file operations
+    print("Testing file utilities...")
+    print("")
 
-// Create a test to see if files can be read
-let testFile = "test.json"
-if(fileExists(testFile)) {
-    print("Found test.json - attempting to parse...")
-    let testData = parseJsonFile(testFile)
-    print("Parsed successfully")
-    print("Data: " + string(testData))
-} else {
-    print("test.json not found")
-    print("To use file reading:")
-    print("  1. Create a JSON file (e.g., data.json)")
-    print("  2. Call: parseJsonFile(\"data.json\")")
-    print("  3. Process the result")
+    // Create a test to see if files can be read
+    let testFile = "test.json"
+    if(fileExists(testFile)) {
+        print("Found test.json - attempting to parse...")
+        let testData = parseJsonFile(testFile)
+        print("Parsed successfully")
+        print("Data: " + string(testData))
+    } else {
+        print("test.json not found")
+        print("To use file reading:")
+        print("  1. Create a JSON file (e.g., data.json)")
+        // print("  2. Call: parseJsonFile(\"data.json\")")
+        print("  3. Process the result")
+    }
+
+    print("")
+    print("✅ JSON File Utilities Ready!")
 }
-
-print("")
-print("✅ JSON File Utilities Ready!")

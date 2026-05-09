@@ -1,0 +1,6 @@
+import "io"
+
+func main(args: array<string>) {
+    let count = length(args)
+    print("Arguments: " + string(count))
+}

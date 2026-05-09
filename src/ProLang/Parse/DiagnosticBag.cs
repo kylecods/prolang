@@ -207,7 +207,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportMainFunctionMustHaveCorrectSignature(TextLocation location)
     {
-        var message = "<main> must not take arguments and not return anything.";
+        var message = "<main> must return void and have either no parameters or a single parameter of type array<string>.";
 
         Report(location, message);
     }
@@ -271,6 +271,12 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportCircularImport(TextLocation location, string path)
     {
         var message = $"Circular import detected for '{path}'.";
+        Report(location, message);
+    }
+
+    public void ReportGlobalStatementsRequireMainFunction(TextLocation location)
+    {
+        var message = "All statements must be inside a main() function. Global statements are not allowed without an explicit main() definition.";
         Report(location, message);
     }
 }

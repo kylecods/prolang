@@ -1,3 +1,0 @@
-func arrays() : array<int> {
-    return [1,2,3]
-}

@@ -1,0 +1,11 @@
+import "io"
+
+func helper() {
+    print("From helper")
+}
+
+func main() {
+    print("Before")
+    helper()
+    print("After")
+}

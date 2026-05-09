@@ -27,6 +27,13 @@ namespace ProLang.Compiler
         private readonly MethodReference _minReference;
         private readonly MethodReference _maxReference;
 
+        // Output infrastructure for centralized output collection
+        private MethodReference? _outputInitMethod;
+        private MethodReference? _outputAppendMethod;
+        private MethodReference? _outputFlushMethod;
+        private FieldDefinition? _outputField;
+        private bool _outputInfrastructureGenerated = false;
+
         private MethodReference? _listAddMethod;
         private MethodReference? _listRemoveAtMethod;
         private MethodReference? _listGetCountMethod;
@@ -441,6 +448,10 @@ namespace ProLang.Compiler
 
             _assemblyDefinition.MainModule.Types.Add(_typeDefinition);
 
+            // Emit output collection infrastructure for all assemblies
+            // (libraries may have functions that use print())
+            EmitOutputHelpers();
+
             foreach (var structType in program.StructTypes)
             {
                 EmitStructType(structType);
@@ -448,12 +459,26 @@ namespace ProLang.Compiler
 
             foreach (var functionWithBody in program.Functions)
             {
-                EmitFunctionDeclaration(functionWithBody.Key);
+                // Skip synthetic functions - they will be emitted separately
+                if (functionWithBody.Key.Declaration != null)
+                {
+                    EmitFunctionDeclaration(functionWithBody.Key);
+                }
             }
 
             foreach (var functionWithBody in program.Functions)
             {
-                EmitFunctionBody(functionWithBody.Key, functionWithBody.Value);
+                // Skip synthetic functions - they will be emitted separately
+                if (functionWithBody.Key.Declaration != null)
+                {
+                    EmitFunctionBody(functionWithBody.Key, functionWithBody.Value);
+                }
+            }
+
+            // Emit synthetic __Main entry point if we have a main function
+            if (program.MainFunction != null && program.MainFunction.Name == "__Main")
+            {
+                EmitSyntheticMainMethod(program);
             }
 
             if (program.MainFunction != null)
@@ -482,6 +507,136 @@ namespace ProLang.Compiler
             }
 
             return _diagnostics.ToImmutableArray();
+        }
+
+        private void EmitOutputHelpers()
+        {
+            if (_outputInfrastructureGenerated)
+                return;
+
+            // Create the static StringBuilder field to hold accumulated output
+            var stringBuilderType = ResolveType("System.Text.StringBuilder");
+            _outputField = new FieldDefinition("__output",
+                FieldAttributes.Static | FieldAttributes.Private,
+                stringBuilderType);
+            _typeDefinition.Fields.Add(_outputField);
+
+            // Resolve necessary types and methods
+            var voidType = GetTypeReference(TypeSymbol.Void);
+            var stringType = GetTypeReference(TypeSymbol.String);
+
+            // Create __InitializeOutput() method
+            var initMethod = new MethodDefinition("__InitializeOutput",
+                CecilMethodAttributes.Static | CecilMethodAttributes.Private,
+                voidType);
+            var initIL = initMethod.Body.GetILProcessor();
+
+            // IL: __output = new StringBuilder();
+            var sbConstructor = ResolveMethod("System.Text.StringBuilder", ".ctor", Array.Empty<string>());
+            EmitInstruction(initIL, OpCodes.Newobj, sbConstructor);
+            EmitInstruction(initIL, OpCodes.Stsfld, _outputField);
+            EmitInstruction(initIL, OpCodes.Ret);
+
+            initMethod.Body.OptimizeMacros();
+            _typeDefinition.Methods.Add(initMethod);
+            _outputInitMethod = initMethod;
+
+            // Create __AppendToOutput(string value) method
+            var appendMethod = new MethodDefinition("__AppendToOutput",
+                CecilMethodAttributes.Static | CecilMethodAttributes.Private,
+                voidType);
+            appendMethod.Parameters.Add(new ParameterDefinition("value",
+                CecilParameterAttributes.None,
+                stringType));
+
+            var appendIL = appendMethod.Body.GetILProcessor();
+
+            // IL: __output.AppendLine(value);
+            // This preserves the behavior of Console.WriteLine() which adds a newline
+            var sbAppendLineMethod = ResolveMethod("System.Text.StringBuilder", "AppendLine", new[] { "System.String" });
+            EmitInstruction(appendIL, OpCodes.Ldsfld, _outputField);
+            EmitInstruction(appendIL, OpCodes.Ldarg_0);  // Load the value parameter
+            EmitInstruction(appendIL, OpCodes.Callvirt, sbAppendLineMethod);
+            EmitInstruction(appendIL, OpCodes.Pop);  // Pop the StringBuilder return value
+            EmitInstruction(appendIL, OpCodes.Ret);
+
+            appendMethod.Body.OptimizeMacros();
+            _typeDefinition.Methods.Add(appendMethod);
+            _outputAppendMethod = appendMethod;
+
+            // Create __FlushOutput() method
+            var flushMethod = new MethodDefinition("__FlushOutput",
+                CecilMethodAttributes.Static | CecilMethodAttributes.Private,
+                voidType);
+
+            var flushIL = flushMethod.Body.GetILProcessor();
+
+            // IL: Console.WriteLine(__output.ToString());
+            var toStringMethod = ResolveMethod("System.Text.StringBuilder", "ToString", Array.Empty<string>());
+            EmitInstruction(flushIL, OpCodes.Ldsfld, _outputField);
+            EmitInstruction(flushIL, OpCodes.Callvirt, toStringMethod);
+            EmitInstruction(flushIL, OpCodes.Call, _consoleWriteLineReference);
+            EmitInstruction(flushIL, OpCodes.Ret);
+
+            flushMethod.Body.OptimizeMacros();
+            _typeDefinition.Methods.Add(flushMethod);
+            _outputFlushMethod = flushMethod;
+
+            _outputInfrastructureGenerated = true;
+        }
+
+        private void EmitSyntheticMainMethod(BoundProgram program)
+        {
+            // Find the __UserMain function
+            var userMainFunction = program.Functions.Keys.FirstOrDefault(f => f.Name == "__UserMain");
+            if (userMainFunction == null)
+                return;
+
+            var voidType = GetTypeReference(TypeSymbol.Void);
+            var stringType = ResolveType("System.String");
+            var stringArrayType = stringType?.MakeArrayType();
+
+            // Create __Main(string[] args) method
+            var mainMethod = new MethodDefinition("__Main",
+                CecilMethodAttributes.Static | CecilMethodAttributes.Public,
+                voidType);
+
+            // Add string[] args parameter
+            mainMethod.Parameters.Add(new ParameterDefinition("args",
+                CecilParameterAttributes.None,
+                stringArrayType));
+
+            var ilProcessor = mainMethod.Body.GetILProcessor();
+
+            // 1. Call __InitializeOutput()
+            EmitInstruction(ilProcessor, OpCodes.Call, _outputInitMethod);
+
+            // 2. Prepare to call __UserMain
+            // If __UserMain expects args, pass the string[] directly
+            // If __UserMain takes no args, don't pass anything
+
+            if (userMainFunction.Parameters.Any())
+            {
+                // __UserMain expects array<string> parameter - pass args directly
+                // (string[] from CLR maps directly to array<string> in ProLang IL)
+                EmitInstruction(ilProcessor, OpCodes.Ldarg_0);  // Load args parameter
+                EmitInstruction(ilProcessor, OpCodes.Call, _methods[userMainFunction]);
+            }
+            else
+            {
+                // __UserMain takes no parameters - just call it
+                EmitInstruction(ilProcessor, OpCodes.Call, _methods[userMainFunction]);
+            }
+
+            // 3. Call __FlushOutput() to print accumulated output
+            EmitInstruction(ilProcessor, OpCodes.Call, _outputFlushMethod);
+
+            // 4. Return void
+            EmitInstruction(ilProcessor, OpCodes.Ret);
+
+            mainMethod.Body.OptimizeMacros();
+            _typeDefinition.Methods.Add(mainMethod);
+            _methods[program.MainFunction] = mainMethod;
         }
 
         private void EmitFunctionDeclaration(FunctionSymbol function)
@@ -873,7 +1028,8 @@ namespace ProLang.Compiler
             }
             else if (node.Function == BuiltInFunctions.Print)
             {
-                EmitInstruction(ilProcessor, OpCodes.Call, _consoleWriteLineReference);
+                // Route print() through output collection infrastructure
+                EmitInstruction(ilProcessor, OpCodes.Call, _outputAppendMethod);
             }
             else if (node.Function == BuiltInFunctions.Min)
             {

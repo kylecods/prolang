@@ -6,12 +6,13 @@ import "io"
 import "dotnet:System"
 import "csharp_fibonacci.prl"
 
-let guid: string = Guid.NewGuid()
-print("New Guid: " + guid)
+func main()
+{
+    let guid: string = Guid.NewGuid()
+    print("New Guid: " + guid)
 
-//Custom method from Csharp assembly
+    //Custom method from Csharp assembly
+    let result: int = Fibonacci.Factorial(5)//we expect 120
 
-let result: int = Fibonacci.Factorial(5)//we expect 120
-
-print("Factorial of 5 is: " + result)
-
+    print("Factorial of 5 is: " + result)
+}
