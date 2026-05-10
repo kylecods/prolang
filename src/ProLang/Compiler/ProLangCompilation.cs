@@ -240,6 +240,8 @@ public sealed class ProLangCompilation
         return Binder.BindProgram(IsScript, previous, GlobalScope);
     }
 
+    public BoundProgram GetBoundProgram() => GetProgram();
+
     public void EmitTree(TextWriter writer)
     {
         if (GlobalScope.MainFunction != null)

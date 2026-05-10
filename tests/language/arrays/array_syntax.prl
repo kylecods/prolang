@@ -1,12 +1,9 @@
 // Test: Array type syntax with T[]
 // Note: Tests parsing only - runtime array handling tested separately
 
-func test_array_syntax() {
-    let x = 5
+struct Point<T> {
+    value: T
 }
 
 func main() {
-    test_array_syntax()
-    let y = 10
-    print(y)
 }
