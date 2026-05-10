@@ -185,6 +185,17 @@ public sealed class ProLangCompilation
                     }
                 }
 
+                // Try the std/ directory next to the compiler executable
+                if (resolvedPath == null)
+                {
+                    var stdDir = Path.Combine(AppContext.BaseDirectory, "std");
+                    var stdName = importPath.EndsWith(".prl", StringComparison.OrdinalIgnoreCase)
+                        ? importPath : importPath + ".prl";
+                    var candidate = Path.GetFullPath(Path.Combine(stdDir, stdName));
+                    if (File.Exists(candidate))
+                        resolvedPath = candidate;
+                }
+
                 if (resolvedPath == null)
                 {
                     diagnostics.Add(new Diagnostic(import.PathToken.Location,

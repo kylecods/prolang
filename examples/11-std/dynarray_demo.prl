@@ -1,4 +1,5 @@
 import "io"
+import "dynarray"
 
 func main() {
     let arr = dynarray_new<int>(4)
