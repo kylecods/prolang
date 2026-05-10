@@ -5,15 +5,20 @@ namespace ProLang.Syntax;
 
 internal sealed class StructCreationExpressionSyntax : ExpressionSyntax
 {
-    public StructCreationExpressionSyntax(SyntaxTree syntaxTree, SyntaxToken typeName, SyntaxToken openCurlyToken, ImmutableArray<FieldInitializerSyntax> initializers, SyntaxToken closeCurlyToken) : base(syntaxTree)
+    public StructCreationExpressionSyntax(SyntaxTree syntaxTree, SyntaxToken typeName,
+        ImmutableArray<TypeSyntax> typeArguments,
+        SyntaxToken openCurlyToken, ImmutableArray<FieldInitializerSyntax> initializers,
+        SyntaxToken closeCurlyToken) : base(syntaxTree)
     {
         TypeName = typeName;
+        TypeArguments = typeArguments;
         OpenCurlyToken = openCurlyToken;
         Initializers = initializers;
         CloseCurlyToken = closeCurlyToken;
     }
 
     public SyntaxToken TypeName { get; }
+    public ImmutableArray<TypeSyntax> TypeArguments { get; }
     public SyntaxToken OpenCurlyToken { get; }
     public ImmutableArray<FieldInitializerSyntax> Initializers { get; }
     public SyntaxToken CloseCurlyToken { get; }

@@ -142,16 +142,27 @@ public sealed class Parser
     {
         var functionKeyword = Match(SyntaxKind.FunctionKeyword);
         var identifier = Match(SyntaxKind.IdentifierToken);
+
+        SyntaxToken? lessThanToken = null;
+        var typeParameters = new SeparatedSyntaxList<SyntaxToken>(ImmutableArray<SyntaxNode>.Empty);
+        SyntaxToken? greaterThanToken = null;
+
+        if (Current.Kind == SyntaxKind.LessThanToken)
+        {
+            lessThanToken = Match(SyntaxKind.LessThanToken);
+            typeParameters = ParseTypeParameterList();
+            greaterThanToken = Match(SyntaxKind.GreaterThanToken);
+        }
+
         var openParenthesisToken = Match(SyntaxKind.LeftParenthesisToken);
         var parameters = ParseParameterList();
-
         var closeParenthesisToken = Match(SyntaxKind.RightParenthesisToken);
-
         var type = ParseOptionalTypeClause();
         var body = ParseBlockStatement();
 
-        return new FunctionDeclarationSyntax(_syntaxTree,functionKeyword, identifier, openParenthesisToken, parameters,
-            closeParenthesisToken, type, (BlockStatementSyntax)body);
+        return new FunctionDeclarationSyntax(_syntaxTree, functionKeyword, identifier,
+            lessThanToken, typeParameters, greaterThanToken,
+            openParenthesisToken, parameters, closeParenthesisToken, type, (BlockStatementSyntax)body);
     }
 
     private StructDeclarationSyntax ParseStructDeclaration()
@@ -615,6 +626,11 @@ public sealed class Parser
                 {
                     return ParseStructCreationExpression();
                 }
+                if (Peek(1).Kind == SyntaxKind.LessThanToken
+                    && LookAheadGenericEnd(SyntaxKind.LeftCurlyToken, out _))
+                {
+                    return ParseStructCreationExpression();
+                }
                 return ParsePostFixExpression();
             default:
                 return ParsePostFixExpression();
@@ -665,6 +681,15 @@ public sealed class Parser
     private StructCreationExpressionSyntax ParseStructCreationExpression()
     {
         var typeName = Match(SyntaxKind.IdentifierToken);
+
+        var typeArguments = ImmutableArray<TypeSyntax>.Empty;
+        if (Current.Kind == SyntaxKind.LessThanToken)
+        {
+            Match(SyntaxKind.LessThanToken);
+            typeArguments = ParseTypeArgumentList();
+            Match(SyntaxKind.GreaterThanToken);
+        }
+
         var openCurlyToken = Match(SyntaxKind.LeftCurlyToken);
 
         var initializers = ImmutableArray.CreateBuilder<FieldInitializerSyntax>();
@@ -690,7 +715,7 @@ public sealed class Parser
 
         var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
 
-        return new StructCreationExpressionSyntax(_syntaxTree, typeName, openCurlyToken, initializers.ToImmutable(), closeCurlyToken);
+        return new StructCreationExpressionSyntax(_syntaxTree, typeName, typeArguments, openCurlyToken, initializers.ToImmutable(), closeCurlyToken);
     }
 
     private SeparatedSyntaxList<MapEntrySyntax> ParseMapEntries()
@@ -769,21 +794,71 @@ public sealed class Parser
     private ExpressionSyntax ParseNameOrCallExpression()
     {
         if (Peek(0).Kind == SyntaxKind.IdentifierToken && Peek(1).Kind == SyntaxKind.LeftParenthesisToken)
-        {
             return ParseCallExpression();
-        }
+
+        if (Peek(0).Kind == SyntaxKind.IdentifierToken && Peek(1).Kind == SyntaxKind.LessThanToken
+            && LookAheadGenericEnd(SyntaxKind.LeftParenthesisToken, out _))
+            return ParseCallExpression();
 
         return ParseNameExpression();
+    }
+
+    // Returns true if: after current identifier + '<', there is a balanced '>' followed by 'followedBy'
+    private bool LookAheadGenericEnd(SyntaxKind followedBy, out int closeOffset)
+    {
+        closeOffset = 0;
+        int i = 2; // skip identifier(0) and '<'(1)
+        int depth = 1;
+        while (true)
+        {
+            var kind = Peek(i).Kind;
+            if (kind == SyntaxKind.EofToken) return false;
+            if (kind == SyntaxKind.LessThanToken) depth++;
+            else if (kind == SyntaxKind.GreaterThanToken)
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    closeOffset = i;
+                    return Peek(i + 1).Kind == followedBy;
+                }
+            }
+            i++;
+            if (i > 32) return false; // safety limit
+        }
     }
 
     private ExpressionSyntax ParseCallExpression()
     {
         var identifier = Match(SyntaxKind.IdentifierToken);
+
+        var typeArguments = ImmutableArray<TypeSyntax>.Empty;
+        if (Current.Kind == SyntaxKind.LessThanToken)
+        {
+            Match(SyntaxKind.LessThanToken);
+            typeArguments = ParseTypeArgumentList();
+            Match(SyntaxKind.GreaterThanToken);
+        }
+
         var openParenthesisToken = Match(SyntaxKind.LeftParenthesisToken);
         var arguments = ParseArguments();
         var closeParenthesisToken = Match(SyntaxKind.RightParenthesisToken);
 
-        return new CallExpressionSyntax(_syntaxTree,identifier,openParenthesisToken ,arguments, closeParenthesisToken);
+        return new CallExpressionSyntax(_syntaxTree, identifier, typeArguments, openParenthesisToken, arguments, closeParenthesisToken);
+    }
+
+    private ImmutableArray<TypeSyntax> ParseTypeArgumentList()
+    {
+        var args = ImmutableArray.CreateBuilder<TypeSyntax>();
+        while (Current.Kind != SyntaxKind.GreaterThanToken && Current.Kind != SyntaxKind.EofToken)
+        {
+            args.Add(ParseTypeSyntax());
+            if (Current.Kind == SyntaxKind.CommaToken)
+                NextToken();
+            else
+                break;
+        }
+        return args.ToImmutable();
     }
 
     private SeparatedSyntaxList<ExpressionSyntax> ParseArguments()

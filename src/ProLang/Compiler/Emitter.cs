@@ -34,9 +34,6 @@ namespace ProLang.Compiler
         private FieldDefinition? _outputField;
         private bool _outputInfrastructureGenerated = false;
 
-        private MethodReference? _listAddMethod;
-        private MethodReference? _listRemoveAtMethod;
-        private MethodReference? _listGetCountMethod;
 
         private readonly TypeReference _listType;
         private readonly TypeReference _dictionaryType;
@@ -47,7 +44,8 @@ namespace ProLang.Compiler
 
         private Dictionary<VariableSymbol, VariableDefinition> _locals = new();
 
-        private Dictionary<StructSymbol, TypeDefinition> _structTypes = new();
+        // Keyed by struct name so concrete instantiations (DynArray<int>) are deduplicated by name.
+        private Dictionary<string, TypeDefinition> _structTypes = new(StringComparer.Ordinal);
 
         private TypeDefinition _typeDefinition;
 
@@ -341,9 +339,15 @@ namespace ProLang.Compiler
             if (_knownTypes.TryGetValue(type, out var typeReference))
                 return typeReference;
 
-            if (type is StructSymbol structType && _structTypes.TryGetValue(structType, out var structTypeDef))
+            if (type is StructSymbol structType)
             {
-                var structTypeRef = _assemblyDefinition.MainModule.ImportReference(structTypeDef);
+                if (!_structTypes.TryGetValue(structType.Name, out var structTypeDef))
+                {
+                    // Lazily emit instantiated generic struct types encountered during emission.
+                    EmitStructType(structType);
+                    _structTypes.TryGetValue(structType.Name, out structTypeDef);
+                }
+                var structTypeRef = _assemblyDefinition.MainModule.ImportReference(structTypeDef!);
                 _knownTypes.Add(type, structTypeRef);
                 return structTypeRef;
             }
@@ -359,7 +363,7 @@ namespace ProLang.Compiler
                     "int" => GetCachedType("System.Int32"),
                     "string" => GetCachedType("System.String"),
                     "void" => GetCachedType("System.Void"),
-                    "array" => _listType.MakeGenericInstanceType(GetCachedType("System.Object")),
+                    "array" => new ArrayType(GetCachedType("System.Object")),
                     "map" => _dictionaryType.MakeGenericInstanceType(GetCachedType("System.Object"), GetCachedType("System.Object")),
                     _ => throw new Exception($"Unexpected type {type.Name}")
                 };
@@ -369,7 +373,7 @@ namespace ProLang.Compiler
                 if (type.Name == "array")
                 {
                     var elementType = GetTypeReference(type.TypeArguments[0]);
-                    resolved = _listType.MakeGenericInstanceType(elementType);
+                    resolved = new ArrayType(elementType);
                 }
                 else if (type.Name == "map")
                 {
@@ -419,7 +423,7 @@ namespace ProLang.Compiler
             }
 
             _assemblyDefinition.MainModule.Types.Add(typeDef);
-            _structTypes.Add(structSymbol, typeDef);
+            _structTypes[structSymbol.Name] = typeDef;
         }
 
         public static ImmutableArray<Diagnostic> Emit(BoundProgram program, string moduleName, string[] references, string outputPath)
@@ -454,6 +458,8 @@ namespace ProLang.Compiler
 
             foreach (var structType in program.StructTypes)
             {
+                // Skip generic templates — only concrete instantiations are emitted
+                if (structType.IsGeneric) continue;
                 EmitStructType(structType);
             }
 
@@ -883,6 +889,9 @@ namespace ProLang.Compiler
                 case BoundNodeKind.BoundCastExpression:
                     EmitCastExpression(ilProcessor, (BoundCastExpression)node);
                     break;
+                case BoundNodeKind.BoundArrayNewExpression:
+                    EmitArrayNewExpression(ilProcessor, (BoundArrayNewExpression)node);
+                    break;
                 default:
                     throw new NotSupportedException($"Unexpected node kind {node.Kind}");
             }
@@ -890,28 +899,48 @@ namespace ProLang.Compiler
 
         private void EmitIndexAssignmentExpression(ILProcessor ilProcessor, BoundIndexAssignmentExpression node)
         {
-            EmitExpression(ilProcessor, node.LHS);
-            EmitExpression(ilProcessor, node.Index);
-            EmitExpression(ilProcessor, node.RHS);
-
-            var collectionType = GetTypeReference(node.LHS.Type);
-            var setMethod = GetGenericMethod(collectionType, "set_Item", 2);
-
-            EmitInstruction(ilProcessor, OpCodes.Callvirt, setMethod);
-            
-            // Push a dummy value because the expression is expected to return something
-            EmitInstruction(ilProcessor, OpCodes.Ldnull); 
+            if (node.LHS.Type.Name == "array")
+            {
+                var elementTypeRef = node.LHS.Type.TypeArguments.Length > 0
+                    ? GetTypeReference(node.LHS.Type.TypeArguments[0])
+                    : GetCachedType("System.Object");
+                EmitExpression(ilProcessor, node.LHS);
+                EmitExpression(ilProcessor, node.Index);
+                EmitExpression(ilProcessor, node.RHS);
+                EmitStelemForType(ilProcessor, elementTypeRef);
+                // stelem is void; push null as dummy return value
+                EmitInstruction(ilProcessor, OpCodes.Ldnull);
+            }
+            else
+            {
+                EmitExpression(ilProcessor, node.LHS);
+                EmitExpression(ilProcessor, node.Index);
+                EmitExpression(ilProcessor, node.RHS);
+                var collectionType = GetTypeReference(node.LHS.Type);
+                var setMethod = GetGenericMethod(collectionType, "set_Item", 2);
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, setMethod);
+                EmitInstruction(ilProcessor, OpCodes.Ldnull);
+            }
         }
 
         private void EmitIndexExpression(ILProcessor ilProcessor, BoundIndexExpression node)
         {
             EmitExpression(ilProcessor, node.Expression);
             EmitExpression(ilProcessor, node.Index);
-            
-            var collectionType = GetTypeReference(node.Expression.Type);
-            var getMethod = GetGenericMethod(collectionType, "get_Item", 1);
-            
-            EmitInstruction(ilProcessor, OpCodes.Callvirt, getMethod);
+
+            if (node.Expression.Type.Name == "array")
+            {
+                var elementTypeRef = node.Expression.Type.TypeArguments.Length > 0
+                    ? GetTypeReference(node.Expression.Type.TypeArguments[0])
+                    : GetCachedType("System.Object");
+                EmitLdelemForType(ilProcessor, elementTypeRef);
+            }
+            else
+            {
+                var collectionType = GetTypeReference(node.Expression.Type);
+                var getMethod = GetGenericMethod(collectionType, "get_Item", 1);
+                EmitInstruction(ilProcessor, OpCodes.Callvirt, getMethod);
+            }
         }
 
         private void EmitMapExpression(ILProcessor ilProcessor, BoundMapExpression node)
@@ -972,19 +1001,45 @@ namespace ProLang.Compiler
 
         private void EmitArrayExpression(ILProcessor ilProcessor, BoundArrayExpression node)
         {
-            var arrayType = GetTypeReference(node.Type);
-            var constructor = GetGenericMethod(arrayType, ".ctor", 0);
-            var addMethod = GetGenericMethod(arrayType, "Add", 1);
+            var elementTypeRef = node.Type.TypeArguments.Length > 0
+                ? GetTypeReference(node.Type.TypeArguments[0])
+                : GetCachedType("System.Object");
 
-            EmitInstruction(ilProcessor, OpCodes.Newobj, constructor);
-            foreach (var element in node.Elements)
+            EmitInstruction(ilProcessor, OpCodes.Ldc_I4, node.Elements.Length);
+            EmitInstruction(ilProcessor, OpCodes.Newarr, elementTypeRef);
+
+            for (int i = 0; i < node.Elements.Length; i++)
             {
                 EmitInstruction(ilProcessor, OpCodes.Dup);
-                EmitExpression(ilProcessor, element);
-                EmitInstruction(ilProcessor, OpCodes.Callvirt, addMethod);
-                // List<T>.Add returns void, unlike ArrayList.Add which returns int.
-                // So no need to pop here.
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I4, i);
+                EmitExpression(ilProcessor, node.Elements[i]);
+                EmitStelemForType(ilProcessor, elementTypeRef);
             }
+        }
+
+        private void EmitArrayNewExpression(ILProcessor ilProcessor, BoundArrayNewExpression node)
+        {
+            var elementTypeRef = GetTypeReference(node.ElementType);
+            EmitExpression(ilProcessor, node.SizeExpression);
+            EmitInstruction(ilProcessor, OpCodes.Newarr, elementTypeRef);
+        }
+
+        private void EmitStelemForType(ILProcessor ilProcessor, TypeReference elementType)
+        {
+            var fullName = elementType.FullName;
+            if (fullName == "System.Int32" || fullName == "System.Boolean")
+                ilProcessor.Emit(OpCodes.Stelem_I4);
+            else
+                ilProcessor.Emit(OpCodes.Stelem_Ref);
+        }
+
+        private void EmitLdelemForType(ILProcessor ilProcessor, TypeReference elementType)
+        {
+            var fullName = elementType.FullName;
+            if (fullName == "System.Int32" || fullName == "System.Boolean")
+                ilProcessor.Emit(OpCodes.Ldelem_I4);
+            else
+                ilProcessor.Emit(OpCodes.Ldelem_Ref);
         }
 
         private void EmitConversionExpression(ILProcessor ilProcessor, BoundConversionExpression node)
@@ -1071,48 +1126,11 @@ namespace ProLang.Compiler
             {
                 EmitInstruction(ilProcessor, OpCodes.Call, _maxReference);
             }
-            else if (node.Function == BuiltInFunctions.Push)
+            else if (node.Function == BuiltInFunctions.ArrayLength)
             {
-                var listType = GetTypeReference(TypeSymbol.Array);
-                _listAddMethod ??= GetGenericMethod(listType, "Add", 1);
-                EmitInstruction(ilProcessor, OpCodes.Callvirt, _listAddMethod);
-            }
-            else if (node.Function == BuiltInFunctions.Pop)
-            {
-                var listType = GetTypeReference(TypeSymbol.Array);
-                _listRemoveAtMethod ??= GetGenericMethod(listType, "RemoveAt", 1);
-                _listGetCountMethod ??= GetGenericMethod(listType, "get_Count", 0);
-
-                var local = new VariableDefinition(listType);
-                ilProcessor.Body.Variables.Add(local);
-                EmitInstruction(ilProcessor, OpCodes.Stloc, local);
-
-                // get last element
-                EmitInstruction(ilProcessor, OpCodes.Ldloc, local);
-                EmitInstruction(ilProcessor, OpCodes.Ldloc, local);
-                EmitInstruction(ilProcessor, OpCodes.Callvirt, _listGetCountMethod);
-                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_1);
-                EmitInstruction(ilProcessor, OpCodes.Sub);
-                EmitInstruction(ilProcessor, OpCodes.Callvirt, GetGenericMethod(listType, "get_Item", 1));
-
-                // remove last element
-                EmitInstruction(ilProcessor, OpCodes.Ldloc, local);
-                EmitInstruction(ilProcessor, OpCodes.Ldloc, local);
-                EmitInstruction(ilProcessor, OpCodes.Callvirt, _listGetCountMethod);
-                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_1);
-                EmitInstruction(ilProcessor, OpCodes.Sub);
-                EmitInstruction(ilProcessor, OpCodes.Callvirt, _listRemoveAtMethod);
-            }
-            else if (node.Function == BuiltInFunctions.GetAt)
-            {
-                var listType = GetTypeReference(TypeSymbol.Array);
-                EmitInstruction(ilProcessor, OpCodes.Callvirt, GetGenericMethod(listType, "get_Item", 1));
-            }
-            else if (node.Function == BuiltInFunctions.Length)
-            {
-                var listType = GetTypeReference(TypeSymbol.Array);
-                _listGetCountMethod ??= GetGenericMethod(listType, "get_Count", 0);
-                EmitInstruction(ilProcessor, OpCodes.Callvirt, _listGetCountMethod);
+                // arr is already on stack (first argument); emit ldlen + conv.i4
+                EmitInstruction(ilProcessor, OpCodes.Ldlen);
+                ilProcessor.Emit(OpCodes.Conv_I4);
             }
             else if (node.Function == BuiltInFunctions.StringLength)
             {
@@ -1652,7 +1670,7 @@ namespace ProLang.Compiler
         private void EmitStructCreationExpression(ILProcessor ilProcessor, BoundStructCreationExpression node)
         {
             var structSymbol = node.StructType;
-            var typeDef = _structTypes[structSymbol];
+            var typeDef = _structTypes[structSymbol.Name];
             var typeRef = _assemblyDefinition.MainModule.ImportReference(typeDef);
 
             var localVar = new VariableDefinition(typeRef);
@@ -1684,7 +1702,7 @@ namespace ProLang.Compiler
             EmitExpression(ilProcessor, node.Expression);
 
             var structSymbol = (StructSymbol)node.Expression.Type;
-            var typeDef = _structTypes[structSymbol];
+            var typeDef = _structTypes[structSymbol.Name];
             var typeRef = _assemblyDefinition.MainModule.ImportReference(typeDef);
             var fieldType = GetTypeReference(node.Field.Type);
             var fieldRef = new FieldReference(node.FieldName, fieldType);
@@ -1701,7 +1719,7 @@ namespace ProLang.Compiler
         private void EmitFieldAssignmentExpression(ILProcessor ilProcessor, BoundFieldAssignmentExpression node)
         {
             var structSymbol = (StructSymbol)node.Expression.Type;
-            var typeDef = _structTypes[structSymbol];
+            var typeDef = _structTypes[structSymbol.Name];
             var typeRef = _assemblyDefinition.MainModule.ImportReference(typeDef);
             var fieldType = GetTypeReference(node.Field.Type);
             var fieldRef = new FieldReference(node.FieldName, fieldType);

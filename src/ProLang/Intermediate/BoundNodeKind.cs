@@ -32,5 +32,6 @@ public enum  BoundNodeKind
     BoundStructCreationExpression,
     BoundFieldAccessExpression,
     BoundFieldAssignmentExpression,
-    BoundCastExpression
+    BoundCastExpression,
+    BoundArrayNewExpression,
 }

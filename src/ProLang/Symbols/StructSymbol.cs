@@ -17,10 +17,20 @@ public sealed class StructSymbol : TypeSymbol
 
     public override SymbolKind Kind => SymbolKind.Type;
 
+    // Set for concrete instantiations; points back to the generic template.
+    public StructSymbol? OriginalGeneric { get; private set; }
+    // The type arguments used when instantiating (parallel to OriginalGeneric.TypeParameters).
+    public ImmutableArray<TypeSymbol> TypeArgs { get; private set; } = ImmutableArray<TypeSymbol>.Empty;
+
     public StructSymbol InstantiateGeneric(params TypeSymbol[] args)
     {
         if (!IsGeneric)
+        {
+            // If this is already a concrete instantiation, re-instantiate from the original
+            if (OriginalGeneric != null)
+                return OriginalGeneric.InstantiateGeneric(args);
             return this;
+        }
 
         if (args.Length != TypeParameters.Length)
             throw new ArgumentException($"Expected {TypeParameters.Length} type arguments, got {args.Length}");
@@ -39,7 +49,11 @@ public sealed class StructSymbol : TypeSymbol
         }
 
         var instantiatedName = $"{Name}<{string.Join(", ", args.Select(a => a.Name))}>";
-        return new StructSymbol(instantiatedName, ImmutableArray<TypeParameterSymbol>.Empty, instantiatedFields.ToImmutable());
+        return new StructSymbol(instantiatedName, ImmutableArray<TypeParameterSymbol>.Empty, instantiatedFields.ToImmutable())
+        {
+            OriginalGeneric = this,
+            TypeArgs = args.ToImmutableArray(),
+        };
     }
 
     private static TypeSymbol SubstituteTypeParameters(TypeSymbol type, Dictionary<TypeParameterSymbol, TypeSymbol> substitution)

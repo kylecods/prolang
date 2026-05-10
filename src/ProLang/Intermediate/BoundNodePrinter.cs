@@ -102,6 +102,9 @@ internal static class BoundNodePrinter
             case BoundNodeKind.BoundFieldAssignmentExpression:
                 WriteFieldAssignmentExpression((BoundFieldAssignmentExpression)node, writer);
                 break;
+            case BoundNodeKind.BoundArrayNewExpression:
+                writer.WritePunctuation($"array_new({((BoundArrayNewExpression)node).ElementType})");
+                break;
             default:
                 throw new Exception($"Unexpected node {node.Kind}");
             break;

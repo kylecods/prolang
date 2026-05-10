@@ -161,12 +161,12 @@ func parseNull(json: string, pos: int) : ParseResult {
 // ============================================
 
 func parseArray(json: string, pos: int) : ParseResult {
-    let arr: array<any> = []
+    let arr = dynarray_new<any>(8)
     pos = pos + 1
     pos = skipWhitespace(json, pos)
 
     if(pos < json.length() && json.charAt(pos) == "]") {
-        return parseResult(arr, pos + 1)
+        return parseResult(dynarray_to_array<any>(arr), pos + 1)
     }
 
     while(pos < json.length()) {
@@ -174,7 +174,7 @@ func parseArray(json: string, pos: int) : ParseResult {
         let value = valueResult.value
         pos = valueResult.nextPos
 
-        arr.push(value)
+        arr = dynarray_push<any>(arr, value)
 
         pos = skipWhitespace(json, pos)
 
@@ -184,7 +184,7 @@ func parseArray(json: string, pos: int) : ParseResult {
 
         let ch = json.charAt(pos)
         if(ch == "]") {
-            return parseResult(arr, pos + 1)
+            return parseResult(dynarray_to_array<any>(arr), pos + 1)
         }
 
         if(ch == ",") {
@@ -193,7 +193,7 @@ func parseArray(json: string, pos: int) : ParseResult {
         }
     }
 
-    return parseResult(arr, pos)
+    return parseResult(dynarray_to_array<any>(arr), pos)
 }
 
 // ============================================

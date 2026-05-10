@@ -134,6 +134,14 @@ internal sealed class BoundScope
         return true;
     }
 
+    // Declares a type alias: alias name → concrete TypeSymbol (used for generic instantiation).
+    public void DeclareTypeBinding(string alias, TypeSymbol concrete)
+    {
+        if (_typeSymbols == null)
+            _typeSymbols = new Dictionary<string, TypeSymbol>();
+        _typeSymbols[alias] = concrete;
+    }
+
     public bool TryLookupTypeSymbol(string name, out TypeSymbol? typeSymbol)
     {
         typeSymbol = null;

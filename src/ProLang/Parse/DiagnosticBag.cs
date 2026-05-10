@@ -95,6 +95,12 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Report(location, message);
     }
 
+    public void ReportMethodNotAvailableOnFixedArray(TextLocation location, string methodName)
+    {
+        var message = $"'{methodName}' is not available on fixed-length array<T>. Use DynArray<T> from the std library for dynamic arrays.";
+        Report(location, message);
+    }
+
     public void ReportWrongMethodArgumentCount(TextLocation location, string methodName, int expectedCount, int actualCount)
     {
         var message = $"Method '{methodName}' requires {expectedCount} argument(s) but was given {actualCount}";
