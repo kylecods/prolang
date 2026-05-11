@@ -1,49 +1,69 @@
+using System.Text.RegularExpressions;
+
 namespace ProLang.Syntax;
 
-internal static class SyntaxFacts
+internal static partial class SyntaxFacts
 {
+    [GeneratedRegex(@"^[a-zA-Z_][a-zA-Z0-9_]*$", RegexOptions.Compiled)]
+    private static partial Regex IdentifierPattern();
+
+    [GeneratedRegex(@"^-?\d+$", RegexOptions.Compiled)]
+    private static partial Regex NumberPattern();
+
+    private static readonly Dictionary<string, SyntaxKind> KeywordLookup = new(StringComparer.Ordinal)
+    {
+        { "let", SyntaxKind.LetKeyword },
+        { "true", SyntaxKind.TrueKeyword },
+        { "false", SyntaxKind.FalseKeyword },
+        { "null", SyntaxKind.NullKeyword },
+        { "while", SyntaxKind.WhileKeyword },
+        { "for", SyntaxKind.ForKeyword },
+        { "script", SyntaxKind.ScriptKeyword },
+        { "if", SyntaxKind.IfKeyword },
+        { "elif", SyntaxKind.ElIfKeyword },
+        { "else", SyntaxKind.ElseKeyword },
+        { "to", SyntaxKind.ToKeyword },
+        { "func", SyntaxKind.FunctionKeyword },
+        { "break", SyntaxKind.BreakKeyword },
+        { "continue", SyntaxKind.ContinueKeyword },
+        { "return", SyntaxKind.ReturnKeyword },
+        { "import", SyntaxKind.ImportKeyword },
+        { "struct", SyntaxKind.StructKeyword },
+        { "as", SyntaxKind.AsKeyword },
+    };
+
+    private static readonly Dictionary<SyntaxKind, int> UnaryOperatorPrecedenceMap = new()
+    {
+        { SyntaxKind.PlusToken, 6 },
+        { SyntaxKind.MinusToken, 6 },
+        { SyntaxKind.BangToken, 6 },
+    };
+
+    private static readonly Dictionary<SyntaxKind, int> BinaryOperatorPrecedenceMap = new()
+    {
+        { SyntaxKind.StarToken, 5 },
+        { SyntaxKind.SlashToken, 5 },
+        { SyntaxKind.PercentageToken, 5 },
+        { SyntaxKind.PlusToken, 4 },
+        { SyntaxKind.MinusToken, 4 },
+        { SyntaxKind.LessThanToken, 3 },
+        { SyntaxKind.LessThanEqualToken, 3 },
+        { SyntaxKind.GreaterThanToken, 3 },
+        { SyntaxKind.GreaterThanEqualToken, 3 },
+        { SyntaxKind.BangEqualsToken, 3 },
+        { SyntaxKind.EqualsEqualsToken, 3 },
+        { SyntaxKind.AmpersandAmpersandToken, 2 },
+        { SyntaxKind.PipePipeToken, 1 },
+    };
+
     public static int GetUnaryOperatorPrecedence(this SyntaxKind kind)
     {
-        switch (kind)
-        {
-            case SyntaxKind.PlusToken:
-            case SyntaxKind.MinusToken:
-            case SyntaxKind.BangToken:
-                return 6;
-            default:
-                return 0;
-        }
+        return UnaryOperatorPrecedenceMap.TryGetValue(kind, out var precedence) ? precedence : 0;
     }
-    
+
     public static int GetBinaryOperatorPrecedence(this SyntaxKind kind)
     {
-        switch (kind)
-        {
-            case SyntaxKind.StarToken:
-            case SyntaxKind.SlashToken:
-            case SyntaxKind.PercentageToken:
-                return 5;
-                
-            case SyntaxKind.PlusToken:
-            case SyntaxKind.MinusToken:
-                return 4;
-            
-            case SyntaxKind.LessThanToken:
-            case SyntaxKind.LessThanEqualToken:
-            case SyntaxKind.GreaterThanToken:
-            case SyntaxKind.GreaterThanEqualToken:
-            case SyntaxKind.BangEqualsToken:
-            case SyntaxKind.EqualsEqualsToken:
-                return 3;
-            
-            case SyntaxKind.AmpersandAmpersandToken:
-                return 2;
-            
-            case SyntaxKind.PipePipeToken:
-                return 1;
-            
-            default: return 0;
-        }
+        return BinaryOperatorPrecedenceMap.TryGetValue(kind, out var precedence) ? precedence : 0;
     }
     
      public static string? GetText(SyntaxKind kind)
@@ -92,6 +112,8 @@ internal static class SyntaxFacts
                 return "let";
             case SyntaxKind.TrueKeyword:
                 return "true";
+            case SyntaxKind.NullKeyword:
+                return "null";
             case SyntaxKind.LessThanToken:
                 return "<";
             case SyntaxKind.GreaterThanToken:
@@ -146,49 +168,15 @@ internal static class SyntaxFacts
                 return "import";
             case SyntaxKind.StructKeyword:
                 return "struct";
+            case SyntaxKind.AsKeyword:
+                return "as";
             default:
                 return null;
         }
     }
 
-     public static SyntaxKind GetKeywordKind(string text)
-     {
-         switch (text)
-         {
-            case "let":
-                return SyntaxKind.LetKeyword;
-            case "true":
-                return SyntaxKind.TrueKeyword;
-            case "false":
-                return SyntaxKind.FalseKeyword;
-            case "while":
-                return SyntaxKind.WhileKeyword;
-            case "for":
-                return SyntaxKind.ForKeyword;
-            case "script":
-                return SyntaxKind.ScriptKeyword;
-            case "if":
-                return SyntaxKind.IfKeyword;
-            case "elif":
-                return SyntaxKind.ElIfKeyword;
-            case "else":
-                return SyntaxKind.ElseKeyword;
-            case "to":
-                return SyntaxKind.ToKeyword;
-            case "func":
-                return SyntaxKind.FunctionKeyword;
-            case "break":
-                return SyntaxKind.BreakKeyword;
-            case "continue":
-                return SyntaxKind.ContinueKeyword;
-            case "return":
-                return SyntaxKind.ReturnKeyword;
-            case "import":
-                return SyntaxKind.ImportKeyword;
-            case "struct":
-                return SyntaxKind.StructKeyword;
-            default:
-                return SyntaxKind.IdentifierToken;
-         }
-     }
+    public static SyntaxKind GetKeywordKind(string text)
+    {
+        return KeywordLookup.TryGetValue(text, out var kind) ? kind : SyntaxKind.IdentifierToken;
+    }
 }

@@ -90,6 +90,21 @@ internal static class BoundNodePrinter
             case BoundNodeKind.BoundIndexAssignmentExpression:
                 WriteIndexAssignmentExpression((BoundIndexAssignmentExpression)node, writer);
                 break;
+            case BoundNodeKind.BoundCastExpression:
+                WriteCastExpression((BoundCastExpression)node, writer);
+                break;
+            case BoundNodeKind.BoundStructCreationExpression:
+                WriteStructCreationExpression((BoundStructCreationExpression)node, writer);
+                break;
+            case BoundNodeKind.BoundFieldAccessExpression:
+                WriteFieldAccessExpression((BoundFieldAccessExpression)node, writer);
+                break;
+            case BoundNodeKind.BoundFieldAssignmentExpression:
+                WriteFieldAssignmentExpression((BoundFieldAssignmentExpression)node, writer);
+                break;
+            case BoundNodeKind.BoundArrayNewExpression:
+                writer.WritePunctuation($"array_new({((BoundArrayNewExpression)node).ElementType})");
+                break;
             default:
                 throw new Exception($"Unexpected node {node.Kind}");
             break;
@@ -166,9 +181,9 @@ internal static class BoundNodePrinter
 
     private static void WriteVariableDeclaration(BoundVariableDeclaration node, IndentedTextWriter writer)
     {
-        writer.WriteKeyword("let");
+        writer.WriteKeyword("let ");
         writer.WriteIdentifier(node.Variable.Name);
-        writer.WritePunctuation("=");
+        writer.WritePunctuation(" = ");
         node.Initializer.WriteTo(writer);
         writer.WriteLine();
     }
@@ -304,7 +319,7 @@ internal static class BoundNodePrinter
     private static void WriteAssignmentExpression(BoundAssignmentExpression node, IndentedTextWriter writer)
     {
         writer.WriteIdentifier(node.Variable.Name);
-        writer.WritePunctuation("=");
+        writer.WritePunctuation(" = ");
         node.Expression.WriteTo(writer);
     }
     
@@ -357,10 +372,19 @@ internal static class BoundNodePrinter
     private static void WriteConversionExpression(BoundConversionExpression node, IndentedTextWriter writer)
     {
         writer.WriteIdentifier(node.Type.Name);
-        
+
         writer.WritePunctuation("(");
         node.Expression.WriteTo(writer);
         writer.WritePunctuation(")");
+    }
+
+    private static void WriteCastExpression(BoundCastExpression node, IndentedTextWriter writer)
+    {
+        node.Expression.WriteTo(writer);
+        writer.Write(" ");
+        writer.WriteKeyword("as");
+        writer.Write(" ");
+        writer.WriteIdentifier(node.TargetType.Name);
     }
 
     private static void WriteReturnStatement(BoundReturnStatement node, IndentedTextWriter writer)
@@ -418,5 +442,39 @@ internal static class BoundNodePrinter
         node.Index.WriteTo(writer);
         writer.WritePunctuation("] = ");
         node.RHS.WriteTo(writer);
+    }
+
+    private static void WriteStructCreationExpression(BoundStructCreationExpression node, IndentedTextWriter writer)
+    {
+        writer.WriteIdentifier(node.StructType.Name);
+        writer.WritePunctuation(" { ");
+        var fields = node.StructType.Fields;
+        for (int i = 0; i < node.FieldValues.Length; i++)
+        {
+            if (i > 0) writer.WritePunctuation(", ");
+            if (i < fields.Length)
+            {
+                writer.WriteIdentifier(fields[i].Name);
+                writer.WritePunctuation(": ");
+            }
+            node.FieldValues[i].WriteTo(writer);
+        }
+        writer.WritePunctuation(" }");
+    }
+
+    private static void WriteFieldAccessExpression(BoundFieldAccessExpression node, IndentedTextWriter writer)
+    {
+        node.Expression.WriteTo(writer);
+        writer.WritePunctuation(".");
+        writer.WriteIdentifier(node.FieldName);
+    }
+
+    private static void WriteFieldAssignmentExpression(BoundFieldAssignmentExpression node, IndentedTextWriter writer)
+    {
+        node.Expression.WriteTo(writer);
+        writer.WritePunctuation(".");
+        writer.WriteIdentifier(node.FieldName);
+        writer.WritePunctuation(" = ");
+        node.Value.WriteTo(writer);
     }
 }

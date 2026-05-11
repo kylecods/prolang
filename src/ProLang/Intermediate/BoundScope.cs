@@ -8,6 +8,7 @@ internal sealed class BoundScope
     private Dictionary<string, VariableSymbol>? _variables;
     private Dictionary<string, FunctionSymbol>? _functions;
     private Dictionary<string, StructSymbol>? _types;
+    private Dictionary<string, TypeSymbol>? _typeSymbols;
 
     public BoundScope(BoundScope? parent)
     {
@@ -115,6 +116,47 @@ internal sealed class BoundScope
         }
 
         return Parent.TryLookupType(name, out type);
+    }
+
+    public bool TryDeclareTypeSymbol(TypeSymbol typeSymbol)
+    {
+        if (_typeSymbols == null)
+        {
+            _typeSymbols = new Dictionary<string, TypeSymbol>();
+        }
+
+        if (_typeSymbols.ContainsKey(typeSymbol.Name))
+        {
+            return false;
+        }
+
+        _typeSymbols.Add(typeSymbol.Name, typeSymbol);
+        return true;
+    }
+
+    // Declares a type alias: alias name → concrete TypeSymbol (used for generic instantiation).
+    public void DeclareTypeBinding(string alias, TypeSymbol concrete)
+    {
+        if (_typeSymbols == null)
+            _typeSymbols = new Dictionary<string, TypeSymbol>();
+        _typeSymbols[alias] = concrete;
+    }
+
+    public bool TryLookupTypeSymbol(string name, out TypeSymbol? typeSymbol)
+    {
+        typeSymbol = null;
+
+        if (_typeSymbols != null && _typeSymbols.TryGetValue(name, out typeSymbol))
+        {
+            return true;
+        }
+
+        if (Parent == null)
+        {
+            return false;
+        }
+
+        return Parent.TryLookupTypeSymbol(name, out typeSymbol);
     }
 
     public ImmutableArray<VariableSymbol> GetDeclaredVariables()

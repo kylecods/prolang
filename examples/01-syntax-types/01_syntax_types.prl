@@ -4,31 +4,33 @@
 
 import "io"
 
-print("Examples 1: Types and variables")
+func main() {
+    print("Examples 1: Types and variables")
 
-//Integers
-let anInteger: int = 100
+    //Integers
+    let anInteger: int = 100
 
-print("This is an integer: ")
-print(string(anInteger))
+    print("This is an integer: ")
+    print(string(anInteger))
 
-//Inferred types
-let name = "JOHN"
+    //Inferred types
+    let name = "JOHN"
 
-print("This is inferred string, " + name)
+    print("This is inferred string, " + name)
 
-let isThisCompiled: bool = true
-print("Is this compiled? " + string(isThisCompiled))
+    let isThisCompiled: bool = true
+    print("Is this compiled? " + string(isThisCompiled))
 
-if(isThisCompiled){
-    print("YES")
-}else {
-    print("NO")
+    if(isThisCompiled){
+        print("YES")
+    }else {
+        print("NO")
+    }
+
+    let firstName: string = "John"
+    let lastName : string = "Doe"
+
+    let fullName = "Hello " + firstName + " " +lastName
+
+    print(fullName)
 }
-
-let firstName: string = "John"
-let lastName : string = "Doe"
-
-let fullName = "Hello " + firstName + " " +lastName
-
-print(fullName)

@@ -4,54 +4,56 @@
 
 import "io"
 
-print("Example 2: Operators")
+func main(){
+    print("Example 2: Operators")
 
-let a = 10
-let b = 4
+    let a = 10
+    let b = 4
 
-print("Arithmetic with a=10, b=4")
+    print("Arithmetic with a=10, b=4")
 
-//Addition
-print("a+b= ")
-print(string(a+b))
+    //Addition
+    print("a+b= ")
+    print(string(a+b))
 
-//Subtraction
-print("a-b= ")
-print(string(a-b))
+    //Subtraction
+    print("a-b= ")
+    print(string(a-b))
 
-//Multiplication
-print("a*b= ")
-print(string(a*b))
+    //Multiplication
+    print("a*b= ")
+    print(string(a*b))
 
-//Division
-print("a/b= ")
-print(string(a/b))
+    //Division
+    print("a/b= ")
+    print(string(a/b))
 
-//Modulo
-print("a%b=")
-print(string(a%b))
+    //Modulo
+    print("a%b=")
+    print(string(a%b))
 
-// Comparision
-let x = 5
-let y = 5
-let z = 6
-print("Comparisons with x=5, y=5, z=6")
-print("x == y:")
-print(string(x == y)) // true
-print("x != z:")
-print(string(x != z)) // true
-print("x < z:")
-print(string(x < z))  // true
-print("z >= y:")
-print(string(z >= y)) // true
+    // Comparision
+    let x = 5
+    let y = 5
+    let z = 6
+    print("Comparisons with x=5, y=5, z=6")
+    print("x == y:")
+    print(string(x == y)) // true
+    print("x != z:")
+    print(string(x != z)) // true
+    print("x < z:")
+    print(string(x < z))  // true
+    print("z >= y:")
+    print(string(z >= y)) // true
 
-//Logical operators
-let isSunny = true
-let hasCoffee = false
-print("Logical Operators:")
-print("isSunny && hasCoffee (AND):")
-print(string(isSunny && hasCoffee)) // false
-print("isSunny || hasCoffee (OR):")
-print(string(isSunny || hasCoffee))  // true
-print("!hasCoffee (NOT):")
-print(string(!hasCoffee)) // true
+    //Logical operators
+    let isSunny = true
+    let hasCoffee = false
+    print("Logical Operators:")
+    print("isSunny && hasCoffee (AND):")
+    print(string(isSunny && hasCoffee)) // false
+    print("isSunny || hasCoffee (OR):")
+    print(string(isSunny || hasCoffee))  // true
+    print("!hasCoffee (NOT):")
+    print(string(!hasCoffee)) // true
+}

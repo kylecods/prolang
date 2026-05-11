@@ -1,0 +1,11 @@
+// Test: Generic struct with single type parameter
+struct Box<T> {
+    value: T;
+}
+
+let box : Box<int> = Box<int> 
+{ 
+    value: 5
+}
+
+print(box.value)

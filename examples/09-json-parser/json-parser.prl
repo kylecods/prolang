@@ -1,0 +1,419 @@
+import "dynarray"
+
+// ============================================
+// STRUCTURES & HELPERS
+// ============================================
+
+struct ParseResult {
+    value: any,
+    nextPos: int
+}
+
+func parseResult(val: any, pos: int) : ParseResult {
+    let result = ParseResult { value: val, nextPos: pos }
+    return result
+}
+
+// ============================================
+// UTILITY FUNCTIONS
+// ============================================
+
+func isWhitespace(ch: string) : bool {
+    return ch == " " || ch == "\t" || ch == "\n" || ch == "\r"
+}
+
+func isDigit(ch: string) : bool {
+    return ch == "0" || ch == "1" || ch == "2" || ch == "3" || ch == "4" ||
+           ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9"
+}
+
+func digitToInt(ch: string) : int {
+    let digits = "0123456789"
+    return digits.indexOf(ch)
+}
+
+func skipWhitespace(json: string, pos: int) : int {
+    while(pos < json.length()) {
+        let ch = json.charAt(pos)
+        if(!isWhitespace(ch)) {
+            break
+        }
+        pos = pos + 1
+    }
+    return pos
+}
+
+func findQuoteEnd(json: string, startPos: int) : int {
+    let pos = startPos + 1
+    let quote = """"
+
+    while(pos < json.length()) {
+        let ch = json.charAt(pos)
+        if(ch == quote) {
+            return pos
+        }
+        pos = pos + 1
+    }
+    return -1
+}
+
+// ============================================
+// STRING PARSING
+// ============================================
+
+func parseString(json: string, pos: int) : ParseResult {
+    let quote = """"
+
+    if(pos >= json.length() || json.charAt(pos) != quote) {
+        return parseResult("", pos)
+    }
+
+    let endPos = findQuoteEnd(json, pos)
+    if(endPos == -1) {
+        return parseResult("", pos)
+    }
+
+    let str = json.substring(pos + 1, endPos)
+    return parseResult(str, endPos + 1)
+}
+
+// ============================================
+// NUMBER PARSING
+// ============================================
+
+func parseNumber(json: string, pos: int) : ParseResult {
+    let startPos = pos
+    let isNegative = false
+
+    if(pos < json.length() && json.charAt(pos) == "-") {
+        isNegative = true
+        pos = pos + 1
+    }
+
+    let numStart = pos
+    let numEnd = pos
+
+    while(pos < json.length()) {
+        let ch = json.charAt(pos)
+        if(isDigit(ch)) {
+            numEnd = pos + 1
+            pos = pos + 1
+        } else {
+            break
+        }
+    }
+
+    if(numEnd == numStart) {
+        return parseResult(0, startPos)
+    }
+
+    let numStr = json.substring(numStart, numEnd)
+    let result = 0
+    let idx = 0
+
+    while(idx < numStr.length()) {
+        let digit = numStr.charAt(idx)
+        let digitVal = digitToInt(digit)
+        result = result * 10 + digitVal
+        idx = idx + 1
+    }
+
+    if(isNegative) {
+        result = 0 - result
+    }
+
+    return parseResult(result, pos)
+}
+
+// ============================================
+// BOOLEAN & NULL PARSING
+// ============================================
+
+func parseBoolean(json: string, pos: int) : ParseResult {
+    if(pos + 4 <= json.length()) {
+        let substr = json.substring(pos, pos + 4)
+        if(substr == "true") {
+            return parseResult(true, pos + 4)
+        }
+    }
+
+    if(pos + 5 <= json.length()) {
+        let substr = json.substring(pos, pos + 5)
+        if(substr == "false") {
+            return parseResult(false, pos + 5)
+        }
+    }
+
+    return parseResult(false, pos)
+}
+
+func parseNull(json: string, pos: int) : ParseResult {
+    if(pos + 4 <= json.length()) {
+        let substr = json.substring(pos, pos + 4)
+        if(substr == "null") {
+            return parseResult(null, pos + 4)
+        }
+    }
+    return parseResult(null, pos)
+}
+
+// ============================================
+// ARRAY PARSING
+// ============================================
+
+func parseArray(json: string, pos: int) : ParseResult {
+    let arr = dynarray_new<any>(8)
+    pos = pos + 1
+    pos = skipWhitespace(json, pos)
+
+    if(pos < json.length() && json.charAt(pos) == "]") {
+        return parseResult(dynarray_to_array<any>(arr), pos + 1)
+    }
+
+    while(pos < json.length()) {
+        let valueResult = parseValue(json, pos)
+        let value = valueResult.value
+        pos = valueResult.nextPos
+
+        arr = dynarray_push<any>(arr, value)
+
+        pos = skipWhitespace(json, pos)
+
+        if(pos >= json.length()) {
+            break
+        }
+
+        let ch = json.charAt(pos)
+        if(ch == "]") {
+            return parseResult(dynarray_to_array<any>(arr), pos + 1)
+        }
+
+        if(ch == ",") {
+            pos = pos + 1
+            pos = skipWhitespace(json, pos)
+        }
+    }
+
+    return parseResult(dynarray_to_array<any>(arr), pos)
+}
+
+// ============================================
+// OBJECT PARSING
+// ============================================
+
+func parseObject(json: string, pos: int) : ParseResult {
+    let obj: map<string, any> = {}
+    pos = pos + 1
+    pos = skipWhitespace(json, pos)
+
+    if(pos < json.length() && json.charAt(pos) == "}") {
+        return parseResult(obj, pos + 1)
+    }
+
+    let quote = """"
+
+    while(pos < json.length()) {
+        pos = skipWhitespace(json, pos)
+
+        if(pos >= json.length() || json.charAt(pos) != quote) {
+            break
+        }
+
+        let keyResult = parseString(json, pos)
+        let key = keyResult.value
+        pos = keyResult.nextPos
+
+        pos = skipWhitespace(json, pos)
+
+        if(pos >= json.length() || json.charAt(pos) != ":") {
+            break
+        }
+
+        pos = pos + 1
+
+        let valueResult = parseValue(json, pos)
+        let value = valueResult.value
+        pos = valueResult.nextPos
+
+        obj[key] = value
+
+        pos = skipWhitespace(json, pos)
+
+        if(pos >= json.length()) {
+            break
+        }
+
+        let ch = json.charAt(pos)
+        if(ch == "}") {
+            return parseResult(obj, pos + 1)
+        }
+
+        if(ch == ",") {
+            pos = pos + 1
+        }
+    }
+
+    return parseResult(obj, pos)
+}
+
+// ============================================
+// MAIN VALUE PARSER
+// ============================================
+
+func parseValue(json: string, pos: int) : ParseResult {
+    pos = skipWhitespace(json, pos)
+
+    if(pos >= json.length()) {
+        return parseResult(null, pos)
+    }
+
+    let ch = json.charAt(pos)
+
+    if(ch == "{") {
+        return parseObject(json, pos)
+    }
+
+    if(ch == "[") {
+        return parseArray(json, pos)
+    }
+
+    let quote = """"
+    if(ch == quote) {
+        return parseString(json, pos)
+    }
+
+    if(ch == "t" || ch == "f") {
+        return parseBoolean(json, pos)
+    }
+
+    if(ch == "n") {
+        return parseNull(json, pos)
+    }
+
+    if(isDigit(ch) || ch == "-") {
+        return parseNumber(json, pos)
+    }
+
+    return parseResult(null, pos + 1)
+}
+
+// ============================================
+// JSON SERIALIZATION (Object -> String)
+// ============================================
+
+func stringContains(str: string, substr: string) : bool {
+    return str.indexOf(substr) >= 0
+}
+
+func jsonStringifyArray(arr: array<any>) : string {
+    let result = "["
+    let i = 0
+
+    while(i < arr.length()) {
+        if(i > 0) {
+            result = result + ", "
+        }
+        let elem = arr[i]
+        let elemType = string(elem)
+
+        if(stringContains(elemType, "String")) {
+            result = result + """" + string(elem) + """"
+        } else if(elemType == "True") {
+            result = result + "true"
+        } else if(elemType == "False") {
+            result = result + "false"
+        } else {
+            result = result + string(elem)
+        }
+
+        i = i + 1
+    }
+
+    result = result + "]"
+    return result
+}
+
+func jsonStringify(value: any) : string {
+    let valueType = string(value)
+
+    // Check if it's a string
+    if(stringContains(valueType, "String")) {
+        return """" + value + """"
+    }
+
+    // Check if it's a boolean
+    if(valueType == "True") {
+        return "true"
+    }
+    if(valueType == "False") {
+        return "false"
+    }
+
+    // Check if it's null or empty
+    if(valueType == "" || valueType == "null") {
+        return "null"
+    }
+
+    // For arrays and objects, return a simple representation
+    // Full serialization requires typed parameters
+    if(stringContains(valueType, "List")) {
+        return "[...]"
+    }
+
+    if(stringContains(valueType, "Dictionary")) {
+        return "{...}"
+    }
+
+    // Otherwise it's a number
+    return string(value)
+}
+
+// For typed arrays
+func arrayToJson(arr: array<int>) : string {
+    let result = "["
+    let i = 0
+
+    while(i < arr.length()) {
+        if(i > 0) {
+            result = result + ", "
+        }
+        result = result + string(arr[i])
+        i = i + 1
+    }
+
+    result = result + "]"
+    return result
+}
+
+// ============================================
+// PUBLIC API
+// ============================================
+
+func parseJson(json: string) : any {
+    let result = parseValue(json, 0)
+    return result.value
+}
+
+// ============================================
+// VALUE SERIALIZATION
+// ============================================
+
+func serializeValue(value: any) : string {
+    let str = string(value)
+
+    if(str == "True") {
+        return "true"
+    }
+
+    if(str == "False") {
+        return "false"
+    }
+
+    if(str == "") {
+        return "null"
+    }
+
+    return str
+}
+
+

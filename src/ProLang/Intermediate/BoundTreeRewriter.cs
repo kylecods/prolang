@@ -206,6 +206,10 @@ internal abstract class BoundTreeRewriter
                 return RewriteFieldAccessExpression((BoundFieldAccessExpression)node);
             case BoundNodeKind.BoundFieldAssignmentExpression:
                 return RewriteFieldAssignmentExpression((BoundFieldAssignmentExpression)node);
+            case BoundNodeKind.BoundCastExpression:
+                return RewriteCastExpression((BoundCastExpression)node);
+            case BoundNodeKind.BoundArrayNewExpression:
+                return RewriteArrayNewExpression((BoundArrayNewExpression)node);
             default:
                 throw new Exception($"Unexpected node: {node.Kind}");
         }
@@ -466,5 +470,27 @@ internal abstract class BoundTreeRewriter
         }
 
         return new BoundFieldAssignmentExpression(expression, node.FieldName, node.Field, value);
+    }
+
+    protected virtual BoundExpression RewriteCastExpression(BoundCastExpression node)
+    {
+        var expression = RewriteExpression(node.Expression);
+
+        if (expression == node.Expression)
+        {
+            return node;
+        }
+
+        return new BoundCastExpression(expression, node.TargetType);
+    }
+
+    protected virtual BoundExpression RewriteArrayNewExpression(BoundArrayNewExpression node)
+    {
+        var sizeExpression = RewriteExpression(node.SizeExpression);
+
+        if (sizeExpression == node.SizeExpression)
+            return node;
+
+        return new BoundArrayNewExpression(node.ElementType, sizeExpression);
     }
 }

@@ -95,6 +95,12 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Report(location, message);
     }
 
+    public void ReportMethodNotAvailableOnFixedArray(TextLocation location, string methodName)
+    {
+        var message = $"'{methodName}' is not available on fixed-length array<T>. Use DynArray<T> from the std library for dynamic arrays.";
+        Report(location, message);
+    }
+
     public void ReportWrongMethodArgumentCount(TextLocation location, string methodName, int expectedCount, int actualCount)
     {
         var message = $"Method '{methodName}' requires {expectedCount} argument(s) but was given {actualCount}";
@@ -169,6 +175,13 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Report(location, message);
     }
 
+    public void ReportCanOnlyCastFromAnyType(TextLocation location, TypeSymbol type)
+    {
+        var message = $"Cannot cast from type '{type}'. Cast expressions can only be used with 'any' type.";
+
+        Report(location, message);
+    }
+
     public void ReportInvalidBreakOrContinue(TextLocation location, string text)
     {
         var message = $"The keyword '{text}' can only be used inside of loops";
@@ -207,7 +220,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportMainFunctionMustHaveCorrectSignature(TextLocation location)
     {
-        var message = "<main> must not take arguments and not return anything.";
+        var message = "<main> must return void and have either no parameters or a single parameter of type array<string>.";
 
         Report(location, message);
     }
@@ -271,6 +284,12 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportCircularImport(TextLocation location, string path)
     {
         var message = $"Circular import detected for '{path}'.";
+        Report(location, message);
+    }
+
+    public void ReportGlobalStatementsRequireMainFunction(TextLocation location)
+    {
+        var message = "All statements must be inside a main() function. Global statements are not allowed without an explicit main() definition.";
         Report(location, message);
     }
 }

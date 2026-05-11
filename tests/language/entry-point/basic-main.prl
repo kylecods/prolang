@@ -1,0 +1,5 @@
+import "io"
+
+func main() {
+    print("Test passed")
+}

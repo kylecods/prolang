@@ -1,0 +1,4 @@
+import "io"
+
+// This should fail compilation
+print("At global scope")

@@ -1,0 +1,7 @@
+import "io"
+
+func main() {
+    let x: any = "hello"
+    let y = x as int
+    print("This shouldn't print")
+}

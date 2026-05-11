@@ -1,0 +1,23 @@
+// Test: Array type syntax with T[]
+// Note: Tests parsing only - runtime array handling tested separately
+import "io"
+import "dynarray"
+
+func main() {
+
+    let arr = dynarray_new<int>(4)
+    arr = dynarray_push<int>(arr, 10)
+    arr = dynarray_push<int>(arr, 20)
+    arr = dynarray_push<int>(arr, 30)
+    print("length: " + string(dynarray_length<int>(arr)))
+    print("get[1]: " + string(dynarray_get<int>(arr, 1)))
+    arr = dynarray_pop<int>(arr)
+    print("after pop: " + string(dynarray_length<int>(arr)))
+
+    let i = 0
+    while (i < 10) {
+        arr = dynarray_push<int>(arr, i * 100)
+        i = i + 1
+    }
+    print("final length: " + string(dynarray_length<int>(arr)))
+}

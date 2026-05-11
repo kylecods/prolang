@@ -1,0 +1,63 @@
+struct DynArray<T> {
+    data: array<T>,
+    size: int,
+    capacity: int
+}
+
+func dynarray_new<T>(cap: int) : DynArray<T> {
+    let data: array<T> = array_new(cap)
+    return DynArray<T> { data: data, size: 0, capacity: cap }
+}
+
+func dynarray_grow<T>(arr: DynArray<T>) : DynArray<T> {
+    let newCap = arr.capacity * 2
+    let newData: array<T> = array_new(newCap)
+    let i = 0
+    while (i < arr.size) {
+        newData[i] = arr.data[i]
+        i = i + 1
+    }
+    return DynArray<T> { data: newData, size: arr.size, capacity: newCap }
+}
+
+func dynarray_push<T>(arr: DynArray<T>, value: T) : DynArray<T> {
+    if (arr.size == arr.capacity) {
+        arr = dynarray_grow<T>(arr)
+    }
+    arr.data[arr.size] = value
+    return DynArray<T> { data: arr.data, size: arr.size + 1, capacity: arr.capacity }
+}
+
+func dynarray_pop<T>(arr: DynArray<T>) : DynArray<T> {
+    if (arr.size == 0) {
+        return arr
+    }
+    return DynArray<T> { data: arr.data, size: arr.size - 1, capacity: arr.capacity }
+}
+
+func dynarray_get<T>(arr: DynArray<T>, index: int) : T {
+    return arr.data[index]
+}
+
+func dynarray_set<T>(arr: DynArray<T>, index: int, value: T) : DynArray<T> {
+    arr.data[index] = value
+    return DynArray<T> { data: arr.data, size: arr.size, capacity: arr.capacity }
+}
+
+func dynarray_length<T>(arr: DynArray<T>) : int {
+    return arr.size
+}
+
+func dynarray_last<T>(arr: DynArray<T>) : T {
+    return arr.data[arr.size - 1]
+}
+
+func dynarray_to_array<T>(arr: DynArray<T>) : array<T> {
+    let result: array<T> = array_new(arr.size)
+    let i = 0
+    while (i < arr.size) {
+        result[i] = arr.data[i]
+        i = i + 1
+    }
+    return result
+}

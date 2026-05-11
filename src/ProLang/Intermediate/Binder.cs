@@ -25,11 +25,23 @@ internal sealed class Binder
 
     private ImmutableArray<StructSymbol>.Builder? _structTypes;
 
-    public Binder(bool isScript, BoundScope parent, FunctionSymbol? function)
+    // Shared across all binders in one compilation — maps concrete function name → (symbol, body).
+    private readonly Dictionary<string, (FunctionSymbol Symbol, BoundBlockStatement Body)>? _sharedInstantiations;
+
+    public Binder(bool isScript, BoundScope parent, FunctionSymbol? function,
+        Dictionary<string, TypeSymbol>? typeBindings = null,
+        Dictionary<string, (FunctionSymbol Symbol, BoundBlockStatement Body)>? sharedInstantiations = null)
     {
         _scope = new BoundScope(parent);
         _isScript = isScript;
         _function = function;
+        _sharedInstantiations = sharedInstantiations;
+
+        if (typeBindings != null)
+        {
+            foreach (var (alias, concrete) in typeBindings)
+                _scope.DeclareTypeBinding(alias, concrete);
+        }
 
         if (function != null)
         {
@@ -46,16 +58,16 @@ internal sealed class Binder
 
         var binder = new Binder(isScript, parentScope, null);
 
-        var structDeclarations =
-            syntaxTrees.SelectMany(st => st.Root.Declarations).OfType<StructDeclarationSyntax>();
+        // Single-pass collection of all declarations to avoid multiple SelectMany iterations
+        var allDeclarations = syntaxTrees.SelectMany(st => st.Root.Declarations).ToList();
+        var structDeclarations = allDeclarations.OfType<StructDeclarationSyntax>();
+        var functionDeclarations = allDeclarations.OfType<FunctionDeclarationSyntax>();
+        var globalStatements = allDeclarations.OfType<GlobalStatementSyntax>();
 
         foreach (var structDecl in structDeclarations)
         {
             binder.BindStructDeclaration(structDecl);
         }
-
-        var functionDeclarations =
-            syntaxTrees.SelectMany(st => st.Root.Declarations).OfType<FunctionDeclarationSyntax>();
 
         foreach (var function in functionDeclarations)
         {
@@ -68,9 +80,6 @@ internal sealed class Binder
 
         var statements = ImmutableArray.CreateBuilder<BoundStatement>();
 
-        var globalStatements =
-                syntaxTrees.SelectMany(st => st.Root.Declarations).OfType<GlobalStatementSyntax>();
-
         foreach (var statementSyntax in globalStatements)
         {
             var statement = binder.BindGlobalStatement(statementSyntax.Statement);
@@ -80,14 +89,19 @@ internal sealed class Binder
 
         //check any global Statements
 
-        var firstGlobalStatementPerSyntaxTree = syntaxTrees
-                                                .Select(st => st.Root.Declarations.OfType<GlobalDeclarationSyntax>().FirstOrDefault())
-                                                .Where(g => g != null)
-                                                .ToArray();
-
-        if (firstGlobalStatementPerSyntaxTree.Length > 1)
+        var firstGlobalStatementList = new List<GlobalDeclarationSyntax>();
+        foreach (var syntaxTree in syntaxTrees)
         {
-            foreach (var globalStatement in firstGlobalStatementPerSyntaxTree)
+            var globalDecl = syntaxTree.Root.Declarations.OfType<GlobalDeclarationSyntax>().FirstOrDefault();
+            if (globalDecl != null)
+            {
+                firstGlobalStatementList.Add(globalDecl);
+            }
+        }
+
+        if (firstGlobalStatementList.Count > 1)
+        {
+            foreach (var globalStatement in firstGlobalStatementList)
             {
                 binder.Diagnostics.ReportOnlyOneFileCanHaveGlobalStatements(globalStatement.Location);
             }
@@ -95,15 +109,17 @@ internal sealed class Binder
 
         //Check for main/script with global statements
 
-        var functions = binder._scope.GetDeclaredFunctions();
+        var initialFunctions = binder._scope.GetDeclaredFunctions();
 
         FunctionSymbol mainFunction;
+        FunctionSymbol userMainFunction;  // Track the user-defined main before renaming to __UserMain
 
         FunctionSymbol scriptFunction;
 
         if (isScript)
         {
             mainFunction = null;
+            userMainFunction = null;
 
             if (globalStatements.Any())
             {
@@ -116,15 +132,62 @@ internal sealed class Binder
         }
         else
         {
-            mainFunction = functions.FirstOrDefault(f => f.Name == "main");
+            var userMain = initialFunctions.FirstOrDefault(f => f.Name == "main");
             scriptFunction = null;
 
-            if (mainFunction != null)
+            if (userMain != null)
             {
-                if (mainFunction.Type != TypeSymbol.Void || mainFunction.Parameters.Any())
+                // Validate main function signature:
+                // - Must return void
+                // - Must have 0 parameters OR 1 parameter of type array<string>
+                bool validSignature = userMain.Type == TypeSymbol.Void;
+
+                if (validSignature && userMain.Parameters.Any())
                 {
-                    binder.Diagnostics.ReportMainFunctionMustHaveCorrectSignature(mainFunction.Declaration.Identifier.Location);
+                    if (userMain.Parameters.Length != 1)
+                    {
+                        validSignature = false;
+                    }
+                    else
+                    {
+                        var param = userMain.Parameters[0];
+                        // Check if parameter is array<string>
+                        var arrayStringType = new TypeSymbol("array", ImmutableArray.Create(TypeSymbol.String));
+                        if (param.Type != arrayStringType)
+                        {
+                            validSignature = false;
+                        }
+                    }
                 }
+
+                if (!validSignature)
+                {
+                    binder.Diagnostics.ReportMainFunctionMustHaveCorrectSignature(userMain.Declaration.Identifier.Location);
+                }
+
+                // Create __UserMain symbol with the same signature as main
+                // This internal symbol will be the actual implementation
+                userMainFunction = new FunctionSymbol("__UserMain", userMain.Parameters, userMain.Type, userMain.Declaration);
+
+                // Remove the user's "main" from the scope and replace with "__UserMain"
+                // We need to update the scope to use __UserMain instead
+                binder._scope = new BoundScope(binder._scope.Parent);
+                foreach (var fn in initialFunctions)
+                {
+                    if (fn.Name != "main")
+                    {
+                        binder._scope.TryDeclareFunction(fn);
+                    }
+                }
+                binder._scope.TryDeclareFunction(userMainFunction);
+
+                // Now set mainFunction to the user's main (will track as __UserMain)
+                mainFunction = userMainFunction;
+            }
+            else
+            {
+                userMainFunction = null;
+                mainFunction = null;
             }
 
             if (globalStatements.Any())
@@ -133,18 +196,39 @@ internal sealed class Binder
                 {
                     binder.Diagnostics.ReportCannotMixMainAndGlobalStatements(mainFunction.Declaration.Identifier.Location);
 
-                    foreach (var globalStatement in firstGlobalStatementPerSyntaxTree)
+                    foreach (var globalStatement in globalStatements)
                     {
                         binder.Diagnostics.ReportCannotMixMainAndGlobalStatements(globalStatement.Location);
-
                     }
                 }
                 else
                 {
-                    mainFunction = new FunctionSymbol("main", ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Void, null);
+                    // Global statements without explicit main() - error
+                    // (they need to execute somewhere)
+                    binder.Diagnostics.ReportGlobalStatementsRequireMainFunction(globalStatements.First().Location);
                 }
             }
+            // If no global statements and no main(), it's a library - this is allowed
+            // Libraries can just define functions and types
         }
+
+        // Get the updated functions list (may now contain __UserMain instead of main)
+        var updatedFunctions = binder._scope.GetDeclaredFunctions();
+
+        // Create synthetic __Main entry point if we have a user main function
+        FunctionSymbol syntheticMainFunction = null;
+        if (!isScript && mainFunction != null)
+        {
+            // Create synthetic __Main that will be the actual entry point
+            // It takes string[] args from CLR but doesn't expose them to user
+            syntheticMainFunction = new FunctionSymbol("__Main", ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Void, null);
+
+            // Add synthetic __Main to scope and functions list
+            binder._scope.TryDeclareFunction(syntheticMainFunction);
+        }
+
+        // Get final functions list (now includes __Main if it exists)
+        var functions = binder._scope.GetDeclaredFunctions();
 
         var diagnostics = binder.Diagnostics.ToImmutableArray();
         var variables = binder._scope.GetDeclaredVariables();
@@ -155,22 +239,39 @@ internal sealed class Binder
             diagnostics = diagnostics.InsertRange(0, previous.Diagnostics);
         }
 
-        return new BoundGlobalScope(previous, diagnostics, mainFunction, scriptFunction, functions, variables, statements.ToImmutableArray(), structTypes);
+        // Return the synthetic __Main as the main function (if it exists)
+        // This ensures the entry point is properly set to __Main
+        var finalMainFunction = syntheticMainFunction ?? mainFunction;
+
+        return new BoundGlobalScope(previous, diagnostics, finalMainFunction, scriptFunction, functions, variables, statements.ToImmutableArray(), structTypes, importedModules);
     }
 
     public static BoundProgram BindProgram(bool isScript, BoundProgram previous, BoundGlobalScope? globalScope)
     {
-        var parentScope = CreateParentScope(globalScope);
+        var parentScope = CreateParentScope(globalScope, globalScope?.ImportedModules);
 
         var functionBodies = ImmutableDictionary.CreateBuilder<FunctionSymbol, BoundBlockStatement>();
+
+        // Shared registry for monomorphized generic function instantiations.
+        // Keys are concrete function names; values are (symbol, lowered body).
+        var sharedInstantiations = new Dictionary<string, (FunctionSymbol Symbol, BoundBlockStatement Body)>();
 
         var diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
 
         foreach (var function in globalScope.Functions)
         {
-            var binder = new Binder(isScript, parentScope, function);
+            // Skip synthetic functions - they will be handled by the Emitter
+            if (function.Declaration == null)
+                continue;
 
-            var body = binder.BindStatement(function.Declaration!.Body);
+            // Skip generic templates — they are instantiated on demand
+            if (function.IsGeneric)
+                continue;
+
+            var binder = new Binder(isScript, parentScope, function,
+                sharedInstantiations: sharedInstantiations);
+
+            var body = binder.BindStatement(function.Declaration.Body);
 
             var loweredBody = Lowerer.Lower(body);
 
@@ -210,21 +311,36 @@ internal sealed class Binder
             functionBodies.Add(globalScope.ScriptFunction, body);
         }
 
+        // Add all collected generic instantiations to the function bodies
+        foreach (var (_, (concreteSymbol, instBody)) in sharedInstantiations)
+        {
+            if (instBody != null && !functionBodies.ContainsKey(concreteSymbol))
+                functionBodies.Add(concreteSymbol, instBody);
+        }
 
-
-        return new BoundProgram(previous,diagnostics.ToImmutable(), globalScope.MainFunction, globalScope.ScriptFunction, functionBodies.ToImmutable(), globalScope.StructTypes);
+        return new BoundProgram(previous, diagnostics.ToImmutable(), globalScope.MainFunction, globalScope.ScriptFunction, functionBodies.ToImmutable(), globalScope.StructTypes);
     }
 
     private void BindFunctionDeclaration(FunctionDeclarationSyntax syntax)
     {
-        var parameters = ImmutableArray.CreateBuilder<ParameterSymbol>();
+        var typeParamSymbols = ImmutableArray.CreateBuilder<TypeParameterSymbol>();
+        foreach (var tp in syntax.TypeParameters)
+            typeParamSymbols.Add(new TypeParameterSymbol(tp.Text, typeParamSymbols.Count));
 
+        var savedScope = _scope;
+        if (typeParamSymbols.Count > 0)
+        {
+            _scope = new BoundScope(_scope);
+            foreach (var tp in typeParamSymbols)
+                _scope.TryDeclareTypeSymbol(tp);
+        }
+
+        var parameters = ImmutableArray.CreateBuilder<ParameterSymbol>();
         var seenParameterNames = new HashSet<string>();
 
         foreach (var parameterSyntax in syntax.Parameters)
         {
             var parameterName = parameterSyntax.Identifier.Text;
-
             var parameterType = BindTypeClause(parameterSyntax.Type);
 
             if (!seenParameterNames.Add(parameterName))
@@ -233,15 +349,17 @@ internal sealed class Binder
             }
             else
             {
-                var parameter = new ParameterSymbol(parameterName, parameterType,parameters.Count);
-
+                var parameter = new ParameterSymbol(parameterName, parameterType, parameters.Count);
                 parameters.Add(parameter);
             }
         }
 
         var type = BindTypeClause(syntax.Type) ?? TypeSymbol.Void;
 
-        var function = new FunctionSymbol(syntax.Identifier.Text, parameters.ToImmutable(), type, syntax);
+        _scope = savedScope;
+
+        var function = new FunctionSymbol(syntax.Identifier.Text, parameters.ToImmutable(), type, syntax,
+            typeParamSymbols.ToImmutable());
 
         if (!_scope.TryDeclareFunction(function))
         {
@@ -253,8 +371,25 @@ internal sealed class Binder
     {
         var name = syntax.Identifier.Text;
 
-        var fields = ImmutableArray.CreateBuilder<StructField>();
+        var typeParameters = ImmutableArray.CreateBuilder<TypeParameterSymbol>();
+        foreach (var paramSyntax in syntax.TypeParameters)
+        {
+            var paramName = paramSyntax.Text;
+            var typeParam = new TypeParameterSymbol(paramName, typeParameters.Count);
+            typeParameters.Add(typeParam);
+        }
 
+        var savedScope = _scope;
+        if (typeParameters.Count > 0)
+        {
+            _scope = new BoundScope(_scope);
+            foreach (var typeParam in typeParameters)
+            {
+                _scope.TryDeclareTypeSymbol(typeParam);
+            }
+        }
+
+        var fields = ImmutableArray.CreateBuilder<StructField>();
         var seenFieldNames = new HashSet<string>();
 
         foreach (var fieldSyntax in syntax.Fields)
@@ -273,7 +408,9 @@ internal sealed class Binder
             }
         }
 
-        var structSymbol = new StructSymbol(name, fields.ToImmutable());
+        _scope = savedScope;
+
+        var structSymbol = new StructSymbol(name, typeParameters.ToImmutable(), fields.ToImmutable());
 
         if (_structTypes == null)
         {
@@ -669,7 +806,18 @@ internal sealed class Binder
                 arguments.Add(BindTypeSyntax(argSyntax));
             }
 
+            if (baseType is StructSymbol structSymbol)
+            {
+                return structSymbol.InstantiateGeneric(arguments.ToArray());
+            }
+
             return baseType.WithArgs(arguments.ToArray());
+        }
+
+        if (syntax is ArrayTypeSyntax arraySyntax)
+        {
+            var elementType = BindTypeSyntax(arraySyntax.ElementType);
+            return TypeSymbol.Array.WithArgs(elementType);
         }
 
         throw new Exception($"Unexpected type syntax {syntax.Kind}");
@@ -694,6 +842,11 @@ internal sealed class Binder
             case "map":
                 return TypeSymbol.Map;
             default:
+                if (_scope.TryLookupTypeSymbol(name, out var typeSymbol))
+                {
+                    return typeSymbol;
+                }
+
                 if (_scope.TryLookupType(name, out var structSymbol))
                 {
                     return structSymbol;
@@ -753,7 +906,7 @@ internal sealed class Binder
             case SyntaxKind.BinaryExpression:
                 return BindBinaryExpression((BinaryExpressionSyntax)syntax);
             case SyntaxKind.CallExpression:
-                return BindCallExpression((CallExpressionSyntax)syntax);
+                return BindCallExpression((CallExpressionSyntax)syntax, expectedType);
             case SyntaxKind.ArrayExpression:
                 return BindArrayExpression((ArrayExpressionSyntax)syntax, expectedType);
             case SyntaxKind.MapExpression:
@@ -766,6 +919,8 @@ internal sealed class Binder
                 return BindStructCreationExpression((StructCreationExpressionSyntax)syntax);
             case SyntaxKind.FieldAccessExpression:
                 return BindFieldAccessExpression((FieldAccessExpressionSyntax)syntax);
+            case SyntaxKind.CastExpression:
+                return BindCastExpression((CastExpressionSyntax)syntax);
             default:
                 throw new Exception($"Unknown syntax kind {syntax.Kind}");
         }
@@ -886,11 +1041,23 @@ internal sealed class Binder
             return new BoundErrorExpression();
         }
 
+        // Instantiate generic struct if type arguments are provided: DynArray<int> { ... }
+        if (syntax.TypeArguments.Length > 0)
+        {
+            var typeArgs = syntax.TypeArguments.Select(t => BindTypeSyntax(t)).ToArray();
+            structType = structType.InstantiateGeneric(typeArgs) as StructSymbol ?? structType;
+        }
+
         var fieldValues = ImmutableArray.CreateBuilder<BoundExpression>();
 
         foreach (var initializer in syntax.Initializers)
         {
-            var value = BindExpression(initializer.Expression);
+            var fieldName = initializer.FieldName.Text;
+            var matchedField = structType.Fields.FirstOrDefault(f => f.Name == fieldName);
+            var expectedFieldType = matchedField?.Type;
+            var value = BindExpression(initializer.Expression, expectedType: expectedFieldType);
+            if (matchedField != null)
+                value = BindConversion(initializer.Expression.Location, value, matchedField.Type);
             fieldValues.Add(value);
         }
 
@@ -908,13 +1075,20 @@ internal sealed class Binder
 
         var fieldName = syntax.FieldName.Text;
 
-        if (!_scope.TryLookupType(expression.Type.Name, out var structType))
+        // If the expression type is already a StructSymbol (e.g., a concrete generic instantiation),
+        // use it directly without going through the scope name lookup.
+        StructSymbol? structType;
+        if (expression.Type is StructSymbol directStruct)
+        {
+            structType = directStruct;
+        }
+        else if (!_scope.TryLookupType(expression.Type.Name, out structType))
         {
             _diagnostics.ReportInvalidFieldAccess(syntax.Expression.Location, expression.Type);
             return new BoundErrorExpression();
         }
 
-        var field = structType.Fields.FirstOrDefault(f => f.Name == fieldName);
+        var field = structType!.Fields.FirstOrDefault(f => f.Name == fieldName);
         if (field == null)
         {
             _diagnostics.ReportUndefinedField(syntax.FieldName.Location, structType.Name, fieldName);
@@ -922,6 +1096,26 @@ internal sealed class Binder
         }
 
         return new BoundFieldAccessExpression(expression, fieldName, field);
+    }
+
+    private BoundExpression BindCastExpression(CastExpressionSyntax syntax)
+    {
+        var expression = BindExpression(syntax.Expression);
+        var targetType = BindTypeClause(syntax.Type);
+
+        if (expression.Type == TypeSymbol.Error || targetType == null || targetType == TypeSymbol.Error)
+        {
+            return new BoundErrorExpression();
+        }
+
+        // Cast expressions only work with 'any' type as source
+        if (expression.Type != TypeSymbol.Any)
+        {
+            _diagnostics.ReportCanOnlyCastFromAnyType(syntax.Location, expression.Type);
+            return new BoundErrorExpression();
+        }
+
+        return new BoundCastExpression(expression, targetType);
     }
 
     private BoundExpression BindParenthesizedExpression(ParenthesisExpressionSyntax syntax)
@@ -994,9 +1188,25 @@ internal sealed class Binder
         return new BoundVariableExpression(variable!);
     }
 
-    private BoundExpression BindCallExpression(CallExpressionSyntax syntax)
+    private BoundExpression BindCallExpression(CallExpressionSyntax syntax, TypeSymbol? expectedType = null)
     {
-        if (syntax.Arguments.Count == 1 && LookupType(syntax.Identifier.Text) is TypeSymbol type)
+        // Special case: array_new(size) creates a zero-initialized fixed-length array
+        if (syntax.Identifier.Text == "array_new" && syntax.Arguments.Count == 1)
+        {
+            var sizeArg = BindExpression(syntax.Arguments[0]);
+            sizeArg = BindConversion(syntax.Arguments[0].Location, sizeArg, TypeSymbol.Int);
+            var elementType = TypeSymbol.Any;
+            if (expectedType != null && expectedType.Name == "array" && expectedType.TypeArguments.Length == 1)
+                elementType = expectedType.TypeArguments[0];
+            // Also check explicit type argument on the call: array_new<int>(8)
+            if (elementType == TypeSymbol.Any && syntax.TypeArguments.Length == 1)
+                elementType = BindTypeSyntax(syntax.TypeArguments[0]);
+            return new BoundArrayNewExpression(elementType, sizeArg);
+        }
+
+        if (syntax.Arguments.Count == 1
+            && !_scope.TryLookupFunction(syntax.Identifier.Text, out _)
+            && LookupType(syntax.Identifier.Text) is TypeSymbol type)
         {
             return BindConversion(syntax.Arguments[0], type, true);
         }
@@ -1011,7 +1221,6 @@ internal sealed class Binder
 
         if (!_scope.TryLookupFunction(syntax.Identifier.Text, out var function))
         {
-            // Try to resolve as a .NET static method (e.g., "WriteLine" from System.Console)
             var dotNetFunc = TryResolveDotNetFunction(syntax.Identifier.Text);
             if (dotNetFunc != null)
             {
@@ -1024,6 +1233,34 @@ internal sealed class Binder
             }
         }
 
+        // Generic function instantiation
+        if (function.IsGeneric)
+        {
+            TypeSymbol[] typeArgs;
+            if (syntax.TypeArguments.Length > 0)
+            {
+                typeArgs = syntax.TypeArguments.Select(t => BindTypeSyntax(t)).ToArray();
+            }
+            else
+            {
+                typeArgs = InferTypeArguments(function, boundArguments.ToImmutable());
+            }
+
+            if (typeArgs.Length != function.TypeParameters.Length)
+            {
+                _diagnostics.ReportWrongArgumentCount(syntax.Location, function.Name,
+                    function.TypeParameters.Length, typeArgs.Length);
+                return new BoundErrorExpression();
+            }
+
+            function = function.InstantiateGeneric(typeArgs);
+            // Reuse cached symbol if already instantiated (ensures reference equality for emitter)
+            if (_sharedInstantiations != null && _sharedInstantiations.TryGetValue(function.Name, out var cached) && cached.Symbol != null)
+                function = cached.Symbol;
+            else
+                EnsureInstantiated(function);
+        }
+
         if (syntax.Arguments.Count != function.Parameters.Length)
         {
             _diagnostics.ReportWrongArgumentCount(syntax.Location, function.Name, function.Parameters.Length,
@@ -1034,14 +1271,66 @@ internal sealed class Binder
         for (int i = 0; i < syntax.Arguments.Count; i++)
         {
             var argumentLocation = syntax.Arguments[i].Location;
-
             var argument = boundArguments[i];
             var parameter = function.Parameters[i];
-
             boundArguments[i] = BindConversion(argumentLocation, argument, parameter.Type);
         }
 
         return new BoundCallExpression(function, boundArguments.ToImmutable());
+    }
+
+    private TypeSymbol[] InferTypeArguments(FunctionSymbol generic, ImmutableArray<BoundExpression> args)
+    {
+        // Build substitution by matching arg types against param types
+        var result = new TypeSymbol[generic.TypeParameters.Length];
+        for (int i = 0; i < generic.Parameters.Length && i < args.Length; i++)
+        {
+            ExtractTypeArgs(generic.Parameters[i].Type, args[i].Type, generic.TypeParameters, result);
+        }
+        // Fill any unresolved with Any
+        for (int i = 0; i < result.Length; i++)
+            result[i] ??= TypeSymbol.Any;
+        return result;
+    }
+
+    private static void ExtractTypeArgs(TypeSymbol paramType, TypeSymbol argType,
+        ImmutableArray<TypeParameterSymbol> typeParams, TypeSymbol[] result)
+    {
+        if (paramType is TypeParameterSymbol tp)
+        {
+            var idx = tp.Index;
+            if (idx < result.Length && result[idx] == null)
+                result[idx] = argType;
+            return;
+        }
+        // Recurse into type arguments (e.g., DynArray<T> matched against DynArray<int>)
+        if (paramType.TypeArguments.Length == argType.TypeArguments.Length)
+        {
+            for (int i = 0; i < paramType.TypeArguments.Length; i++)
+                ExtractTypeArgs(paramType.TypeArguments[i], argType.TypeArguments[i], typeParams, result);
+        }
+    }
+
+    private void EnsureInstantiated(FunctionSymbol concrete)
+    {
+        if (_sharedInstantiations == null) return;
+        if (_sharedInstantiations.ContainsKey(concrete.Name)) return;
+
+        var generic = concrete.OriginalGeneric;
+        if (generic?.Declaration == null) return;
+
+        // Reserve the slot to prevent re-entrant binding of the same instantiation
+        _sharedInstantiations[concrete.Name] = default;
+
+        var typeBindings = generic.TypeParameters
+            .Zip(concrete.TypeArguments)
+            .ToDictionary(p => p.First.Name, p => p.Second);
+
+        var instBinder = new Binder(_isScript, _scope!, concrete, typeBindings, _sharedInstantiations);
+        var body = instBinder.BindStatement(generic.Declaration.Body);
+        var lowered = Lowerer.Lower(body);
+        _sharedInstantiations[concrete.Name] = (concrete, lowered);
+        _diagnostics.AddRange(instBinder.Diagnostics);
     }
 
     /// <summary>
@@ -1081,26 +1370,39 @@ internal sealed class Binder
 
     private static readonly Dictionary<string, FunctionSymbol> ArrayMethods = new(StringComparer.Ordinal)
     {
-        { "push", BuiltInFunctions.Push },
-        { "pop", BuiltInFunctions.Pop },
-        { "getAt", BuiltInFunctions.GetAt },
-        { "length", BuiltInFunctions.Length },
+        { "length", BuiltInFunctions.ArrayLength },
+    };
+
+    private static readonly HashSet<string> _dynamicArrayMethods = new(StringComparer.Ordinal)
+        { "push", "pop", "getAt" };
+
+    private static readonly Dictionary<string, FunctionSymbol> StringMethods = new(StringComparer.Ordinal)
+    {
+        { "length", BuiltInFunctions.StringLength },
+        { "charAt", BuiltInFunctions.StringCharAt },
+        { "substring", BuiltInFunctions.StringSubstring },
+        { "indexOf", BuiltInFunctions.StringIndexOf },
     };
 
     private BoundExpression BindMethodCallExpression(MethodCallExpressionSyntax syntax)
     {
         var methodName = syntax.MethodName.Text;
 
-        // First check if the expression is a NameExpression that could be a .NET type name
+        // First check if the expression is a NameExpression that could be a .NET type name.
+        // Only attempt .NET type resolution when the name is NOT a declared variable —
+        // variable names (json, arr, pos, …) are never .NET type names, and scanning all
+        // loaded assemblies for every one of them is the primary compilation bottleneck.
         if (syntax.Expression is NameExpressionSyntax nameExpr)
         {
             var typeName = nameExpr.IdentifierToken.Text;
 
-            // Try to resolve as .NET static method call (e.g., DateTime.Now, Math.Max)
-            var dotNetFunc = ResolveDotNetStaticMethod(typeName, methodName);
-            if (dotNetFunc != null)
+            if (!_scope.TryLookupVariable(typeName, out _))
             {
-                return BindDotNetFunctionCall(syntax, dotNetFunc, syntax.Arguments);
+                var dotNetFunc = ResolveDotNetStaticMethod(typeName, methodName);
+                if (dotNetFunc != null)
+                {
+                    return BindDotNetFunctionCall(syntax, dotNetFunc, syntax.Arguments);
+                }
             }
         }
 
@@ -1115,6 +1417,12 @@ internal sealed class Binder
         // Handle array methods
         if (receiver.Type.Name == "array")
         {
+            if (_dynamicArrayMethods.Contains(methodName))
+            {
+                _diagnostics.ReportMethodNotAvailableOnFixedArray(syntax.MethodName.Location, methodName);
+                return new BoundErrorExpression();
+            }
+
             if (!ArrayMethods.TryGetValue(methodName, out var function))
             {
                 _diagnostics.ReportUndefinedMethod(syntax.MethodName.Location, methodName, receiver.Type);
@@ -1144,18 +1452,44 @@ internal sealed class Binder
             return new BoundCallExpression(function, boundArguments.ToImmutable());
         }
 
-        // Handle .NET static method calls via qualified name (e.g., Math.Max)
-        if (receiver is BoundVariableExpression varExpr)
+        // Handle string methods
+        if (receiver.Type == TypeSymbol.String)
         {
-            var typeName = varExpr.Variable.Name;
-            var dotNetFunc = ResolveDotNetStaticMethod(typeName, methodName);
-            if (dotNetFunc != null)
+            if (!StringMethods.TryGetValue(methodName, out var function))
             {
-                return BindDotNetFunctionCall(syntax, dotNetFunc, syntax.Arguments);
+                _diagnostics.ReportUndefinedMethod(syntax.MethodName.Location, methodName, receiver.Type);
+                return new BoundErrorExpression();
             }
 
-            // Try namespace.Type.Method pattern
-            var qualifiedName = $"{typeName}.{methodName}";
+            var expectedArgCount = function.Parameters.Length - 1;
+
+            if (syntax.Arguments.Count != expectedArgCount)
+            {
+                _diagnostics.ReportWrongMethodArgumentCount(syntax.Location, methodName, expectedArgCount, syntax.Arguments.Count);
+                return new BoundErrorExpression();
+            }
+
+            var boundArguments = ImmutableArray.CreateBuilder<BoundExpression>();
+
+            var receiverParam = function.Parameters[0];
+            boundArguments.Add(BindConversion(syntax.Expression.Location, receiver, receiverParam.Type));
+
+            for (int i = 0; i < syntax.Arguments.Count; i++)
+            {
+                var argument = BindExpression(syntax.Arguments[i]);
+                var parameter = function.Parameters[i + 1];
+                boundArguments.Add(BindConversion(syntax.Arguments[i].Location, argument, parameter.Type));
+            }
+
+            return new BoundCallExpression(function, boundArguments.ToImmutable());
+        }
+
+        // Handle qualified function names registered in scope (e.g., "Math.Max").
+        // Do NOT call ResolveDotNetStaticMethod here — the receiver is already a bound
+        // variable, so it is definitely not a .NET type name.
+        if (receiver is BoundVariableExpression varExpr)
+        {
+            var qualifiedName = $"{varExpr.Variable.Name}.{methodName}";
             if (_scope.TryLookupFunction(qualifiedName, out var func))
             {
                 return BindFunctionCall(syntax, func!, syntax.Arguments);
@@ -1188,20 +1522,7 @@ internal sealed class Binder
 
         if (dotNetType == null)
         {
-            // Search all loaded assemblies for the type (not just hardcoded prefixes)
-            foreach (var assembly in registry.GetLoadedAssemblies())
-            {
-                try
-                {
-                    dotNetType = assembly.GetTypes().FirstOrDefault(t =>
-                        t.IsPublic && t.Name.Equals(typeName, StringComparison.OrdinalIgnoreCase));
-                    if (dotNetType != null) break;
-                }
-                catch
-                {
-                    // Some assemblies may throw
-                }
-            }
+            dotNetType = registry.FindTypeBySimpleName(typeName);
         }
 
         if (dotNetType == null)

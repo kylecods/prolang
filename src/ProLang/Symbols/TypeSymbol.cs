@@ -12,6 +12,7 @@ public class TypeSymbol : Symbol
     public static readonly TypeSymbol Any = new("any");
     public static readonly TypeSymbol Array = new("array");
     public static readonly TypeSymbol Map = new("map");
+    public static readonly TypeSymbol Null = new("null");
 
     public TypeSymbol(string name, ImmutableArray<TypeSymbol> typeArguments = default) : base(name)
     {

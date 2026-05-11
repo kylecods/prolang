@@ -1,0 +1,7 @@
+import "io"
+
+func main() {
+    let x: any = 42
+    let y = x as int
+    print("Casted value: " + string(y))
+}

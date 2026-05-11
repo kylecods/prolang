@@ -29,24 +29,36 @@ internal static class BuiltInFunctions
         [new ParameterSymbol("path", TypeSymbol.String,0), new ParameterSymbol("contents", TypeSymbol.String,0)],
         TypeSymbol.Void);
 
-    public static readonly FunctionSymbol Push = new("push",
-        ImmutableArray.Create(
-            new ParameterSymbol("arr", TypeSymbol.Any, 0),
-            new ParameterSymbol("value", TypeSymbol.Any, 1)),
-        TypeSymbol.Void);
-
-    public static readonly FunctionSymbol Pop = new("pop",
+    public static readonly FunctionSymbol ArrayLength = new("length",
         ImmutableArray.Create(new ParameterSymbol("arr", TypeSymbol.Any, 0)),
-        TypeSymbol.Any);
+        TypeSymbol.Int);
 
-    public static readonly FunctionSymbol GetAt = new("getAt",
+    public static readonly FunctionSymbol ArrayNew = new("array_new",
+        ImmutableArray.Create(new ParameterSymbol("size", TypeSymbol.Int, 0)),
+        TypeSymbol.Array);
+
+    // String methods
+    public static readonly FunctionSymbol StringLength = new("length",
+        ImmutableArray.Create(new ParameterSymbol("str", TypeSymbol.String, 0)),
+        TypeSymbol.Int);
+
+    public static readonly FunctionSymbol StringCharAt = new("charAt",
         ImmutableArray.Create(
-            new ParameterSymbol("arr", TypeSymbol.Any, 0),
+            new ParameterSymbol("str", TypeSymbol.String, 0),
             new ParameterSymbol("index", TypeSymbol.Int, 1)),
-        TypeSymbol.Any);
+        TypeSymbol.String);
 
-    public static readonly FunctionSymbol Length = new("length",
-        ImmutableArray.Create(new ParameterSymbol("arr", TypeSymbol.Any, 0)),
+    public static readonly FunctionSymbol StringSubstring = new("substring",
+        ImmutableArray.Create(
+            new ParameterSymbol("str", TypeSymbol.String, 0),
+            new ParameterSymbol("start", TypeSymbol.Int, 1),
+            new ParameterSymbol("end", TypeSymbol.Int, 2)),
+        TypeSymbol.String);
+
+    public static readonly FunctionSymbol StringIndexOf = new("indexOf",
+        ImmutableArray.Create(
+            new ParameterSymbol("str", TypeSymbol.String, 0),
+            new ParameterSymbol("needle", TypeSymbol.String, 1)),
         TypeSymbol.Int);
 
     internal static IEnumerable<FunctionSymbol> GetAll() => BuiltInModule.GetAllFunctions();

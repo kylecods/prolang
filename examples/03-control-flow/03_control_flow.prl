@@ -4,50 +4,54 @@
 
 import "io"
 
-print("Example 3: Control Flow")
+func main()
+{
+    print("Example 3: Control Flow")
 
 
-//If statements
-let a : int = 56
-print("Testing if statements: ")
-if(a > 100) {
-    print("Its large")
-}elif(a > 30) {
-    print("Its more than 30")
-}else {
-    print("Its small")
-}
-
-//while statements
-print("Testing while statements: ")
-let b: int = 0
-while(b <= 5){
-    print("While value: " + string(b))
-    b = b + 1
-}
-
-//for loops
-print("Testing for loops: ")
-let v = 0
-for(v = 1 to 10) {
-    print("For value: " + string(v))
-}
-
-//Break and continue
-print("Testing break and continue statements: ")
-
-let i: int = 0
-while(i < 20) {
-    i = i + 1
-    if(i == 3) {
-        print(" skipped value: " + string(i))
-        continue
+    //If statements
+    let a : int = 56
+    print("Testing if statements: ")
+    if(a > 100) {
+        print("Its large")
+    }elif(a > 30) {
+        print("Its more than 30")
+    }else {
+        print("Its small")
     }
 
-      if(i == 12) {
-        print(" stopped at value: " + string(i))
-        break
+    //while statements
+    print("Testing while statements: ")
+    let b: int = 0
+    while(b <= 5){
+        print("While value: " + string(b))
+        b = b + 1
     }
 
-    print(string(i))
+    //for loops
+    print("Testing for loops: ")
+    let lowerBound = 1
+    let upBound = 10
+    for(let v = lowerBound to upBound) {
+        print("For value: " + v)
+    }
+
+    //Break and continue
+    print("Testing break and continue statements: ")
+
+    let i: int = 0
+    while(i < 20) {
+        i = i + 1
+        if(i == 3) {
+            print(" skipped value: " + string(i))
+            continue
+        }
+
+        if(i == 12) {
+            print(" stopped at value: " + string(i))
+            break
+        }
+
+        print(string(i))
+    }
 }

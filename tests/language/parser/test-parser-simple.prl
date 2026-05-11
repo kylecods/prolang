@@ -1,0 +1,27 @@
+import "io"
+
+// Test extractQuotedString function
+
+func extractQuotedString(json: string, startPos: int) : string {
+    let pos = startPos + 1
+    let result = ""
+
+    while(pos < json.length()) {
+        let ch = json.charAt(pos)
+
+        if(ch == "\"") {
+            return result
+        }
+
+        result = result + ch
+        pos = pos + 1
+    }
+
+    return result
+}
+
+print("Testing extractQuotedString...")
+let testStr = "\"hello world\""
+print("Input: " + testStr)
+let extracted = extractQuotedString(testStr, 0)
+print("Extracted: " + extracted)

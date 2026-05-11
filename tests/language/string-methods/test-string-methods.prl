@@ -1,0 +1,41 @@
+import "io"
+
+// Test string methods - Phase B Step 1 Implementation
+
+let testStr: string = "Hello World"
+
+// Test string.length()
+print("=== String Methods Test ===")
+print("String: " + testStr)
+print("Length: " + string(testStr.length()))
+
+// Test string.charAt(index)
+print("")
+print("=== charAt() Test ===")
+print("Character at index 0: " + testStr.charAt(0))
+print("Character at index 6: " + testStr.charAt(6))
+
+// Test string.substring(start, end)
+print("")
+print("=== substring() Test ===")
+print("Substring (0, 5): " + testStr.substring(0, 5))
+print("Substring (6, 11): " + testStr.substring(6, 11))
+
+// Test string.indexOf(needle)
+print("")
+print("=== indexOf() Test ===")
+print("Index of 'World': " + string(testStr.indexOf("World")))
+print("Index of 'Hello': " + string(testStr.indexOf("Hello")))
+print("Index of 'xyz': " + string(testStr.indexOf("xyz")))
+
+// Test with different strings
+print("")
+print("=== Additional Tests ===")
+let email: string = "user@example.com"
+print("Email: " + email)
+print("Email length: " + string(email.length()))
+print("Domain index: " + string(email.indexOf("example")))
+print("Domain: " + email.substring(5, 12))
+
+print("")
+print("✅ String methods are working!")

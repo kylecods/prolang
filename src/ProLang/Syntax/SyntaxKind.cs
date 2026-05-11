@@ -61,6 +61,7 @@ public enum SyntaxKind
     LetKeyword,
     FalseKeyword,
     TrueKeyword,
+    NullKeyword,
     WhileKeyword,
     ForKeyword,
     IfKeyword,
@@ -73,6 +74,7 @@ public enum SyntaxKind
     ReturnKeyword,
     ImportKeyword,
     StructKeyword,
+    AsKeyword,
 
     //html keywords
     ScriptKeyword,
@@ -91,6 +93,7 @@ public enum SyntaxKind
     IndexExpression,
     MethodCallExpression,
     MapEntry,
+    CastExpression,
     
     //statements
     VariableDeclaration,
@@ -117,6 +120,7 @@ public enum SyntaxKind
     TypeClause,
     NameType,
     GenericType,
+    ArrayType,
     Parameter,
     StructDeclaration,
     FieldDeclaration,

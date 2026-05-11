@@ -1,0 +1,16 @@
+// Test: Generic struct with multiple type parameters
+struct Pair<A, B> {
+    first: A;
+    second: B;
+}
+
+struct Triple<X, Y, Z> {
+    a: X;
+    b: Y;
+    c: Z;
+}
+
+func main() {
+    let x = 5
+    print(x)
+}

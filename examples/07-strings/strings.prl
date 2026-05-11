@@ -1,0 +1,16 @@
+import "io"
+
+func main()
+{
+    // Test string methods in compiler mode
+    print("=== String Methods Compiler Test ===")
+
+    let msg = "Hello World"
+    print("String: " + msg)
+    print("Length: " + msg.length())
+    print("Char at 0: " + msg.charAt(0))
+    print("Substring (0, 5): " + msg.substring(0, 5))
+    print("Index of World: " + msg.indexOf("World"))
+
+    print("OK: String methods work in compiler mode!")
+}

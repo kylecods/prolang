@@ -18,7 +18,7 @@ public sealed class Parser
 
     public Parser(SyntaxTree syntaxTree)
     {
-        var tokens = new List<SyntaxToken>();
+        var tokens = new List<SyntaxToken>(256);
 
         var lexer = new Lexer(syntaxTree);
 
@@ -51,7 +51,7 @@ public sealed class Parser
 
         if (index >= _tokens.Length)
         {
-            return _tokens[_tokens.Length + 1];
+            return _tokens[_tokens.Length - 1];
         }
 
         return _tokens[index];
@@ -142,37 +142,91 @@ public sealed class Parser
     {
         var functionKeyword = Match(SyntaxKind.FunctionKeyword);
         var identifier = Match(SyntaxKind.IdentifierToken);
+
+        SyntaxToken? lessThanToken = null;
+        var typeParameters = new SeparatedSyntaxList<SyntaxToken>(ImmutableArray<SyntaxNode>.Empty);
+        SyntaxToken? greaterThanToken = null;
+
+        if (Current.Kind == SyntaxKind.LessThanToken)
+        {
+            lessThanToken = Match(SyntaxKind.LessThanToken);
+            typeParameters = ParseTypeParameterList();
+            greaterThanToken = Match(SyntaxKind.GreaterThanToken);
+        }
+
         var openParenthesisToken = Match(SyntaxKind.LeftParenthesisToken);
         var parameters = ParseParameterList();
-
         var closeParenthesisToken = Match(SyntaxKind.RightParenthesisToken);
-
         var type = ParseOptionalTypeClause();
         var body = ParseBlockStatement();
 
-        return new FunctionDeclarationSyntax(_syntaxTree,functionKeyword, identifier, openParenthesisToken, parameters,
-            closeParenthesisToken, type, (BlockStatementSyntax)body);
+        return new FunctionDeclarationSyntax(_syntaxTree, functionKeyword, identifier,
+            lessThanToken, typeParameters, greaterThanToken,
+            openParenthesisToken, parameters, closeParenthesisToken, type, (BlockStatementSyntax)body);
     }
 
     private StructDeclarationSyntax ParseStructDeclaration()
     {
         var structKeyword = Match(SyntaxKind.StructKeyword);
         var identifier = Match(SyntaxKind.IdentifierToken);
+
+        SyntaxToken? lessThanToken = null;
+        var typeParameters = new SeparatedSyntaxList<SyntaxToken>(ImmutableArray<SyntaxNode>.Empty);
+        SyntaxToken? greaterThanToken = null;
+
+        if (Current.Kind == SyntaxKind.LessThanToken)
+        {
+            lessThanToken = Match(SyntaxKind.LessThanToken);
+            typeParameters = ParseTypeParameterList();
+            greaterThanToken = Match(SyntaxKind.GreaterThanToken);
+        }
+
         var openCurlyToken = Match(SyntaxKind.LeftCurlyToken);
 
         var fields = ImmutableArray.CreateBuilder<FieldDeclarationSyntax>();
 
         while (Current.Kind != SyntaxKind.RightCurlyToken && Current.Kind != SyntaxKind.EofToken)
         {
+            var startToken = Current;
             var fieldIdentifier = Match(SyntaxKind.IdentifierToken);
             var fieldType = ParseTypeClause();
-            var semiColon = Match(SyntaxKind.SemiColonToken);
+            // Accept both semicolons and commas as field separators
+            if (Current.Kind == SyntaxKind.SemiColonToken || Current.Kind == SyntaxKind.CommaToken)
+                NextToken();
             fields.Add(new FieldDeclarationSyntax(_syntaxTree, fieldIdentifier, fieldType));
+            // Guard: if no progress was made, skip the offending token to avoid infinite loop
+            if (Current == startToken)
+                NextToken();
         }
 
         var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
 
-        return new StructDeclarationSyntax(_syntaxTree, structKeyword, identifier, openCurlyToken, fields.ToImmutable(), closeCurlyToken);
+        return new StructDeclarationSyntax(_syntaxTree, structKeyword, identifier, lessThanToken, typeParameters, greaterThanToken, openCurlyToken, fields.ToImmutable(), closeCurlyToken);
+    }
+
+    private SeparatedSyntaxList<SyntaxToken> ParseTypeParameterList()
+    {
+        var nodesAndSeparators = ImmutableArray.CreateBuilder<SyntaxNode>();
+
+        var parseNextParameter = true;
+
+        while (parseNextParameter && Current.Kind != SyntaxKind.GreaterThanToken && Current.Kind != SyntaxKind.EofToken)
+        {
+            var parameter = Match(SyntaxKind.IdentifierToken);
+            nodesAndSeparators.Add(parameter);
+
+            if (Current.Kind == SyntaxKind.CommaToken)
+            {
+                var comma = Match(SyntaxKind.CommaToken);
+                nodesAndSeparators.Add(comma);
+            }
+            else
+            {
+                parseNextParameter = false;
+            }
+        }
+
+        return new SeparatedSyntaxList<SyntaxToken>(nodesAndSeparators.ToImmutable());
     }
     
     private SeparatedSyntaxList<ParameterSyntax> ParseParameterList()
@@ -227,6 +281,12 @@ public sealed class Parser
 
     private TypeSyntax ParseTypeSyntax()
     {
+        var baseType = ParseTypeBase();
+        return ParseArraySuffix(baseType);
+    }
+
+    private TypeSyntax ParseTypeBase()
+    {
         var identifier = Match(SyntaxKind.IdentifierToken);
         if (Current.Kind == SyntaxKind.LessThanToken)
         {
@@ -237,6 +297,18 @@ public sealed class Parser
         }
 
         return new NameTypeSyntax(_syntaxTree, identifier);
+    }
+
+    private TypeSyntax ParseArraySuffix(TypeSyntax baseType)
+    {
+        var type = baseType;
+        while (Current.Kind == SyntaxKind.LeftBracketToken)
+        {
+            var openBracket = Match(SyntaxKind.LeftBracketToken);
+            var closeBracket = Match(SyntaxKind.RightBracketToken);
+            type = new ArrayTypeSyntax(_syntaxTree, type, openBracket, closeBracket);
+        }
+        return type;
     }
 
     private SeparatedSyntaxList<TypeSyntax> ParseGenericArguments()
@@ -324,9 +396,23 @@ public sealed class Parser
 
         var elseKeyword = Match(SyntaxKind.ElseKeyword);
 
-        var blockStatement = ParseBlockStatement();
+        // Support "else if" as syntactic sugar for "else { if ... }"
+        if (Current.Kind == SyntaxKind.IfKeyword)
+        {
+            var ifStatement = ParseIfStatement();
+            var statements = ImmutableArray.Create<StatementSyntax>(ifStatement);
 
-        return new ElseClauseSyntax(_syntaxTree,elseKeyword, blockStatement);
+            // Create synthetic tokens for the block wrapper
+            var openBrace = new SyntaxToken(_syntaxTree, SyntaxKind.LeftCurlyToken, 0, "", null);
+            var closeBrace = new SyntaxToken(_syntaxTree, SyntaxKind.RightCurlyToken, 0, "", null);
+
+            var blockStatement = new BlockStatementSyntax(_syntaxTree, openBrace, statements, closeBrace);
+            return new ElseClauseSyntax(_syntaxTree, elseKeyword, blockStatement);
+        }
+
+        var regularBlock = ParseBlockStatement();
+
+        return new ElseClauseSyntax(_syntaxTree,elseKeyword, regularBlock);
     }
 
     private ElseIfClauseSyntax? ParseElIfClause()
@@ -466,16 +552,27 @@ public sealed class Parser
         {
             left = ParsePrimaryExpression();
         }
-        
+
         while (true)
         {
-            var precedence = Current.Kind.GetBinaryOperatorPrecedence();
-            if (precedence == 0 || precedence <= parentPrecedence)
-                break;
-            var operatorToken = NextToken();
-            var right = ParseBinaryExpression(precedence);
+            // Check for cast expression (as operator has high precedence)
+            if (Current.Kind == SyntaxKind.AsKeyword)
+            {
+                var asKeyword = NextToken();
+                var typeSyntax = ParseTypeSyntax();
+                var targetType = new TypeClauseSyntax(_syntaxTree, null!, typeSyntax);
+                left = new CastExpressionSyntax(_syntaxTree, left, asKeyword, targetType);
+            }
+            else
+            {
+                var precedence = Current.Kind.GetBinaryOperatorPrecedence();
+                if (precedence == 0 || precedence <= parentPrecedence)
+                    break;
+                var operatorToken = NextToken();
+                var right = ParseBinaryExpression(precedence);
 
-            left = new BinaryExpressionSyntax(_syntaxTree,left, operatorToken, right);
+                left = new BinaryExpressionSyntax(_syntaxTree,left, operatorToken, right);
+            }
         }
 
         return left;
@@ -508,6 +605,10 @@ public sealed class Parser
             {
                 return ParseBooleanLiteral();
             }
+            case SyntaxKind.NullKeyword:
+            {
+                return ParseNullLiteral();
+            }
             case SyntaxKind.LeftParenthesisToken:
             {
                 return ParseParenthesizedExpression();
@@ -522,6 +623,11 @@ public sealed class Parser
                 return ParseMapLiteral();
             case SyntaxKind.IdentifierToken:
                 if (Peek(1).Kind == SyntaxKind.LeftCurlyToken)
+                {
+                    return ParseStructCreationExpression();
+                }
+                if (Peek(1).Kind == SyntaxKind.LessThanToken
+                    && LookAheadGenericEnd(SyntaxKind.LeftCurlyToken, out _))
                 {
                     return ParseStructCreationExpression();
                 }
@@ -575,6 +681,15 @@ public sealed class Parser
     private StructCreationExpressionSyntax ParseStructCreationExpression()
     {
         var typeName = Match(SyntaxKind.IdentifierToken);
+
+        var typeArguments = ImmutableArray<TypeSyntax>.Empty;
+        if (Current.Kind == SyntaxKind.LessThanToken)
+        {
+            Match(SyntaxKind.LessThanToken);
+            typeArguments = ParseTypeArgumentList();
+            Match(SyntaxKind.GreaterThanToken);
+        }
+
         var openCurlyToken = Match(SyntaxKind.LeftCurlyToken);
 
         var initializers = ImmutableArray.CreateBuilder<FieldInitializerSyntax>();
@@ -600,7 +715,7 @@ public sealed class Parser
 
         var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
 
-        return new StructCreationExpressionSyntax(_syntaxTree, typeName, openCurlyToken, initializers.ToImmutable(), closeCurlyToken);
+        return new StructCreationExpressionSyntax(_syntaxTree, typeName, typeArguments, openCurlyToken, initializers.ToImmutable(), closeCurlyToken);
     }
 
     private SeparatedSyntaxList<MapEntrySyntax> ParseMapEntries()
@@ -679,21 +794,71 @@ public sealed class Parser
     private ExpressionSyntax ParseNameOrCallExpression()
     {
         if (Peek(0).Kind == SyntaxKind.IdentifierToken && Peek(1).Kind == SyntaxKind.LeftParenthesisToken)
-        {
             return ParseCallExpression();
-        }
+
+        if (Peek(0).Kind == SyntaxKind.IdentifierToken && Peek(1).Kind == SyntaxKind.LessThanToken
+            && LookAheadGenericEnd(SyntaxKind.LeftParenthesisToken, out _))
+            return ParseCallExpression();
 
         return ParseNameExpression();
+    }
+
+    // Returns true if: after current identifier + '<', there is a balanced '>' followed by 'followedBy'
+    private bool LookAheadGenericEnd(SyntaxKind followedBy, out int closeOffset)
+    {
+        closeOffset = 0;
+        int i = 2; // skip identifier(0) and '<'(1)
+        int depth = 1;
+        while (true)
+        {
+            var kind = Peek(i).Kind;
+            if (kind == SyntaxKind.EofToken) return false;
+            if (kind == SyntaxKind.LessThanToken) depth++;
+            else if (kind == SyntaxKind.GreaterThanToken)
+            {
+                depth--;
+                if (depth == 0)
+                {
+                    closeOffset = i;
+                    return Peek(i + 1).Kind == followedBy;
+                }
+            }
+            i++;
+            if (i > 32) return false; // safety limit
+        }
     }
 
     private ExpressionSyntax ParseCallExpression()
     {
         var identifier = Match(SyntaxKind.IdentifierToken);
+
+        var typeArguments = ImmutableArray<TypeSyntax>.Empty;
+        if (Current.Kind == SyntaxKind.LessThanToken)
+        {
+            Match(SyntaxKind.LessThanToken);
+            typeArguments = ParseTypeArgumentList();
+            Match(SyntaxKind.GreaterThanToken);
+        }
+
         var openParenthesisToken = Match(SyntaxKind.LeftParenthesisToken);
         var arguments = ParseArguments();
         var closeParenthesisToken = Match(SyntaxKind.RightParenthesisToken);
 
-        return new CallExpressionSyntax(_syntaxTree,identifier,openParenthesisToken ,arguments, closeParenthesisToken);
+        return new CallExpressionSyntax(_syntaxTree, identifier, typeArguments, openParenthesisToken, arguments, closeParenthesisToken);
+    }
+
+    private ImmutableArray<TypeSyntax> ParseTypeArgumentList()
+    {
+        var args = ImmutableArray.CreateBuilder<TypeSyntax>();
+        while (Current.Kind != SyntaxKind.GreaterThanToken && Current.Kind != SyntaxKind.EofToken)
+        {
+            args.Add(ParseTypeSyntax());
+            if (Current.Kind == SyntaxKind.CommaToken)
+                NextToken();
+            else
+                break;
+        }
+        return args.ToImmutable();
     }
 
     private SeparatedSyntaxList<ExpressionSyntax> ParseArguments()
@@ -757,6 +922,12 @@ public sealed class Parser
         var keywordToken = isTrue ? Match(SyntaxKind.TrueKeyword) : Match(SyntaxKind.FalseKeyword);
 
         return new LiteralExpressionSyntax(_syntaxTree,keywordToken, isTrue);
+    }
+
+    private ExpressionSyntax ParseNullLiteral()
+    {
+        var nullToken = Match(SyntaxKind.NullKeyword);
+        return new LiteralExpressionSyntax(_syntaxTree, nullToken, null);
     }
 
     private StatementSyntax ParseVariableStatement()
@@ -832,15 +1003,39 @@ public sealed class Parser
     {
         var forKeyword = Match(SyntaxKind.ForKeyword);
         var openToken = Match(SyntaxKind.LeftParenthesisToken);
-        var identifier = Match(SyntaxKind.IdentifierToken);
-        var equalToken = Match(SyntaxKind.EqualsToken);
+
+        SyntaxToken identifier;
+        SyntaxToken equalToken;
+
+        // Check if this is a variable declaration: for(let i = 0 to 10)
+        if (Current.Kind == SyntaxKind.LetKeyword)
+        {
+            NextToken(); // consume 'let'
+            identifier = Match(SyntaxKind.IdentifierToken);
+
+            // Check for type annotation (optional): for(let i: int = 0 to 10)
+            if (Current.Kind == SyntaxKind.ColonToken)
+            {
+                NextToken(); // consume ':'
+                ParseTypeClause(); // parse and discard the type (we only care about the identifier)
+            }
+
+            equalToken = Match(SyntaxKind.EqualsToken);
+        }
+        else
+        {
+            // Original behavior: for(i = 0 to 10) where i is pre-declared
+            identifier = Match(SyntaxKind.IdentifierToken);
+            equalToken = Match(SyntaxKind.EqualsToken);
+        }
+
         var lowerBound = ParseExpression();
         var toKeyword = Match(SyntaxKind.ToKeyword);
         var upBound = ParseExpression();
         var closeToken = Match(SyntaxKind.RightParenthesisToken);
         var body = ParseProLangStatement();
 
-        return new ForStatementSyntax(_syntaxTree,forKeyword, openToken, identifier, equalToken, lowerBound, toKeyword, upBound,closeToken,
+        return new ForStatementSyntax(_syntaxTree, forKeyword, openToken, identifier, equalToken, lowerBound, toKeyword, upBound, closeToken,
             body);
     }
 
