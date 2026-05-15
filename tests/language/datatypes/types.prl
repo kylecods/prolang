@@ -1,0 +1,6 @@
+import "io"
+
+func main() 
+{
+    let a: int8 = 127
+}

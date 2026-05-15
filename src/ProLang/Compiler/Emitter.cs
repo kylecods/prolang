@@ -51,6 +51,7 @@ namespace ProLang.Compiler
 
         private Dictionary<BoundLabel, Instruction> _labels = new();
         private List<(BoundLabel label, Instruction instruction)> _fixups = new();
+        private static readonly string[] stringArray = ["System.String"];
 
         private Emitter(string moduleName, string[] references)
         {
@@ -77,7 +78,7 @@ namespace ProLang.Compiler
             var assemblyName = new AssemblyNameDefinition(moduleName, new Version(1, 0));
             _assemblyDefinition = AssemblyDefinition.CreateAssembly(assemblyName, moduleName, ModuleKind.Dll);
 
-            _consoleWriteLineReference = ResolveMethod("System.Console", "WriteLine", new[] { "System.String" })!;
+            _consoleWriteLineReference = ResolveMethod("System.Console", "WriteLine", stringArray)!;
             _consoleReadLineReference = ResolveMethod("System.Console", "ReadLine", Array.Empty<string>())!;
             _stringConcatReference = ResolveMethod("System.String", "Concat", new[] { "System.Object", "System.Object" })!;
             _minReference = ResolveMethod("System.Math", "Min", new[] { "System.Int32", "System.Int32" })!;
@@ -361,6 +362,13 @@ namespace ProLang.Compiler
                     "any" => GetCachedType("System.Object"),
                     "bool" => GetCachedType("System.Boolean"),
                     "int" => GetCachedType("System.Int32"),
+                    "uint32" => GetCachedType("System.UInt32"),
+                    "int16" => GetCachedType("System.Int16"),
+                    "uint16" => GetCachedType("System.UInt16"),
+                    "int8" => GetCachedType("System.SByte"),
+                    "uint8" => GetCachedType("System.Byte"),
+                    "int64" => GetCachedType("System.Int64"),
+                    "uint64" => GetCachedType("System.UInt64"),
                     "string" => GetCachedType("System.String"),
                     "void" => GetCachedType("System.Void"),
                     "array" => new ArrayType(GetCachedType("System.Object")),
@@ -393,11 +401,16 @@ namespace ProLang.Compiler
         private TypeReference GetCachedType(string metaDataName)
         {
             if (_typeCache.TryGetValue(metaDataName, out var cached))
+            {
                 return cached;
+            }
 
             var resolved = ResolveType(metaDataName);
+
             if (resolved == null)
+            {
                 throw new Exception($"Could not resolve required type {metaDataName}");
+            }
 
             return resolved;
         }
@@ -442,7 +455,7 @@ namespace ProLang.Compiler
         {
             if (_diagnostics.Any())
             {
-                return _diagnostics.ToImmutableArray();
+                return [.. _diagnostics];
             }
 
             var objectType = GetTypeReference(TypeSymbol.Any);
@@ -989,10 +1002,41 @@ namespace ProLang.Compiler
             ilProcessor.Emit(opCode, value);
         }
 
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, uint value)
+        {
+            ilProcessor.Emit(opCode, value);
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, short value)
+        {
+            ilProcessor.Emit(opCode, value);
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, ushort value)
+        {
+            ilProcessor.Emit(opCode, value);
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, byte value)
+        {
+            ilProcessor.Emit(opCode, value);
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, sbyte value)
+        {
+            ilProcessor.Emit(opCode, value);
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, long value)
+        {
+            ilProcessor.Emit(opCode, value);
+        }
+
         private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, string value)
         {
             ilProcessor.Emit(opCode, value);
         }
+
 
         private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, FieldReference field)
         {
@@ -1649,11 +1693,28 @@ namespace ProLang.Compiler
 
                 EmitInstruction(ilProcessor, instruction);
             }
-            else if (node.Type == TypeSymbol.Int)
+            else if (node.Type == TypeSymbol.Int
+            || node.Type == TypeSymbol.UInt32
+            || node.Type == TypeSymbol.Int16
+            || node.Type == TypeSymbol.UInt16
+            || node.Type == TypeSymbol.UInt8)
             {
                 var value = (int)node.Value;
 
                 EmitInstruction(ilProcessor, OpCodes.Ldc_I4, value);
+            }
+            else if (node.Type == TypeSymbol.Int8)//Chosen the more efficient instruction
+            {
+                var value = (sbyte)node.Value;
+
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_S, value);
+            }
+            else if (node.Type == TypeSymbol.Int64
+            || node.Type == TypeSymbol.UInt64)
+            {
+                var value = (long)node.Value;
+
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I8, value);
             }
             else if (node.Type == TypeSymbol.String)
             {

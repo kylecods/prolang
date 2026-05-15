@@ -369,7 +369,7 @@ public sealed class DotNetAssemblyRegistry
     /// <summary>
     /// Gets all public constructors of a type.
     /// </summary>
-    public IReadOnlyList<ConstructorInfo> GetConstructors(Type type)
+    public static IReadOnlyList<ConstructorInfo> GetConstructors(Type type)
     {
         try
         {

@@ -108,7 +108,7 @@ public sealed class DotNetInteropModule : BuiltInModule
             }
 
             // Add constructors as "new TypeName"
-            foreach (var constructor in registry.GetConstructors(type))
+            foreach (var constructor in DotNetAssemblyRegistry.GetConstructors(type))
             {
                 var funcName = $"{type.Name}.new";
                 var func = DotNetFunctionSymbol.FromConstructor(constructor);

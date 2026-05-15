@@ -841,6 +841,18 @@ internal sealed class Binder
                 return TypeSymbol.Array;
             case "map":
                 return TypeSymbol.Map;
+            case "uint8":
+                return TypeSymbol.UInt8;
+            case "int8":
+                return TypeSymbol.Int8;
+            case "uint16":
+                return TypeSymbol.UInt16;
+            case "int16":
+                return TypeSymbol.Int16;
+            case "uint64":
+                return TypeSymbol.UInt64;
+            case "int64":
+                return TypeSymbol.Int64;
             default:
                 if (_scope.TryLookupTypeSymbol(name, out var typeSymbol))
                 {
@@ -1676,6 +1688,33 @@ internal sealed class Binder
 
     private BoundExpression BindConversion(TextLocation diagnosticLocation, BoundExpression expression, TypeSymbol type, bool allowExplicit = false)
     {
+        //this is for values that can fit into 32-bit integer
+        if (expression is BoundLiteralExpression intLiteral)
+        {
+            var v = Convert.ToInt32(intLiteral.Value); 
+
+            if (type == TypeSymbol.Int8 && v >= sbyte.MinValue  && v <= sbyte.MaxValue) 
+            {
+                return new BoundLiteralExpression((sbyte)v);
+            }
+
+            if (type == TypeSymbol.UInt8  && v >= byte.MinValue && v <= byte.MaxValue)  
+            { 
+                return new BoundLiteralExpression((byte)v);
+            }
+
+            if (type == TypeSymbol.Int16  && v >= short.MinValue  && v <= short.MaxValue)
+            {
+                 return new BoundLiteralExpression((short)v);
+            }
+
+            if (type == TypeSymbol.UInt16 && v >= ushort.MinValue && v <= ushort.MaxValue) 
+            {
+                return new BoundLiteralExpression((ushort)v);
+            }
+    
+        }
+
         var conversion = Conversion.Classify(expression.Type, type);
 
         if (!conversion.Exists)
