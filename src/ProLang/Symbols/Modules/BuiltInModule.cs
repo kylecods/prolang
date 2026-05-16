@@ -14,6 +14,7 @@ public abstract class BuiltInModule
         Register(new MathModule());
         Register(new FileSystemModule());
         Register(new ArrayModule());
+        Register(new ConsoleModule());
     }
 
     public static void Register(BuiltInModule module)

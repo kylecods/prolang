@@ -6,7 +6,7 @@ namespace ProLang.Symbols;
 internal static class BuiltInFunctions
 {
     public static readonly FunctionSymbol Print = new("print",
-        ImmutableArray.Create(new ParameterSymbol("text", TypeSymbol.String, 0)), TypeSymbol.Void);
+        ImmutableArray.Create(new ParameterSymbol("text", TypeSymbol.Any, 0)), TypeSymbol.Void);
 
     public static readonly FunctionSymbol ReadInput = new("readInput", ImmutableArray<ParameterSymbol>.Empty,
         TypeSymbol.String);
@@ -60,6 +60,34 @@ internal static class BuiltInFunctions
             new ParameterSymbol("str", TypeSymbol.String, 0),
             new ParameterSymbol("needle", TypeSymbol.String, 1)),
         TypeSymbol.Int);
+
+    // Console and threading functions
+    public static readonly FunctionSymbol ConsoleWrite = new("console_write",
+        ImmutableArray.Create(new ParameterSymbol("text", TypeSymbol.String, 0)), TypeSymbol.Void);
+
+    public static readonly FunctionSymbol ConsoleSetCursor = new("console_set_cursor",
+        ImmutableArray.Create(
+            new ParameterSymbol("x", TypeSymbol.Int, 0),
+            new ParameterSymbol("y", TypeSymbol.Int, 1)),
+        TypeSymbol.Void);
+
+    public static readonly FunctionSymbol ConsoleHideCursor = new("console_hide_cursor",
+        ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Void);
+
+    public static readonly FunctionSymbol ConsoleSetColor = new("console_set_color",
+        ImmutableArray.Create(new ParameterSymbol("color", TypeSymbol.Int, 0)), TypeSymbol.Void);
+
+    public static readonly FunctionSymbol ConsoleResetColor = new("console_reset_color",
+        ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Void);
+
+    public static readonly FunctionSymbol ConsoleKeyAvailable = new("console_key_available",
+        ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Bool);
+
+    public static readonly FunctionSymbol ConsoleReadKey = new("console_read_key",
+        ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Int);
+
+    public static readonly FunctionSymbol ThreadSleep = new("thread_sleep",
+        ImmutableArray.Create(new ParameterSymbol("ms", TypeSymbol.Int, 0)), TypeSymbol.Void);
 
     internal static IEnumerable<FunctionSymbol> GetAll() => BuiltInModule.GetAllFunctions();
 }

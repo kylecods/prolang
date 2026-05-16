@@ -6,13 +6,28 @@ public class TypeSymbol : Symbol
 {
     public static readonly TypeSymbol Error = new("?");
     public static readonly TypeSymbol Bool = new("bool");
-    public static readonly TypeSymbol Int = new("int");
+    public static readonly TypeSymbol Int = new("int");//int32
+    public static readonly TypeSymbol UInt32 = new("uint32");//uint32
     public static readonly TypeSymbol String = new("string");
     public static readonly TypeSymbol Void = new("void");
     public static readonly TypeSymbol Any = new("any");
     public static readonly TypeSymbol Array = new("array");
     public static readonly TypeSymbol Map = new("map");
     public static readonly TypeSymbol Null = new("null");
+
+    public static readonly TypeSymbol UInt8 = new("uint8");//byte
+
+    public static readonly TypeSymbol Int8 = new("int8");//sbyte
+
+    public static readonly TypeSymbol UInt16 = new("uint16");//ushort
+
+    public static readonly TypeSymbol Int16 = new("int16");//short
+
+    public static readonly TypeSymbol Int64 = new("int64");//long
+
+    public static readonly TypeSymbol UInt64 = new("uint64");//ulong
+
+
 
     public TypeSymbol(string name, ImmutableArray<TypeSymbol> typeArguments = default) : base(name)
     {

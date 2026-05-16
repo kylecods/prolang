@@ -1,0 +1,8 @@
+import "io"
+
+func main() {
+    print(42)
+    print(true)
+    print(false)
+    print("hello")
+}

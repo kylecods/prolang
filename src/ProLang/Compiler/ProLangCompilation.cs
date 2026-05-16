@@ -86,7 +86,7 @@ public sealed class ProLangCompilation
                 // Handle .NET namespace imports: "dotnet:System.Text.Json"
                 if (importPath.StartsWith("dotnet:", StringComparison.OrdinalIgnoreCase))
                 {
-                    var namespaceName = importPath.Substring("dotnet:".Length);
+                    var namespaceName = importPath["dotnet:".Length..];
                     if (BuiltInModule.RegisterDotNetNamespace(namespaceName))
                     {
                         importedModules.Add(importPath);
@@ -102,7 +102,7 @@ public sealed class ProLangCompilation
                 // Handle .NET assembly file imports: "assembly:/path/to/MyLib.dll"
                 if (importPath.StartsWith("assembly:", StringComparison.OrdinalIgnoreCase))
                 {
-                    var assemblyPath = importPath.Substring("assembly:".Length);
+                    var assemblyPath = importPath["assembly:".Length..];
 
                     // Try relative to importing file first
                     string? resolvedAssemblyPath = null;
@@ -341,9 +341,10 @@ public sealed class ProLangCompilation
         }
 
         var program = GetProgram();
+        
         if (program.Diagnostics.Any())
         {
-            return program.Diagnostics.ToImmutableArray();
+            return program.Diagnostics;
         }
 
         return Emitter.Emit(program, moduleName, references, outputPath);

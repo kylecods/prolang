@@ -11,7 +11,7 @@ func main() {
     let anInteger: int = 100
 
     print("This is an integer: ")
-    print(string(anInteger))
+    print(anInteger)
 
     //Inferred types
     let name = "JOHN"
@@ -19,7 +19,7 @@ func main() {
     print("This is inferred string, " + name)
 
     let isThisCompiled: bool = true
-    print("Is this compiled? " + string(isThisCompiled))
+    print("Is this compiled? " + isThisCompiled)
 
     if(isThisCompiled){
         print("YES")

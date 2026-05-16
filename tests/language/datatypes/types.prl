@@ -1,0 +1,10 @@
+import "io"
+
+func main() 
+{
+    let a: int8 = 127
+    let b: int64 = -500
+
+    print(a)
+    print(b)
+}

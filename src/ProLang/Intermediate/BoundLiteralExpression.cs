@@ -8,20 +8,20 @@ internal sealed class BoundLiteralExpression : BoundExpression
     {
         Value = value;
 
-        if (value is bool)
+        Type = value switch
         {
-            Type = TypeSymbol.Bool;
-        }else if (value is int)
-        {
-            Type = TypeSymbol.Int;
-        }else if (value is string)
-        {
-            Type = TypeSymbol.String;
-        }
-        else
-        {
-            throw new Exception($"Unexpected literal '{value}' of type {value.GetType()}");
-        }
+            bool => TypeSymbol.Bool,
+            int => TypeSymbol.Int,
+            uint => TypeSymbol.UInt32,
+            byte => TypeSymbol.UInt8,
+            sbyte => TypeSymbol.Int8,
+            short => TypeSymbol.Int16,
+            ushort => TypeSymbol.UInt16,
+            long => TypeSymbol.Int64,
+            ulong => TypeSymbol.UInt64,
+            string => TypeSymbol.String,
+            _ => throw new Exception($"Unexpected literal '{value}' of type {value.GetType()}"),
+        };
     }
     
     public override BoundNodeKind Kind => BoundNodeKind.BoundLiteralExpression;

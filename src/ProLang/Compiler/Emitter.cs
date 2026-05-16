@@ -51,6 +51,7 @@ namespace ProLang.Compiler
 
         private Dictionary<BoundLabel, Instruction> _labels = new();
         private List<(BoundLabel label, Instruction instruction)> _fixups = new();
+        private static readonly string[] stringArray = ["System.String"];
 
         private Emitter(string moduleName, string[] references)
         {
@@ -77,7 +78,7 @@ namespace ProLang.Compiler
             var assemblyName = new AssemblyNameDefinition(moduleName, new Version(1, 0));
             _assemblyDefinition = AssemblyDefinition.CreateAssembly(assemblyName, moduleName, ModuleKind.Dll);
 
-            _consoleWriteLineReference = ResolveMethod("System.Console", "WriteLine", new[] { "System.String" })!;
+            _consoleWriteLineReference = ResolveMethod("System.Console", "WriteLine", stringArray)!;
             _consoleReadLineReference = ResolveMethod("System.Console", "ReadLine", Array.Empty<string>())!;
             _stringConcatReference = ResolveMethod("System.String", "Concat", new[] { "System.Object", "System.Object" })!;
             _minReference = ResolveMethod("System.Math", "Min", new[] { "System.Int32", "System.Int32" })!;
@@ -361,6 +362,13 @@ namespace ProLang.Compiler
                     "any" => GetCachedType("System.Object"),
                     "bool" => GetCachedType("System.Boolean"),
                     "int" => GetCachedType("System.Int32"),
+                    "uint32" => GetCachedType("System.UInt32"),
+                    "int16" => GetCachedType("System.Int16"),
+                    "uint16" => GetCachedType("System.UInt16"),
+                    "int8" => GetCachedType("System.SByte"),
+                    "uint8" => GetCachedType("System.Byte"),
+                    "int64" => GetCachedType("System.Int64"),
+                    "uint64" => GetCachedType("System.UInt64"),
                     "string" => GetCachedType("System.String"),
                     "void" => GetCachedType("System.Void"),
                     "array" => new ArrayType(GetCachedType("System.Object")),
@@ -393,11 +401,16 @@ namespace ProLang.Compiler
         private TypeReference GetCachedType(string metaDataName)
         {
             if (_typeCache.TryGetValue(metaDataName, out var cached))
+            {
                 return cached;
+            }
 
             var resolved = ResolveType(metaDataName);
+
             if (resolved == null)
+            {
                 throw new Exception($"Could not resolve required type {metaDataName}");
+            }
 
             return resolved;
         }
@@ -442,7 +455,7 @@ namespace ProLang.Compiler
         {
             if (_diagnostics.Any())
             {
-                return _diagnostics.ToImmutableArray();
+                return [.. _diagnostics];
             }
 
             var objectType = GetTypeReference(TypeSymbol.Any);
@@ -547,21 +560,23 @@ namespace ProLang.Compiler
             _typeDefinition.Methods.Add(initMethod);
             _outputInitMethod = initMethod;
 
-            // Create __AppendToOutput(string value) method
+            // Create __AppendToOutput(object value) method
+            var objectType = GetTypeReference(TypeSymbol.Any);  // System.Object
             var appendMethod = new MethodDefinition("__AppendToOutput",
                 CecilMethodAttributes.Static | CecilMethodAttributes.Private,
                 voidType);
             appendMethod.Parameters.Add(new ParameterDefinition("value",
                 CecilParameterAttributes.None,
-                stringType));
+                objectType));
 
             var appendIL = appendMethod.Body.GetILProcessor();
 
-            // IL: __output.AppendLine(value);
-            // This preserves the behavior of Console.WriteLine() which adds a newline
+            // IL: __output.AppendLine(Convert.ToString(value));
+            var convertToString = ResolveMethod("System.Convert", "ToString", new[] { "System.Object" });
             var sbAppendLineMethod = ResolveMethod("System.Text.StringBuilder", "AppendLine", new[] { "System.String" });
             EmitInstruction(appendIL, OpCodes.Ldsfld, _outputField);
-            EmitInstruction(appendIL, OpCodes.Ldarg_0);  // Load the value parameter
+            EmitInstruction(appendIL, OpCodes.Ldarg_0);  // Load the object value
+            EmitInstruction(appendIL, OpCodes.Call, convertToString);  // Convert.ToString(obj) → string
             EmitInstruction(appendIL, OpCodes.Callvirt, sbAppendLineMethod);
             EmitInstruction(appendIL, OpCodes.Pop);  // Pop the StringBuilder return value
             EmitInstruction(appendIL, OpCodes.Ret);
@@ -989,10 +1004,41 @@ namespace ProLang.Compiler
             ilProcessor.Emit(opCode, value);
         }
 
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, uint value)
+        {
+            ilProcessor.Emit(opCode, value);
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, short value)
+        {
+            ilProcessor.Emit(opCode, value);
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, ushort value)
+        {
+            ilProcessor.Emit(opCode, value);
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, byte value)
+        {
+            ilProcessor.Emit(opCode, value);
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, sbyte value)
+        {
+            ilProcessor.Emit(opCode, value);
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, long value)
+        {
+            ilProcessor.Emit(opCode, value);
+        }
+
         private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, string value)
         {
             ilProcessor.Emit(opCode, value);
         }
+
 
         private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, FieldReference field)
         {
@@ -1049,29 +1095,54 @@ namespace ProLang.Compiler
             var fromType = node.Expression.Type;
             var toType = node.Type;
 
-            if (toType == TypeSymbol.String && (fromType == TypeSymbol.Int || fromType == TypeSymbol.Bool || fromType == TypeSymbol.Any))
+            if (toType == TypeSymbol.String)
             {
-                if (fromType == TypeSymbol.Int || fromType == TypeSymbol.Bool)
-                {
+                // Box value types before calling ToString()
+                if (IsValueType(fromType))
                     EmitInstruction(ilProcessor, OpCodes.Box, GetTypeReference(fromType));
-                }
 
-                var toStringMethod = GetTypeReference(TypeSymbol.Any).Resolve().Methods.First(m => m.Name == "ToString" && m.Parameters.Count == 0);
-                EmitInstruction(ilProcessor, OpCodes.Callvirt, _assemblyDefinition.MainModule.ImportReference(toStringMethod));
+                if (fromType != TypeSymbol.String)
+                {
+                    var toStringMethod = GetTypeReference(TypeSymbol.Any).Resolve().Methods.First(m => m.Name == "ToString" && m.Parameters.Count == 0);
+                    EmitInstruction(ilProcessor, OpCodes.Callvirt, _assemblyDefinition.MainModule.ImportReference(toStringMethod));
+                }
             }
             else if (fromType == TypeSymbol.Any || toType == TypeSymbol.Any)
             {
-                // handle boxing/unboxing between primitives and any
-                if (fromType == TypeSymbol.Int || fromType == TypeSymbol.Bool)
-                {
+                if (toType == TypeSymbol.Any && IsValueType(fromType))
                     EmitInstruction(ilProcessor, OpCodes.Box, GetTypeReference(fromType));
-                }
-                else if (toType == TypeSymbol.Int || toType == TypeSymbol.Bool)
-                {
+                else if (fromType == TypeSymbol.Any && IsValueType(toType))
                     EmitInstruction(ilProcessor, OpCodes.Unbox_Any, GetTypeReference(toType));
-                }
+            }
+            else if (IsNumericType(fromType) && IsNumericType(toType))
+            {
+                EmitInstruction(ilProcessor, NumericConvOpCode(toType));
             }
         }
+
+        private static OpCode NumericConvOpCode(TypeSymbol to)
+        {
+            if (to == TypeSymbol.Int8)   return OpCodes.Conv_I1;
+            if (to == TypeSymbol.Int16)  return OpCodes.Conv_I2;
+            if (to == TypeSymbol.Int)    return OpCodes.Conv_I4;
+            if (to == TypeSymbol.Int64)  return OpCodes.Conv_I8;
+            if (to == TypeSymbol.UInt8)  return OpCodes.Conv_U1;
+            if (to == TypeSymbol.UInt16) return OpCodes.Conv_U2;
+            if (to == TypeSymbol.UInt32) return OpCodes.Conv_U4;
+            if (to == TypeSymbol.UInt64) return OpCodes.Conv_U8;
+            return OpCodes.Nop;
+        }
+
+        private static bool IsNumericType(TypeSymbol type) =>
+            type == TypeSymbol.Int    || type == TypeSymbol.Int8  || type == TypeSymbol.Int16 || type == TypeSymbol.Int64  ||
+            type == TypeSymbol.UInt8  || type == TypeSymbol.UInt16|| type == TypeSymbol.UInt32|| type == TypeSymbol.UInt64;
+
+        private static bool IsValueType(TypeSymbol type) =>
+            type == TypeSymbol.Int    || type == TypeSymbol.Bool   ||
+            type == TypeSymbol.UInt32 || type == TypeSymbol.Int8   ||
+            type == TypeSymbol.UInt8  || type == TypeSymbol.Int16  ||
+            type == TypeSymbol.UInt16 || type == TypeSymbol.Int64  ||
+            type == TypeSymbol.UInt64 || type is StructSymbol;
 
         private void EmitCastExpression(ILProcessor ilProcessor, BoundCastExpression node)
         {
@@ -1223,6 +1294,61 @@ namespace ProLang.Compiler
                 var method = ResolveMethod("System.IO.File", "WriteAllText", new[] { "System.String", "System.String" });
                 if (method != null)
                     EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
+            else if (node.Function == BuiltInFunctions.ConsoleWrite)
+            {
+                var method = ResolveMethod("System.Console", "Write", new[] { "System.String" });
+                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
+            else if (node.Function == BuiltInFunctions.ConsoleSetCursor)
+            {
+                var method = ResolveMethod("System.Console", "SetCursorPosition", new[] { "System.Int32", "System.Int32" });
+                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
+            else if (node.Function == BuiltInFunctions.ConsoleHideCursor)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
+                var method = ResolveMethod("System.Console", "set_CursorVisible", new[] { "System.Boolean" });
+                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
+            else if (node.Function == BuiltInFunctions.ConsoleSetColor)
+            {
+                // color int is already on stack; ConsoleColor is int-backed enum — compatible at IL level
+                var method = ResolveMethod("System.Console", "set_ForegroundColor", new[] { "System.ConsoleColor" });
+                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
+            else if (node.Function == BuiltInFunctions.ConsoleResetColor)
+            {
+                var method = ResolveMethod("System.Console", "ResetColor", Array.Empty<string>());
+                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
+            else if (node.Function == BuiltInFunctions.ConsoleKeyAvailable)
+            {
+                var method = ResolveMethod("System.Console", "get_KeyAvailable", Array.Empty<string>());
+                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
+            else if (node.Function == BuiltInFunctions.ConsoleReadKey)
+            {
+                // Console.ReadKey(true) returns ConsoleKeyInfo (value type); must use ldloca to call instance method
+                var keyInfoType = ResolveType("System.ConsoleKeyInfo");
+                var tempVar = new VariableDefinition(keyInfoType);
+                ilProcessor.Body.Variables.Add(tempVar);
+
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_1); // intercept = true
+                var readKeyMethod = ResolveMethod("System.Console", "ReadKey", new[] { "System.Boolean" });
+                if (readKeyMethod != null) EmitInstruction(ilProcessor, OpCodes.Call, readKeyMethod);
+
+                EmitInstruction(ilProcessor, OpCodes.Stloc, tempVar);
+                EmitInstruction(ilProcessor, OpCodes.Ldloca, tempVar);
+
+                var getKeyMethod = ResolveMethod("System.ConsoleKeyInfo", "get_Key", Array.Empty<string>());
+                if (getKeyMethod != null) EmitInstruction(ilProcessor, OpCodes.Call, getKeyMethod);
+                ilProcessor.Emit(OpCodes.Conv_I4);
+            }
+            else if (node.Function == BuiltInFunctions.ThreadSleep)
+            {
+                var method = ResolveMethod("System.Threading.Thread", "Sleep", new[] { "System.Int32" });
+                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
             }
             else if (node.Function is DotNetFunctionSymbol dotNetFunc)
             {
@@ -1649,11 +1775,28 @@ namespace ProLang.Compiler
 
                 EmitInstruction(ilProcessor, instruction);
             }
-            else if (node.Type == TypeSymbol.Int)
+            else if (node.Type == TypeSymbol.Int
+            || node.Type == TypeSymbol.UInt32
+            || node.Type == TypeSymbol.Int16
+            || node.Type == TypeSymbol.UInt16
+            || node.Type == TypeSymbol.UInt8)
             {
                 var value = (int)node.Value;
 
                 EmitInstruction(ilProcessor, OpCodes.Ldc_I4, value);
+            }
+            else if (node.Type == TypeSymbol.Int8)//Chosen the more efficient instruction
+            {
+                var value = (sbyte)node.Value;
+
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_S, value);
+            }
+            else if (node.Type == TypeSymbol.Int64
+            || node.Type == TypeSymbol.UInt64)
+            {
+                var value = (long)node.Value;
+
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I8, value);
             }
             else if (node.Type == TypeSymbol.String)
             {
