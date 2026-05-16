@@ -560,21 +560,23 @@ namespace ProLang.Compiler
             _typeDefinition.Methods.Add(initMethod);
             _outputInitMethod = initMethod;
 
-            // Create __AppendToOutput(string value) method
+            // Create __AppendToOutput(object value) method
+            var objectType = GetTypeReference(TypeSymbol.Any);  // System.Object
             var appendMethod = new MethodDefinition("__AppendToOutput",
                 CecilMethodAttributes.Static | CecilMethodAttributes.Private,
                 voidType);
             appendMethod.Parameters.Add(new ParameterDefinition("value",
                 CecilParameterAttributes.None,
-                stringType));
+                objectType));
 
             var appendIL = appendMethod.Body.GetILProcessor();
 
-            // IL: __output.AppendLine(value);
-            // This preserves the behavior of Console.WriteLine() which adds a newline
+            // IL: __output.AppendLine(Convert.ToString(value));
+            var convertToString = ResolveMethod("System.Convert", "ToString", new[] { "System.Object" });
             var sbAppendLineMethod = ResolveMethod("System.Text.StringBuilder", "AppendLine", new[] { "System.String" });
             EmitInstruction(appendIL, OpCodes.Ldsfld, _outputField);
-            EmitInstruction(appendIL, OpCodes.Ldarg_0);  // Load the value parameter
+            EmitInstruction(appendIL, OpCodes.Ldarg_0);  // Load the object value
+            EmitInstruction(appendIL, OpCodes.Call, convertToString);  // Convert.ToString(obj) → string
             EmitInstruction(appendIL, OpCodes.Callvirt, sbAppendLineMethod);
             EmitInstruction(appendIL, OpCodes.Pop);  // Pop the StringBuilder return value
             EmitInstruction(appendIL, OpCodes.Ret);
@@ -1093,29 +1095,54 @@ namespace ProLang.Compiler
             var fromType = node.Expression.Type;
             var toType = node.Type;
 
-            if (toType == TypeSymbol.String && (fromType == TypeSymbol.Int || fromType == TypeSymbol.Bool || fromType == TypeSymbol.Any))
+            if (toType == TypeSymbol.String)
             {
-                if (fromType == TypeSymbol.Int || fromType == TypeSymbol.Bool)
-                {
+                // Box value types before calling ToString()
+                if (IsValueType(fromType))
                     EmitInstruction(ilProcessor, OpCodes.Box, GetTypeReference(fromType));
-                }
 
-                var toStringMethod = GetTypeReference(TypeSymbol.Any).Resolve().Methods.First(m => m.Name == "ToString" && m.Parameters.Count == 0);
-                EmitInstruction(ilProcessor, OpCodes.Callvirt, _assemblyDefinition.MainModule.ImportReference(toStringMethod));
+                if (fromType != TypeSymbol.String)
+                {
+                    var toStringMethod = GetTypeReference(TypeSymbol.Any).Resolve().Methods.First(m => m.Name == "ToString" && m.Parameters.Count == 0);
+                    EmitInstruction(ilProcessor, OpCodes.Callvirt, _assemblyDefinition.MainModule.ImportReference(toStringMethod));
+                }
             }
             else if (fromType == TypeSymbol.Any || toType == TypeSymbol.Any)
             {
-                // handle boxing/unboxing between primitives and any
-                if (fromType == TypeSymbol.Int || fromType == TypeSymbol.Bool)
-                {
+                if (toType == TypeSymbol.Any && IsValueType(fromType))
                     EmitInstruction(ilProcessor, OpCodes.Box, GetTypeReference(fromType));
-                }
-                else if (toType == TypeSymbol.Int || toType == TypeSymbol.Bool)
-                {
+                else if (fromType == TypeSymbol.Any && IsValueType(toType))
                     EmitInstruction(ilProcessor, OpCodes.Unbox_Any, GetTypeReference(toType));
-                }
+            }
+            else if (IsNumericType(fromType) && IsNumericType(toType))
+            {
+                EmitInstruction(ilProcessor, NumericConvOpCode(toType));
             }
         }
+
+        private static OpCode NumericConvOpCode(TypeSymbol to)
+        {
+            if (to == TypeSymbol.Int8)   return OpCodes.Conv_I1;
+            if (to == TypeSymbol.Int16)  return OpCodes.Conv_I2;
+            if (to == TypeSymbol.Int)    return OpCodes.Conv_I4;
+            if (to == TypeSymbol.Int64)  return OpCodes.Conv_I8;
+            if (to == TypeSymbol.UInt8)  return OpCodes.Conv_U1;
+            if (to == TypeSymbol.UInt16) return OpCodes.Conv_U2;
+            if (to == TypeSymbol.UInt32) return OpCodes.Conv_U4;
+            if (to == TypeSymbol.UInt64) return OpCodes.Conv_U8;
+            return OpCodes.Nop;
+        }
+
+        private static bool IsNumericType(TypeSymbol type) =>
+            type == TypeSymbol.Int    || type == TypeSymbol.Int8  || type == TypeSymbol.Int16 || type == TypeSymbol.Int64  ||
+            type == TypeSymbol.UInt8  || type == TypeSymbol.UInt16|| type == TypeSymbol.UInt32|| type == TypeSymbol.UInt64;
+
+        private static bool IsValueType(TypeSymbol type) =>
+            type == TypeSymbol.Int    || type == TypeSymbol.Bool   ||
+            type == TypeSymbol.UInt32 || type == TypeSymbol.Int8   ||
+            type == TypeSymbol.UInt8  || type == TypeSymbol.Int16  ||
+            type == TypeSymbol.UInt16 || type == TypeSymbol.Int64  ||
+            type == TypeSymbol.UInt64 || type is StructSymbol;
 
         private void EmitCastExpression(ILProcessor ilProcessor, BoundCastExpression node)
         {

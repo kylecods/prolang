@@ -6,7 +6,7 @@ namespace ProLang.Symbols;
 internal static class BuiltInFunctions
 {
     public static readonly FunctionSymbol Print = new("print",
-        ImmutableArray.Create(new ParameterSymbol("text", TypeSymbol.String, 0)), TypeSymbol.Void);
+        ImmutableArray.Create(new ParameterSymbol("text", TypeSymbol.Any, 0)), TypeSymbol.Void);
 
     public static readonly FunctionSymbol ReadInput = new("readInput", ImmutableArray<ParameterSymbol>.Empty,
         TypeSymbol.String);

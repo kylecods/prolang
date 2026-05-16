@@ -1689,9 +1689,9 @@ internal sealed class Binder
     private BoundExpression BindConversion(TextLocation diagnosticLocation, BoundExpression expression, TypeSymbol type, bool allowExplicit = false)
     {
         //this is for values that can fit into 32-bit integer
-        if (expression is BoundLiteralExpression intLiteral)
+        if (expression is BoundLiteralExpression intLiteral && intLiteral.Value is int)
         {
-            var v = Convert.ToInt32(intLiteral.Value); 
+            var v = Convert.ToInt32(intLiteral.Value);
 
             if (type == TypeSymbol.Int8 && v >= sbyte.MinValue  && v <= sbyte.MaxValue) 
             {
@@ -1712,7 +1712,29 @@ internal sealed class Binder
             {
                 return new BoundLiteralExpression((ushort)v);
             }
-    
+
+            if (type == TypeSymbol.UInt64 && (ulong)v >= ulong.MinValue && (ulong)v <= ulong.MaxValue) 
+            {
+                return new BoundLiteralExpression((ulong)v);
+            }
+
+            if (type == TypeSymbol.Int64) 
+            {
+                return new BoundLiteralExpression((long)v);
+            }
+        }
+
+        if (expression.Type == type){
+            return expression;
+        }
+
+        if (type == TypeSymbol.Any)
+        {
+            return new BoundConversionExpression(type, expression);
+        }
+
+        if (expression.Type == TypeSymbol.Any){
+            return new BoundConversionExpression(type, expression);
         }
 
         var conversion = Conversion.Classify(expression.Type, type);
