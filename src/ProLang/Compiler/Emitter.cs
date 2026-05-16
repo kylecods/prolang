@@ -1295,6 +1295,61 @@ namespace ProLang.Compiler
                 if (method != null)
                     EmitInstruction(ilProcessor, OpCodes.Call, method);
             }
+            else if (node.Function == BuiltInFunctions.ConsoleWrite)
+            {
+                var method = ResolveMethod("System.Console", "Write", new[] { "System.String" });
+                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
+            else if (node.Function == BuiltInFunctions.ConsoleSetCursor)
+            {
+                var method = ResolveMethod("System.Console", "SetCursorPosition", new[] { "System.Int32", "System.Int32" });
+                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
+            else if (node.Function == BuiltInFunctions.ConsoleHideCursor)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
+                var method = ResolveMethod("System.Console", "set_CursorVisible", new[] { "System.Boolean" });
+                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
+            else if (node.Function == BuiltInFunctions.ConsoleSetColor)
+            {
+                // color int is already on stack; ConsoleColor is int-backed enum — compatible at IL level
+                var method = ResolveMethod("System.Console", "set_ForegroundColor", new[] { "System.ConsoleColor" });
+                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
+            else if (node.Function == BuiltInFunctions.ConsoleResetColor)
+            {
+                var method = ResolveMethod("System.Console", "ResetColor", Array.Empty<string>());
+                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
+            else if (node.Function == BuiltInFunctions.ConsoleKeyAvailable)
+            {
+                var method = ResolveMethod("System.Console", "get_KeyAvailable", Array.Empty<string>());
+                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
+            else if (node.Function == BuiltInFunctions.ConsoleReadKey)
+            {
+                // Console.ReadKey(true) returns ConsoleKeyInfo (value type); must use ldloca to call instance method
+                var keyInfoType = ResolveType("System.ConsoleKeyInfo");
+                var tempVar = new VariableDefinition(keyInfoType);
+                ilProcessor.Body.Variables.Add(tempVar);
+
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_1); // intercept = true
+                var readKeyMethod = ResolveMethod("System.Console", "ReadKey", new[] { "System.Boolean" });
+                if (readKeyMethod != null) EmitInstruction(ilProcessor, OpCodes.Call, readKeyMethod);
+
+                EmitInstruction(ilProcessor, OpCodes.Stloc, tempVar);
+                EmitInstruction(ilProcessor, OpCodes.Ldloca, tempVar);
+
+                var getKeyMethod = ResolveMethod("System.ConsoleKeyInfo", "get_Key", Array.Empty<string>());
+                if (getKeyMethod != null) EmitInstruction(ilProcessor, OpCodes.Call, getKeyMethod);
+                ilProcessor.Emit(OpCodes.Conv_I4);
+            }
+            else if (node.Function == BuiltInFunctions.ThreadSleep)
+            {
+                var method = ResolveMethod("System.Threading.Thread", "Sleep", new[] { "System.Int32" });
+                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
             else if (node.Function is DotNetFunctionSymbol dotNetFunc)
             {
                 EmitDotNetCallExpression(ilProcessor, dotNetFunc);
