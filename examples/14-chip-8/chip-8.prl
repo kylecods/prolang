@@ -1,0 +1,77 @@
+import "io"
+
+struct Chip8 {
+    Registers: array<uint8>;
+    Memory: array<uint8>;
+    IndexRegister: uint16;
+    DT: uint8;
+    ST: uint8;
+    PC: uint16;
+    Stack: array<uint16>;
+    Screen: array<uint8>;
+    Opcode: uint16;
+    SP: uint8;
+    DrawFlag: bool;
+    Keys: array<bool>;
+}
+
+func init_chip8(): Chip8 {
+    let registers: array<uint8> = array_new(16)
+    let memory: array<uint8> = array_new(4096)
+    let keys: array<bool> = array_new(16)
+    let stack: array<uint16> = array_new(16)
+    let screen: array<uint8> = array_new(64 * 32)
+
+    return Chip8 
+    {
+        Registers: registers,
+        Memory: memory,
+        IndexRegisters: 0,
+        DT: 0,
+        ST : 0,
+        PC : 512,
+        Stack: stack,
+        Screen: screen,
+        Opcode: 0,
+        SP : 0,
+        DrawFlag: false,
+        Keys: keys
+    }
+}
+
+func LoadFonts(memory: array<uint8>): void 
+{
+    let fonts: array<uint8> =
+    [
+            0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+            0x20, 0x60, 0x20, 0x20, 0x70, // 1
+            0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+            0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+            0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+            0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+            0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+            0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+            0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+            0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+            0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+            0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+            0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+            0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+            0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+            0xF0, 0x80, 0xF0, 0x80, 0x80  // F
+    ]
+    
+    for(let i to fonts.length())
+    {
+        memory[i] = fonts[i]
+    }
+}
+
+
+func main(){
+    let chip8: Chip8 = init_chip8()
+
+    LoadFonts(chip8.Memory)
+
+    print("Hello world")
+}

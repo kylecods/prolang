@@ -1795,7 +1795,7 @@ namespace ProLang.Compiler
             || node.Type == TypeSymbol.UInt16
             || node.Type == TypeSymbol.UInt8)
             {
-                var value = (int)node.Value;
+                var value = Convert.ToInt32(node.Value);
 
                 EmitInstruction(ilProcessor, OpCodes.Ldc_I4, value);
             }
