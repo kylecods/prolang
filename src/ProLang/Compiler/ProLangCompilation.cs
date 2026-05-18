@@ -15,6 +15,13 @@ public sealed class ProLangCompilation
     private readonly ImmutableArray<Diagnostic> _importDiagnostics;
     private readonly ImmutableHashSet<string> _importedModules;
 
+    /// <summary>
+    /// Full paths of DLLs that were resolved from the compiler's lib/ directory.
+    /// These are copied next to the output assembly at emit time so the compiled
+    /// program can find them at runtime without any manual deployment step.
+    /// </summary>
+    private readonly ImmutableHashSet<string> _libAssemblyPaths;
+
     internal BoundGlobalScope GlobalScope
     {
         get
@@ -31,28 +38,30 @@ public sealed class ProLangCompilation
     }
  
 
-    private ProLangCompilation(bool isScript, ProLangCompilation? previous, ImmutableArray<Diagnostic> importDiagnostics, ImmutableHashSet<string> importedModules, params SyntaxTree[] syntaxTrees)
+    private ProLangCompilation(bool isScript, ProLangCompilation? previous, ImmutableArray<Diagnostic> importDiagnostics, ImmutableHashSet<string> importedModules, ImmutableHashSet<string> libAssemblyPaths, params SyntaxTree[] syntaxTrees)
     {
         IsScript = isScript;
         Previous = previous;
         SyntaxTrees = syntaxTrees.ToImmutableArray();
         _importDiagnostics = importDiagnostics;
         _importedModules = importedModules;
+        _libAssemblyPaths = libAssemblyPaths;
     }
 
     public static ProLangCompilation Create(params SyntaxTree[] syntaxTrees)
     {
-        var (resolved, diagnostics, importedModules) = ResolveAllImports(syntaxTrees.ToImmutableArray());
-        return new ProLangCompilation(isScript:false, previous: null, diagnostics, importedModules, resolved.ToArray());
+        var (resolved, diagnostics, importedModules, libAssemblyPaths) = ResolveAllImports(syntaxTrees.ToImmutableArray());
+        return new ProLangCompilation(isScript:false, previous: null, diagnostics, importedModules, libAssemblyPaths, resolved.ToArray());
     }
 
-    private static (ImmutableArray<SyntaxTree> Trees, ImmutableArray<Diagnostic> Diagnostics, ImmutableHashSet<string> ImportedModules) ResolveAllImports(
+    private static (ImmutableArray<SyntaxTree> Trees, ImmutableArray<Diagnostic> Diagnostics, ImmutableHashSet<string> ImportedModules, ImmutableHashSet<string> LibAssemblyPaths) ResolveAllImports(
         ImmutableArray<SyntaxTree> syntaxTrees)
     {
         var allTrees = ImmutableArray.CreateBuilder<SyntaxTree>();
         var diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var importedModules = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var libAssemblyPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Seed visited with the initially provided files
         foreach (var st in syntaxTrees)
@@ -134,6 +143,23 @@ public sealed class ProLangCompilation
                         }
                     }
 
+                    // Try the compiler's lib/ directory for bare names (no path separators).
+                    // Enables "assembly:WinFormsHelper" without specifying an explicit path.
+                    if (resolvedAssemblyPath == null
+                        && !assemblyPath.Contains('/')
+                        && !assemblyPath.Contains('\\'))
+                    {
+                        var libDir = Path.Combine(AppContext.BaseDirectory, "lib");
+                        var dllName = assemblyPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+                            ? assemblyPath : assemblyPath + ".dll";
+                        var candidate = Path.GetFullPath(Path.Combine(libDir, dllName));
+                        if (File.Exists(candidate))
+                        {
+                            resolvedAssemblyPath = candidate;
+                            libAssemblyPaths.Add(candidate); // deploy alongside output at emit time
+                        }
+                    }
+
                     if (resolvedAssemblyPath != null)
                     {
                         var assembly = BuiltInModule.LoadAssemblyFromFile(resolvedAssemblyPath);
@@ -196,6 +222,33 @@ public sealed class ProLangCompilation
                         resolvedPath = candidate;
                 }
 
+                // Try the compiler's lib/ directory as a native (.dll) stdlib assembly.
+                // Allows plain `import "WinFormsHelper"` to resolve lib/WinFormsHelper.dll
+                // without an explicit "assembly:" prefix or file path.
+                if (resolvedPath == null)
+                {
+                    var libDir = Path.Combine(AppContext.BaseDirectory, "lib");
+                    var dllName = importPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+                        ? importPath : importPath + ".dll";
+                    var candidate = Path.GetFullPath(Path.Combine(libDir, dllName));
+                    if (File.Exists(candidate))
+                    {
+                        var asm = BuiltInModule.LoadAssemblyFromFile(candidate);
+                        if (asm != null)
+                        {
+                            importedModules.Add(importPath);
+                            RegisterAssemblyNamespaces(asm);
+                            libAssemblyPaths.Add(candidate); // deploy alongside output at emit time
+                        }
+                        else
+                        {
+                            diagnostics.Add(new Diagnostic(import.PathToken.Location,
+                                $"Could not load stdlib assembly '{importPath}' from '{candidate}'."));
+                        }
+                        continue; // handled — do NOT enqueue as a source tree
+                    }
+                }
+
                 if (resolvedPath == null)
                 {
                     diagnostics.Add(new Diagnostic(import.PathToken.Location,
@@ -214,7 +267,7 @@ public sealed class ProLangCompilation
             }
         }
 
-        return (allTrees.ToImmutable(), diagnostics.ToImmutable(), importedModules.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase));
+        return (allTrees.ToImmutable(), diagnostics.ToImmutable(), importedModules.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase), libAssemblyPaths.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -351,13 +404,38 @@ public sealed class ProLangCompilation
         }
 
         var program = GetProgram();
-        
+
         if (program.Diagnostics.Any())
         {
             return program.Diagnostics;
         }
 
-        return Emitter.Emit(program, moduleName, references, outputPath);
+        var emitDiagnostics = Emitter.Emit(program, moduleName, references, outputPath);
+
+        // On success, copy any stdlib native assemblies (lib/ DLLs) next to the output
+        // so the compiled program can resolve them at runtime without a manual deploy step.
+        if (!emitDiagnostics.Any())
+        {
+            var outputDir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
+            if (outputDir != null)
+            {
+                foreach (var libPath in _libAssemblyPaths)
+                {
+                    var dest = Path.Combine(outputDir, Path.GetFileName(libPath));
+                    try
+                    {
+                        File.Copy(libPath, dest, overwrite: true);
+                    }
+                    catch
+                    {
+                        // Non-fatal: the compiled program may still run if the DLL
+                        // is already present from a previous build.
+                    }
+                }
+            }
+        }
+
+        return emitDiagnostics;
     }
 
 }

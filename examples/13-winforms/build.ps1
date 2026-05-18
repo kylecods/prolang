@@ -1,23 +1,34 @@
 # Build script for WinForms examples
 # Usage: .\build.ps1
 # Run each compiled example with: dotnet bin\<name>.dll
+#
+# What this script does:
+#   1. Builds ProLang (which also builds WinFormsHelper via AfterTargets in ProLang.csproj
+#      and places WinFormsHelper.dll in the compiler's lib/ directory).
+#   2. Compiles each .prl example.  Examples use  import "winforms"  — the compiler
+#      resolves this through std/winforms.prl → lib/WinFormsHelper.dll automatically.
+#   3. Copies WinFormsHelper.dll next to the compiled DLLs for runtime resolution.
+#   4. Patches each runtimeconfig.json to use Microsoft.WindowsDesktop.App.
 
 $ErrorActionPreference = "Stop"
-$root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$prolang = Join-Path $root "..\..\src\ProLang\ProLang.csproj"
-$helperProj = Join-Path $root "helper\WinFormsHelper.csproj"
-$helperDll  = Join-Path $root "helper\bin\WinFormsHelper.dll"
-$outDir     = Join-Path $root "bin"
+$root     = Split-Path -Parent $MyInvocation.MyCommand.Path
+$prolang  = Join-Path $root "..\..\src\ProLang\ProLang.csproj"
+$outDir   = Join-Path $root "bin"
 
-# Step 1 — build the C# WinForms helper library
-Write-Host "==> Building WinFormsHelper..." -ForegroundColor Cyan
-dotnet build $helperProj -c Debug -o (Join-Path $root "helper\bin") --nologo -v q
-if ($LASTEXITCODE -ne 0) { throw "WinFormsHelper build failed" }
+# Step 1 — build ProLang (the AfterTargets="Build" target in ProLang.csproj builds
+#           WinFormsHelper and copies it to the compiler's lib/ directory on Windows)
+Write-Host "==> Building ProLang (+ WinFormsHelper stdlib)..." -ForegroundColor Cyan
+dotnet build $prolang -c Debug --nologo -v q
+if ($LASTEXITCODE -ne 0) { throw "ProLang build failed" }
 
-# Step 2 — compile each prolang example
+$libDll = Join-Path (Split-Path $prolang -Parent) "bin\Debug\net10.0\lib\WinFormsHelper.dll"
+if (-not (Test-Path $libDll)) {
+    throw "WinFormsHelper.dll was not produced at '$libDll'. Ensure you are on Windows and the AfterTargets build step succeeded."
+}
+
+# Step 2 — prepare output directory
+# (WinFormsHelper.dll is copied next to each compiled DLL automatically by the compiler)
 New-Item -ItemType Directory -Force -Path $outDir | Out-Null
-# Copy WinFormsHelper.dll next to the compiled example DLLs so the runtime can find it
-Copy-Item -Force (Join-Path $root "helper\bin\WinFormsHelper.dll") $outDir
 
 $examples = @(
     "01_hello_world",
@@ -29,6 +40,7 @@ $examples = @(
     "07_paint_demo"
 )
 
+# Step 3 — compile each example
 foreach ($name in $examples) {
     $src = Join-Path $root "$name.prl"
     $out = Join-Path $outDir "$name.dll"
@@ -36,11 +48,12 @@ foreach ($name in $examples) {
     dotnet run --project $prolang --no-build -- "$src" "--o=$out"
     if ($LASTEXITCODE -ne 0) { throw "Compilation failed: $name.prl" }
 
-    # Patch runtimeconfig.json to use Microsoft.WindowsDesktop.App so WinForms loads
+    # Patch runtimeconfig.json: compiled DLLs need the Windows Desktop framework
+    # (WinFormsHelper.dll depends on System.Windows.Forms)
     $rcPath = Join-Path $outDir "$name.runtimeconfig.json"
     $rc = @{
         runtimeOptions = @{
-            tfm = "net10.0"
+            tfm       = "net10.0"
             framework = @{
                 name    = "Microsoft.WindowsDesktop.App"
                 version = "10.0.0"

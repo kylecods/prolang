@@ -20,7 +20,7 @@
  *   3 = Quit
  */
 
-import "assembly:./helper/bin/WinFormsHelper.dll"
+import "winforms"
 
 func main()
 {

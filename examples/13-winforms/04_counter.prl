@@ -15,7 +15,7 @@
  * String + int concatenation is built in — no helper needed.
  */
 
-import "assembly:./helper/bin/WinFormsHelper.dll"
+import "winforms"
 
 func main()
 {

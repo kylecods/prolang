@@ -9,7 +9,7 @@
  * and strings, both of which map perfectly to prolang's built-in types.
  */
 
-import "assembly:./helper/bin/WinFormsHelper.dll"
+import "winforms"
 
 func main()
 {

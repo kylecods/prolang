@@ -1,0 +1,16 @@
+/*
+ * ProLang Standard Library — Windows Forms (winforms)
+ *
+ * Loads the WinFormsHelper native assembly from the compiler's lib/ directory.
+ * This file exists so users can write:
+ *
+ *   import "winforms"
+ *
+ * instead of the full explicit path:
+ *
+ *   import "assembly:./helper/bin/WinFormsHelper.dll"
+ *
+ * Available on Windows machines with the .NET Windows Desktop runtime installed.
+ * All API calls are made through the WinFormsHelper static class.
+ */
+import "WinFormsHelper"

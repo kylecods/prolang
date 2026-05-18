@@ -13,7 +13,7 @@
  *   Red:   r=220, g=50,  b=47
  */
 
-import "assembly:./helper/bin/WinFormsHelper.dll"
+import "winforms"
 
 func main()
 {

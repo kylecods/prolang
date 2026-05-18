@@ -12,7 +12,7 @@
  */
 
 import "io"
-import "assembly:./helper/bin/WinFormsHelper.dll"
+import "winforms"
 
 // Declare a prolang enum — members are int constants starting at 0
 enum Direction {

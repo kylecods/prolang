@@ -20,4 +20,19 @@
     </Content>
   </ItemGroup>
 
+  <!--
+    On Windows, build WinFormsHelper after the main ProLang build and drop
+    WinFormsHelper.dll into the compiler output's lib/ subdirectory.
+    This lets prolang source files use  import "winforms"  or  import "WinFormsHelper"
+    without specifying an explicit DLL path.
+  -->
+  <Target Name="BuildWinFormsHelper" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+    <PropertyGroup>
+      <_WFHProj>$(MSBuildThisFileDirectory)..\..\std\WinFormsHelper\WinFormsHelper.csproj</_WFHProj>
+      <_WFHLibDir>$(OutDir)lib</_WFHLibDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(_WFHLibDir)" />
+    <Exec Command="dotnet build &quot;$(_WFHProj)&quot; -c $(Configuration) -o &quot;$(_WFHLibDir)&quot; --nologo -v q" />
+  </Target>
+
 </Project>

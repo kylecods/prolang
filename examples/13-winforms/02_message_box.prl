@@ -8,7 +8,7 @@
  *   - prolang string ↔ .NET string — one-to-one for all text parameters
  */
 
-import "assembly:./helper/bin/WinFormsHelper.dll"
+import "winforms"
 
 func main()
 {
