@@ -25,7 +25,8 @@ $examples = @(
     "03_input_dialog",
     "04_counter",
     "05_color_demo",
-    "06_native_enum"
+    "06_native_enum",
+    "07_paint_demo"
 )
 
 foreach ($name in $examples) {

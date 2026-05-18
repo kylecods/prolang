@@ -243,6 +243,160 @@ public static class WinFormsHelper
     public static void ResetClickTag(int formId)
         => _lastClickTag.Remove(formId);
 
+    // ── Bitmap & Graphics registry ────────────────────────────────────────────
+    private static readonly Dictionary<int, Bitmap>   _bitmaps  = [];
+    private static readonly Dictionary<int, Graphics> _graphics = [];
+
+    // ── Color helper ──────────────────────────────────────────────────────────
+
+    /// <summary>
+    /// Packs four 0–255 channel values into a single ARGB int.
+    /// Returned value may be negative (signed 32-bit) — that is correct:
+    /// Color.FromArgb(int) reads all 32 bits unsigned, so the sign bit is just
+    /// the high bit of the alpha channel.
+    /// prolang int ↔ .NET int — one-to-one; no arithmetic overflow in prolang needed.
+    /// </summary>
+    public static int MakeColor(int a, int r, int g, int b)
+        => Color.FromArgb(a, r, g, b).ToArgb();
+
+    // ── Bitmap creation / disposal ────────────────────────────────────────────
+
+    /// <summary>Creates a Bitmap of the given size. Returns an int handle.</summary>
+    public static int CreateBitmap(int width, int height)
+    {
+        int id = _nextId++;
+        _bitmaps[id] = new Bitmap(width, height);
+        return id;
+    }
+
+    /// <summary>Disposes and removes a Bitmap by handle.</summary>
+    public static void DisposeBitmap(int id)
+    {
+        if (_bitmaps.Remove(id, out var bmp))
+            bmp.Dispose();
+    }
+
+    // ── Graphics creation / disposal ──────────────────────────────────────────
+
+    /// <summary>
+    /// Creates a Graphics context from a Bitmap handle. Returns a Graphics handle.
+    /// The Graphics object draws directly into the Bitmap's pixel buffer.
+    /// </summary>
+    public static int CreateGraphics(int bitmapId)
+    {
+        int id = _nextId++;
+        _graphics[id] = Graphics.FromImage(_bitmaps[bitmapId]);
+        return id;
+    }
+
+    /// <summary>Flushes and disposes a Graphics context by handle.</summary>
+    public static void DisposeGraphics(int id)
+    {
+        if (_graphics.Remove(id, out var g))
+            g.Dispose();
+    }
+
+    // ── Drawing operations ────────────────────────────────────────────────────
+    // Colors: packed ARGB int from MakeColor() — prolang int ↔ Color.FromArgb, one-to-one.
+    // Coordinates / sizes: prolang int ↔ .NET int, one-to-one.
+    // penWidth / fontSize: prolang int, widened to float inside C# as needed.
+
+    /// <summary>Clears the entire surface with a solid color.</summary>
+    public static void GClear(int gId, int argb)
+        => _graphics[gId].Clear(Color.FromArgb(argb));
+
+    /// <summary>Draws a line between two points with the given stroke width (pixels).</summary>
+    public static void GDrawLine(int gId, int argb, int penWidth, int x1, int y1, int x2, int y2)
+    {
+        using var pen = new Pen(Color.FromArgb(argb), penWidth);
+        _graphics[gId].DrawLine(pen, x1, y1, x2, y2);
+    }
+
+    /// <summary>Draws a rectangle outline.</summary>
+    public static void GDrawRectangle(int gId, int argb, int penWidth, int x, int y, int w, int h)
+    {
+        using var pen = new Pen(Color.FromArgb(argb), penWidth);
+        _graphics[gId].DrawRectangle(pen, x, y, w, h);
+    }
+
+    /// <summary>Fills a rectangle with a solid color.</summary>
+    public static void GFillRectangle(int gId, int argb, int x, int y, int w, int h)
+    {
+        using var brush = new SolidBrush(Color.FromArgb(argb));
+        _graphics[gId].FillRectangle(brush, x, y, w, h);
+    }
+
+    /// <summary>Draws an ellipse (or circle) outline.</summary>
+    public static void GDrawEllipse(int gId, int argb, int penWidth, int x, int y, int w, int h)
+    {
+        using var pen = new Pen(Color.FromArgb(argb), penWidth);
+        _graphics[gId].DrawEllipse(pen, x, y, w, h);
+    }
+
+    /// <summary>Fills an ellipse (or circle) with a solid color.</summary>
+    public static void GFillEllipse(int gId, int argb, int x, int y, int w, int h)
+    {
+        using var brush = new SolidBrush(Color.FromArgb(argb));
+        _graphics[gId].FillEllipse(brush, x, y, w, h);
+    }
+
+    /// <summary>
+    /// Draws a string at (x, y) using the given color and font size in points.
+    /// fontSize: prolang int, converted to float for the Font constructor.
+    /// </summary>
+    public static void GDrawString(int gId, string text, int argb, int fontSize, int x, int y)
+    {
+        using var brush = new SolidBrush(Color.FromArgb(argb));
+        using var font  = new Font("Arial", (float)fontSize);
+        _graphics[gId].DrawString(text, font, brush, x, y);
+    }
+
+    // ── Direct pixel access ───────────────────────────────────────────────────
+
+    /// <summary>
+    /// Sets a single pixel in a Bitmap.
+    /// argb: packed int from MakeColor() — prolang int ↔ Color.FromArgb, one-to-one.
+    /// </summary>
+    public static void SetPixel(int bitmapId, int x, int y, int argb)
+        => _bitmaps[bitmapId].SetPixel(x, y, Color.FromArgb(argb));
+
+    /// <summary>
+    /// Reads a single pixel from a Bitmap as a packed ARGB int.
+    /// Return value: prolang int ↔ Color.ToArgb(), one-to-one (may be negative — correct).
+    /// </summary>
+    public static int GetPixel(int bitmapId, int x, int y)
+        => _bitmaps[bitmapId].GetPixel(x, y).ToArgb();
+
+    // ── PictureBox ────────────────────────────────────────────────────────────
+
+    /// <summary>Creates a PictureBox at the given bounds. Returns a handle.</summary>
+    public static int CreatePictureBox(int x, int y, int width, int height)
+    {
+        var pb = new PictureBox
+        {
+            Left     = x,
+            Top      = y,
+            Width    = width,
+            Height   = height,
+            SizeMode = PictureBoxSizeMode.Normal,
+        };
+        return Register(pb);
+    }
+
+    /// <summary>
+    /// Assigns a Bitmap to a PictureBox so it is displayed immediately.
+    /// Both IDs are prolang int handles — one-to-one with their respective registries.
+    /// </summary>
+    public static void SetImage(int pictureBoxId, int bitmapId)
+        => Get<PictureBox>(pictureBoxId).Image = _bitmaps[bitmapId];
+
+    /// <summary>Forces an immediate repaint of a control (Invalidate + Update).</summary>
+    public static void RefreshControl(int id)
+    {
+        _controls[id].Invalidate();
+        _controls[id].Update();
+    }
+
     // ── Static dialogs ────────────────────────────────────────────────────────
 
     /// <summary>Shows a MessageBox with OK button.</summary>
