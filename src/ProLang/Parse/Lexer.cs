@@ -416,23 +416,111 @@ internal sealed class Lexer
 
     private void ReadNumberToken()
     {
+        // Detect non-decimal prefix: 0x (hex), 0b (binary), 0o (octal)
+        if (Current == '0')
+        {
+            var next = char.ToLowerInvariant(LookAhead);
+            if (next == 'x' || next == 'b' || next == 'o')
+            {
+                _position += 2; // skip '0x' / '0b' / '0o'
+                int radix = next == 'x' ? 16 : next == 'b' ? 2 : 8;
+
+                while (IsValidDigitForRadix(Current, radix))
+                    _position++;
+
+                var length = _position - _start;
+                var text = _text.ToString(_start, length);
+                var digits = text.Substring(2); // strip prefix
+
+                try
+                {
+                    _value = Convert.ToInt32(digits, radix);
+                }
+                catch
+                {
+                    _diagnostics.ReportInvalidNumber(CreateErrorLocation(length), text, TypeSymbol.Int);
+                    _value = 0;
+                }
+
+                _kind = SyntaxKind.NumberToken;
+                return;
+            }
+        }
+
+        // Read integer part
         while (char.IsDigit(Current))
-        {
             _position++;
-        }
 
-        var length = _position - _start;
-        var text = _text.ToString(_start, length);
-
-        if (!int.TryParse(text, out var value))
+        // Detect float literal: digits '.' digits [suffix]
+        if (Current == '.' && char.IsDigit(Peek(1)))
         {
-            var location = CreateErrorLocation(length);
-            _diagnostics.ReportInvalidNumber(location, text, TypeSymbol.Int);
+            _position++; // consume '.'
+            while (char.IsDigit(Current))
+                _position++;
+
+            var numericEnd = _position; // end of numeric digits (before any suffix)
+
+            // Optional suffix: f → float32, f32 → float32, f64 → float64
+            var floatType = TypeSymbol.Float64;
+            if (char.ToLowerInvariant(Current) == 'f')
+            {
+                _position++; // consume 'f'
+                if (Current == '3' && Peek(1) == '2')
+                {
+                    _position += 2;
+                    floatType = TypeSymbol.Float32;
+                }
+                else if (Current == '6' && Peek(1) == '4')
+                {
+                    _position += 2;
+                    floatType = TypeSymbol.Float64;
+                }
+                else
+                {
+                    floatType = TypeSymbol.Float32; // bare 'f' = float32
+                }
+            }
+
+            var floatLength = _position - _start;
+            var numericText = _text.ToString(_start, numericEnd - _start);
+
+            if (floatType == TypeSymbol.Float32)
+            {
+                if (!float.TryParse(numericText, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var fv))
+                    _diagnostics.ReportInvalidNumber(CreateErrorLocation(floatLength), numericText, TypeSymbol.Float32);
+                _value = fv;
+            }
+            else
+            {
+                if (!double.TryParse(numericText, System.Globalization.NumberStyles.Float,
+                        System.Globalization.CultureInfo.InvariantCulture, out var dv))
+                    _diagnostics.ReportInvalidNumber(CreateErrorLocation(floatLength), numericText, TypeSymbol.Float64);
+                _value = dv;
+            }
+
+            _kind = SyntaxKind.NumberToken;
+            return;
         }
 
-        _value = value;
+        // Decimal integer path
+        var decLength = _position - _start;
+        var decText = _text.ToString(_start, decLength);
+
+        if (!int.TryParse(decText, out var decValue))
+            _diagnostics.ReportInvalidNumber(CreateErrorLocation(decLength), decText, TypeSymbol.Int);
+
+        _value = decValue;
         _kind = SyntaxKind.NumberToken;
     }
+
+    private static bool IsValidDigitForRadix(char c, int radix) => radix switch
+    {
+        16 => (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F'),
+        2  => c == '0' || c == '1',
+        8  => c >= '0' && c <= '7',
+        _  => false,
+    };
 
     private void ReadIdentifierOrKeyword()
     {

@@ -24,9 +24,9 @@ public static class DotNetTypeMapper
         RegisterPrimitiveMapping(typeof(uint), TypeSymbol.Int);
         RegisterPrimitiveMapping(typeof(long), TypeSymbol.Int);
         RegisterPrimitiveMapping(typeof(ulong), TypeSymbol.Int);
-        RegisterPrimitiveMapping(typeof(float), TypeSymbol.Int);
-        RegisterPrimitiveMapping(typeof(double), TypeSymbol.Int);
-        RegisterPrimitiveMapping(typeof(decimal), TypeSymbol.Int);
+        RegisterPrimitiveMapping(typeof(float), TypeSymbol.Float32);
+        RegisterPrimitiveMapping(typeof(double), TypeSymbol.Float64);
+        RegisterPrimitiveMapping(typeof(decimal), TypeSymbol.Float64);
         RegisterPrimitiveMapping(typeof(string), TypeSymbol.String);
         RegisterPrimitiveMapping(typeof(char), TypeSymbol.String);
 
@@ -135,7 +135,7 @@ public static class DotNetTypeMapper
         }
 
         // Handle numeric conversions
-        if (IsNumericType(targetType) && value is int)
+        if (IsNumericType(targetType) && (value is int || value is float || value is double))
         {
             return Convert.ChangeType(value, targetType);
         }
@@ -213,10 +213,14 @@ public static class DotNetTypeMapper
             return Convert.ToInt32(value);
         }
 
-        if (value is float or double or decimal)
-        {
-            return Convert.ToInt32(value);
-        }
+        if (value is float f)
+            return f;
+
+        if (value is double d)
+            return d;
+
+        if (value is decimal dec)
+            return (double)dec;
 
         // Convert char to string
         if (value is char c)
@@ -269,6 +273,8 @@ public static class DotNetTypeMapper
         if (type == TypeSymbol.Int) return 0;
         if (type == TypeSymbol.Bool) return false;
         if (type == TypeSymbol.String) return "";
+        if (type == TypeSymbol.Float32) return 0.0f;
+        if (type == TypeSymbol.Float64 || type == TypeSymbol.Float) return 0.0d;
         return null;
     }
 

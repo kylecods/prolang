@@ -26,7 +26,7 @@ func init_chip8(): Chip8 {
     {
         Registers: registers,
         Memory: memory,
-        IndexRegisters: 0,
+        IndexRegister: 0,
         DT: 0,
         ST : 0,
         PC : 512,
@@ -61,7 +61,7 @@ func LoadFonts(memory: array<uint8>): void
             0xF0, 0x80, 0xF0, 0x80, 0x80  // F
     ]
     
-    for(let i to fonts.length())
+    for(let i = 0 to fonts.length() - 1)
     {
         memory[i] = fonts[i]
     }

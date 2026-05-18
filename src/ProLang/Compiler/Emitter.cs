@@ -376,6 +376,9 @@ namespace ProLang.Compiler
                     "uint8" => GetCachedType("System.Byte"),
                     "int64" => GetCachedType("System.Int64"),
                     "uint64" => GetCachedType("System.UInt64"),
+                    "float32" => GetCachedType("System.Single"),
+                    "float64" => GetCachedType("System.Double"),
+                    "float" => GetCachedType("System.Double"),
                     "string" => GetCachedType("System.String"),
                     "void" => GetCachedType("System.Void"),
                     "array" => new ArrayType(GetCachedType("System.Object")),
@@ -1050,6 +1053,16 @@ namespace ProLang.Compiler
         }
 
 
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, float value)
+        {
+            ilProcessor.Emit(opCode, value);
+        }
+
+        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, double value)
+        {
+            ilProcessor.Emit(opCode, value);
+        }
+
         private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, FieldReference field)
         {
             ilProcessor.Emit(opCode, field);
@@ -1082,20 +1095,58 @@ namespace ProLang.Compiler
 
         private void EmitStelemForType(ILProcessor ilProcessor, TypeReference elementType)
         {
-            var fullName = elementType.FullName;
-            if (fullName == "System.Int32" || fullName == "System.Boolean")
-                ilProcessor.Emit(OpCodes.Stelem_I4);
-            else
-                ilProcessor.Emit(OpCodes.Stelem_Ref);
+            switch (elementType.FullName)
+            {
+                case "System.Boolean":
+                case "System.Int32":
+                case "System.UInt32":
+                    ilProcessor.Emit(OpCodes.Stelem_I4); break;
+                case "System.Byte":
+                case "System.SByte":
+                    ilProcessor.Emit(OpCodes.Stelem_I1); break;
+                case "System.Int16":
+                case "System.UInt16":
+                    ilProcessor.Emit(OpCodes.Stelem_I2); break;
+                case "System.Int64":
+                case "System.UInt64":
+                    ilProcessor.Emit(OpCodes.Stelem_I8); break;
+                case "System.Single":
+                    ilProcessor.Emit(OpCodes.Stelem_R4); break;
+                case "System.Double":
+                    ilProcessor.Emit(OpCodes.Stelem_R8); break;
+                default:
+                    ilProcessor.Emit(OpCodes.Stelem_Ref); break;
+            }
         }
 
         private void EmitLdelemForType(ILProcessor ilProcessor, TypeReference elementType)
         {
-            var fullName = elementType.FullName;
-            if (fullName == "System.Int32" || fullName == "System.Boolean")
-                ilProcessor.Emit(OpCodes.Ldelem_I4);
-            else
-                ilProcessor.Emit(OpCodes.Ldelem_Ref);
+            switch (elementType.FullName)
+            {
+                case "System.Boolean":
+                case "System.Int32":
+                    ilProcessor.Emit(OpCodes.Ldelem_I4); break;
+                case "System.UInt32":
+                    ilProcessor.Emit(OpCodes.Ldelem_U4); break;
+                case "System.Byte":
+                    ilProcessor.Emit(OpCodes.Ldelem_U1); break;
+                case "System.SByte":
+                    ilProcessor.Emit(OpCodes.Ldelem_I1); break;
+                case "System.Int16":
+                    ilProcessor.Emit(OpCodes.Ldelem_I2); break;
+                case "System.UInt16":
+                    ilProcessor.Emit(OpCodes.Ldelem_U2); break;
+                case "System.Int64":
+                    ilProcessor.Emit(OpCodes.Ldelem_I8); break;
+                case "System.UInt64":
+                    ilProcessor.Emit(OpCodes.Ldelem_I8); break; // CLR has no Ldelem_U8; use I8 (same bits)
+                case "System.Single":
+                    ilProcessor.Emit(OpCodes.Ldelem_R4); break;
+                case "System.Double":
+                    ilProcessor.Emit(OpCodes.Ldelem_R8); break;
+                default:
+                    ilProcessor.Emit(OpCodes.Ldelem_Ref); break;
+            }
         }
 
         private void EmitConversionExpression(ILProcessor ilProcessor, BoundConversionExpression node)
@@ -1138,21 +1189,26 @@ namespace ProLang.Compiler
             if (to == TypeSymbol.Int64)  return OpCodes.Conv_I8;
             if (to == TypeSymbol.UInt8)  return OpCodes.Conv_U1;
             if (to == TypeSymbol.UInt16) return OpCodes.Conv_U2;
-            if (to == TypeSymbol.UInt32) return OpCodes.Conv_U4;
-            if (to == TypeSymbol.UInt64) return OpCodes.Conv_U8;
+            if (to == TypeSymbol.UInt32)  return OpCodes.Conv_U4;
+            if (to == TypeSymbol.UInt64)  return OpCodes.Conv_U8;
+            if (to == TypeSymbol.Float32) return OpCodes.Conv_R4;
+            if (to == TypeSymbol.Float64 || to == TypeSymbol.Float) return OpCodes.Conv_R8;
             return OpCodes.Nop;
         }
 
         private static bool IsNumericType(TypeSymbol type) =>
-            type == TypeSymbol.Int    || type == TypeSymbol.Int8  || type == TypeSymbol.Int16 || type == TypeSymbol.Int64  ||
-            type == TypeSymbol.UInt8  || type == TypeSymbol.UInt16|| type == TypeSymbol.UInt32|| type == TypeSymbol.UInt64;
+            type == TypeSymbol.Int    || type == TypeSymbol.Int8   || type == TypeSymbol.Int16  || type == TypeSymbol.Int64  ||
+            type == TypeSymbol.UInt8  || type == TypeSymbol.UInt16 || type == TypeSymbol.UInt32 || type == TypeSymbol.UInt64 ||
+            type == TypeSymbol.Float32 || type == TypeSymbol.Float64 || type == TypeSymbol.Float;
 
         private static bool IsValueType(TypeSymbol type) =>
             type == TypeSymbol.Int    || type == TypeSymbol.Bool   ||
             type == TypeSymbol.UInt32 || type == TypeSymbol.Int8   ||
             type == TypeSymbol.UInt8  || type == TypeSymbol.Int16  ||
             type == TypeSymbol.UInt16 || type == TypeSymbol.Int64  ||
-            type == TypeSymbol.UInt64 || type is StructSymbol;
+            type == TypeSymbol.UInt64 || type == TypeSymbol.Float32 ||
+            type == TypeSymbol.Float64 || type == TypeSymbol.Float  ||
+            type is StructSymbol;
 
         private void EmitCastExpression(ILProcessor ilProcessor, BoundCastExpression node)
         {
@@ -1811,6 +1867,14 @@ namespace ProLang.Compiler
                 var value = (long)node.Value;
 
                 EmitInstruction(ilProcessor, OpCodes.Ldc_I8, value);
+            }
+            else if (node.Type == TypeSymbol.Float32)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Ldc_R4, (float)node.Value);
+            }
+            else if (node.Type == TypeSymbol.Float64 || node.Type == TypeSymbol.Float)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Ldc_R8, (double)node.Value);
             }
             else if (node.Type == TypeSymbol.String)
             {

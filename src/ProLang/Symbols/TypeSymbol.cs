@@ -27,6 +27,10 @@ public class TypeSymbol : Symbol
 
     public static readonly TypeSymbol UInt64 = new("uint64");//ulong
 
+    public static readonly TypeSymbol Float   = new("float");   // alias for float64
+    public static readonly TypeSymbol Float32 = new("float32"); // System.Single
+    public static readonly TypeSymbol Float64 = new("float64"); // System.Double
+
 
 
     public TypeSymbol(string name, ImmutableArray<TypeSymbol> typeArguments = default) : base(name)

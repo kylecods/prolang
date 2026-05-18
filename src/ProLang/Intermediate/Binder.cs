@@ -910,6 +910,12 @@ internal sealed class Binder
                 return TypeSymbol.UInt64;
             case "int64":
                 return TypeSymbol.Int64;
+            case "float":
+                return TypeSymbol.Float;
+            case "float32":
+                return TypeSymbol.Float32;
+            case "float64":
+                return TypeSymbol.Float64;
             default:
                 if (_scope.TryLookupTypeSymbol(name, out var typeSymbol))
                 {
@@ -1796,6 +1802,24 @@ internal sealed class Binder
             {
                 return new BoundLiteralExpression((long)v);
             }
+        }
+
+        // Smart coercion for float64 literals assigned to float32/float targets
+        if (expression is BoundLiteralExpression dblLit && dblLit.Value is double dv)
+        {
+            if (type == TypeSymbol.Float32)
+                return new BoundLiteralExpression((float)dv);
+            if (type == TypeSymbol.Float || type == TypeSymbol.Float64)
+                return new BoundLiteralExpression(dv);
+        }
+
+        // Smart coercion for float32 literals assigned to float64/float targets
+        if (expression is BoundLiteralExpression fltLit && fltLit.Value is float fv)
+        {
+            if (type == TypeSymbol.Float64 || type == TypeSymbol.Float)
+                return new BoundLiteralExpression((double)fv);
+            if (type == TypeSymbol.Float32)
+                return new BoundLiteralExpression(fv);
         }
 
         if (expression.Type == type){

@@ -68,7 +68,46 @@ internal sealed class BoundBinaryOperator
             new(SyntaxKind.PlusToken,BoundBinaryOperatorKind.Addition, TypeSymbol.String, TypeSymbol.Int, TypeSymbol.String),
             new(SyntaxKind.PlusToken,BoundBinaryOperatorKind.Addition, TypeSymbol.Int, TypeSymbol.String, TypeSymbol.String),
             new(SyntaxKind.PlusToken,BoundBinaryOperatorKind.Addition, TypeSymbol.String, TypeSymbol.Bool, TypeSymbol.String),
-            new(SyntaxKind.PlusToken,BoundBinaryOperatorKind.Addition, TypeSymbol.Bool, TypeSymbol.String, TypeSymbol.String)
+            new(SyntaxKind.PlusToken,BoundBinaryOperatorKind.Addition, TypeSymbol.Bool, TypeSymbol.String, TypeSymbol.String),
+
+            // float32 arithmetic
+            new (SyntaxKind.PlusToken,            BoundBinaryOperatorKind.Addition,       TypeSymbol.Float32),
+            new (SyntaxKind.MinusToken,           BoundBinaryOperatorKind.Subtraction,    TypeSymbol.Float32),
+            new (SyntaxKind.StarToken,            BoundBinaryOperatorKind.Multiplication, TypeSymbol.Float32),
+            new (SyntaxKind.SlashToken,           BoundBinaryOperatorKind.Division,       TypeSymbol.Float32),
+            new (SyntaxKind.PercentageToken,      BoundBinaryOperatorKind.Modulo,         TypeSymbol.Float32),
+            new (SyntaxKind.EqualsEqualsToken,    BoundBinaryOperatorKind.Equals,         TypeSymbol.Float32, TypeSymbol.Bool),
+            new (SyntaxKind.BangEqualsToken,      BoundBinaryOperatorKind.NotEquals,      TypeSymbol.Float32, TypeSymbol.Bool),
+            new (SyntaxKind.LessThanToken,        BoundBinaryOperatorKind.LessThan,       TypeSymbol.Float32, TypeSymbol.Bool),
+            new (SyntaxKind.LessThanEqualToken,   BoundBinaryOperatorKind.LessEqual,      TypeSymbol.Float32, TypeSymbol.Bool),
+            new (SyntaxKind.GreaterThanToken,     BoundBinaryOperatorKind.GreaterThan,    TypeSymbol.Float32, TypeSymbol.Bool),
+            new (SyntaxKind.GreaterThanEqualToken,BoundBinaryOperatorKind.GreaterEqual,   TypeSymbol.Float32, TypeSymbol.Bool),
+
+            // float64 arithmetic
+            new (SyntaxKind.PlusToken,            BoundBinaryOperatorKind.Addition,       TypeSymbol.Float64),
+            new (SyntaxKind.MinusToken,           BoundBinaryOperatorKind.Subtraction,    TypeSymbol.Float64),
+            new (SyntaxKind.StarToken,            BoundBinaryOperatorKind.Multiplication, TypeSymbol.Float64),
+            new (SyntaxKind.SlashToken,           BoundBinaryOperatorKind.Division,       TypeSymbol.Float64),
+            new (SyntaxKind.PercentageToken,      BoundBinaryOperatorKind.Modulo,         TypeSymbol.Float64),
+            new (SyntaxKind.EqualsEqualsToken,    BoundBinaryOperatorKind.Equals,         TypeSymbol.Float64, TypeSymbol.Bool),
+            new (SyntaxKind.BangEqualsToken,      BoundBinaryOperatorKind.NotEquals,      TypeSymbol.Float64, TypeSymbol.Bool),
+            new (SyntaxKind.LessThanToken,        BoundBinaryOperatorKind.LessThan,       TypeSymbol.Float64, TypeSymbol.Bool),
+            new (SyntaxKind.LessThanEqualToken,   BoundBinaryOperatorKind.LessEqual,      TypeSymbol.Float64, TypeSymbol.Bool),
+            new (SyntaxKind.GreaterThanToken,     BoundBinaryOperatorKind.GreaterThan,    TypeSymbol.Float64, TypeSymbol.Bool),
+            new (SyntaxKind.GreaterThanEqualToken,BoundBinaryOperatorKind.GreaterEqual,   TypeSymbol.Float64, TypeSymbol.Bool),
+
+            // float (alias for float64) arithmetic
+            new (SyntaxKind.PlusToken,            BoundBinaryOperatorKind.Addition,       TypeSymbol.Float),
+            new (SyntaxKind.MinusToken,           BoundBinaryOperatorKind.Subtraction,    TypeSymbol.Float),
+            new (SyntaxKind.StarToken,            BoundBinaryOperatorKind.Multiplication, TypeSymbol.Float),
+            new (SyntaxKind.SlashToken,           BoundBinaryOperatorKind.Division,       TypeSymbol.Float),
+            new (SyntaxKind.PercentageToken,      BoundBinaryOperatorKind.Modulo,         TypeSymbol.Float),
+            new (SyntaxKind.EqualsEqualsToken,    BoundBinaryOperatorKind.Equals,         TypeSymbol.Float, TypeSymbol.Bool),
+            new (SyntaxKind.BangEqualsToken,      BoundBinaryOperatorKind.NotEquals,      TypeSymbol.Float, TypeSymbol.Bool),
+            new (SyntaxKind.LessThanToken,        BoundBinaryOperatorKind.LessThan,       TypeSymbol.Float, TypeSymbol.Bool),
+            new (SyntaxKind.LessThanEqualToken,   BoundBinaryOperatorKind.LessEqual,      TypeSymbol.Float, TypeSymbol.Bool),
+            new (SyntaxKind.GreaterThanToken,     BoundBinaryOperatorKind.GreaterThan,    TypeSymbol.Float, TypeSymbol.Bool),
+            new (SyntaxKind.GreaterThanEqualToken,BoundBinaryOperatorKind.GreaterEqual,   TypeSymbol.Float, TypeSymbol.Bool),
         };
 
         public static BoundBinaryOperator? Bind(SyntaxKind syntaxKind, TypeSymbol leftType, TypeSymbol rightType)
