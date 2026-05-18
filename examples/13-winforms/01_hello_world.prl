@@ -1,0 +1,27 @@
+/*
+ * Example 13-01: Hello World WinForm
+ *
+ * Demonstrates the handle-based interop pattern:
+ *   - prolang int ↔ .NET int  (control handles — one-to-one)
+ *   - prolang string ↔ .NET string  (text — one-to-one)
+ *
+ * The C# helper exposes WinForms as static methods that take/return int handles
+ * and strings, both of which map perfectly to prolang's built-in types.
+ */
+
+import "assembly:./helper/bin/WinFormsHelper.dll"
+
+func main()
+{
+    // Create a form — returns an int handle (prolang int ↔ .NET int, one-to-one)
+    let form: int = WinFormsHelper.CreateForm("Hello, ProLang!", 400, 200)
+
+    // Create a label — also an int handle
+    let label: int = WinFormsHelper.CreateLabel("Hello, World!", 120, 70, 160, 30)
+
+    // Add the label to the form
+    WinFormsHelper.AddControl(form, label)
+
+    // Show the form as a modal dialog (blocks until the user closes it)
+    WinFormsHelper.ShowDialog(form)
+}

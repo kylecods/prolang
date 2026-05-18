@@ -225,7 +225,17 @@ public sealed class ProLangCompilation
         try
         {
             var namespaces = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var type in assembly.GetExportedTypes())
+            IEnumerable<Type> exportedTypes;
+            try
+            {
+                exportedTypes = assembly.GetExportedTypes();
+            }
+            catch (System.Reflection.ReflectionTypeLoadException ex)
+            {
+                exportedTypes = ex.Types.Where(t => t != null)!;
+            }
+
+            foreach (var type in exportedTypes)
             {
                 if (!string.IsNullOrEmpty(type.Namespace))
                 {

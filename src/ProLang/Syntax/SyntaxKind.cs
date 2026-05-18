@@ -75,6 +75,7 @@ public enum SyntaxKind
     ImportKeyword,
     StructKeyword,
     AsKeyword,
+    EnumKeyword,
 
     //html keywords
     ScriptKeyword,
@@ -124,6 +125,8 @@ public enum SyntaxKind
     Parameter,
     StructDeclaration,
     FieldDeclaration,
+    EnumDeclaration,
+    EnumMemberDeclaration,
     StructCreationExpression,
     FieldInitializer,
     FieldAccessExpression,

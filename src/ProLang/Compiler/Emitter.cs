@@ -340,6 +340,13 @@ namespace ProLang.Compiler
             if (_knownTypes.TryGetValue(type, out var typeReference))
                 return typeReference;
 
+            if (type is EnumSymbol)
+            {
+                var intRef = GetCachedType("System.Int32");
+                _knownTypes.Add(type, intRef);
+                return intRef;
+            }
+
             if (type is StructSymbol structType)
             {
                 if (!_structTypes.TryGetValue(structType.Name, out var structTypeDef))
@@ -907,6 +914,9 @@ namespace ProLang.Compiler
                 case BoundNodeKind.BoundArrayNewExpression:
                     EmitArrayNewExpression(ilProcessor, (BoundArrayNewExpression)node);
                     break;
+                case BoundNodeKind.BoundEnumMemberExpression:
+                    EmitInstruction(ilProcessor, OpCodes.Ldc_I4, ((BoundEnumMemberExpression)node).Member.Value);
+                    break;
                 default:
                     throw new NotSupportedException($"Unexpected node kind {node.Kind}");
             }
@@ -1349,6 +1359,10 @@ namespace ProLang.Compiler
             {
                 var method = ResolveMethod("System.Threading.Thread", "Sleep", new[] { "System.Int32" });
                 if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
+            else if (node.Function is DotNetEnumConstantSymbol enumConst)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Ldc_I4, enumConst.Value);
             }
             else if (node.Function is DotNetFunctionSymbol dotNetFunc)
             {

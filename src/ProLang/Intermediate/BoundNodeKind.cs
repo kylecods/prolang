@@ -34,4 +34,5 @@ public enum  BoundNodeKind
     BoundFieldAssignmentExpression,
     BoundCastExpression,
     BoundArrayNewExpression,
+    BoundEnumMemberExpression,
 }

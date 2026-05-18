@@ -24,6 +24,7 @@ internal sealed class Binder
     private int _labelCounter;
 
     private ImmutableArray<StructSymbol>.Builder? _structTypes;
+    private ImmutableArray<EnumSymbol>.Builder? _enumTypes;
 
     // Shared across all binders in one compilation — maps concrete function name → (symbol, body).
     private readonly Dictionary<string, (FunctionSymbol Symbol, BoundBlockStatement Body)>? _sharedInstantiations;
@@ -61,8 +62,14 @@ internal sealed class Binder
         // Single-pass collection of all declarations to avoid multiple SelectMany iterations
         var allDeclarations = syntaxTrees.SelectMany(st => st.Root.Declarations).ToList();
         var structDeclarations = allDeclarations.OfType<StructDeclarationSyntax>();
+        var enumDeclarations = allDeclarations.OfType<EnumDeclarationSyntax>();
         var functionDeclarations = allDeclarations.OfType<FunctionDeclarationSyntax>();
         var globalStatements = allDeclarations.OfType<GlobalStatementSyntax>();
+
+        foreach (var enumDecl in enumDeclarations)
+        {
+            binder.BindEnumDeclaration(enumDecl);
+        }
 
         foreach (var structDecl in structDeclarations)
         {
@@ -233,6 +240,7 @@ internal sealed class Binder
         var diagnostics = binder.Diagnostics.ToImmutableArray();
         var variables = binder._scope.GetDeclaredVariables();
         var structTypes = binder._structTypes?.ToImmutable() ?? ImmutableArray<StructSymbol>.Empty;
+        var enumTypes = binder._enumTypes?.ToImmutable() ?? ImmutableArray<EnumSymbol>.Empty;
 
         if (previous != null)
         {
@@ -243,7 +251,7 @@ internal sealed class Binder
         // This ensures the entry point is properly set to __Main
         var finalMainFunction = syntheticMainFunction ?? mainFunction;
 
-        return new BoundGlobalScope(previous, diagnostics, finalMainFunction, scriptFunction, functions, variables, statements.ToImmutableArray(), structTypes, importedModules);
+        return new BoundGlobalScope(previous, diagnostics, finalMainFunction, scriptFunction, functions, variables, statements.ToImmutableArray(), structTypes, importedModules, enumTypes);
     }
 
     public static BoundProgram BindProgram(bool isScript, BoundProgram previous, BoundGlobalScope? globalScope)
@@ -318,7 +326,7 @@ internal sealed class Binder
                 functionBodies.Add(concreteSymbol, instBody);
         }
 
-        return new BoundProgram(previous, diagnostics.ToImmutable(), globalScope.MainFunction, globalScope.ScriptFunction, functionBodies.ToImmutable(), globalScope.StructTypes);
+        return new BoundProgram(previous, diagnostics.ToImmutable(), globalScope.MainFunction, globalScope.ScriptFunction, functionBodies.ToImmutable(), globalScope.StructTypes, globalScope.EnumTypes);
     }
 
     private void BindFunctionDeclaration(FunctionDeclarationSyntax syntax)
@@ -427,6 +435,50 @@ internal sealed class Binder
         }
     }
 
+    private void BindEnumDeclaration(EnumDeclarationSyntax syntax)
+    {
+        var name = syntax.Identifier.Text;
+        var members = ImmutableArray.CreateBuilder<EnumMember>();
+        var seenNames = new HashSet<string>();
+        int nextValue = 0;
+
+        foreach (var memberSyntax in syntax.Members)
+        {
+            var memberName = memberSyntax.Identifier.Text;
+
+            if (!seenNames.Add(memberName))
+            {
+                _diagnostics.ReportSymbolAlreadyDeclared(memberSyntax.Identifier.Location, memberName);
+                continue;
+            }
+
+            if (memberSyntax.Initializer != null)
+            {
+                var initExpr = BindExpression(memberSyntax.Initializer);
+                if (initExpr is BoundLiteralExpression literal && literal.Value is int explicitValue)
+                {
+                    nextValue = explicitValue;
+                }
+            }
+
+            members.Add(new EnumMember(memberName, nextValue));
+            nextValue++;
+        }
+
+        var enumSymbol = new EnumSymbol(name, members.ToImmutable());
+
+        _enumTypes ??= ImmutableArray.CreateBuilder<EnumSymbol>();
+
+        if (!_scope.TryDeclareEnumType(enumSymbol))
+        {
+            _diagnostics.ReportSymbolAlreadyDeclared(syntax.Identifier.Location, name);
+        }
+        else
+        {
+            _enumTypes.Add(enumSymbol);
+        }
+    }
+
     private static BoundScope CreateParentScope(BoundGlobalScope? previous, ImmutableHashSet<string>? importedModules = null)
     {
         var stack = new Stack<BoundGlobalScope>();
@@ -452,6 +504,11 @@ internal sealed class Binder
             foreach (var variable in previous.Variables)
             {
                 scope.TryDeclareVariable(variable);
+            }
+
+            foreach (var enumType in previous.EnumTypes)
+            {
+                scope.TryDeclareEnumType(enumType);
             }
 
             foreach (var structType in previous.StructTypes)
@@ -1078,6 +1135,23 @@ internal sealed class Binder
 
     private BoundExpression BindFieldAccessExpression(FieldAccessExpressionSyntax syntax)
     {
+        // Check if left side is an enum type name — must intercept before binding as variable
+        if (syntax.Expression is NameExpressionSyntax nameExpr)
+        {
+            var candidateName = nameExpr.IdentifierToken.Text;
+            if (_scope.TryLookupEnumType(candidateName, out var enumSym) && enumSym != null)
+            {
+                var memberName = syntax.FieldName.Text;
+                var member = enumSym.FindMember(memberName);
+                if (member == null)
+                {
+                    _diagnostics.ReportUndefinedField(syntax.FieldName.Location, enumSym.Name, memberName);
+                    return new BoundErrorExpression();
+                }
+                return new BoundEnumMemberExpression(enumSym, member);
+            }
+        }
+
         var expression = BindExpression(syntax.Expression);
 
         if (expression.Type == TypeSymbol.Error)

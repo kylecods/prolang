@@ -128,6 +128,11 @@ public sealed class Parser
             return ParseStructDeclaration();
         }
 
+        if (Current.Kind == SyntaxKind.EnumKeyword)
+        {
+            return ParseEnumDeclaration();
+        }
+
         return ParseGlobalStatement();
     }
 
@@ -202,6 +207,43 @@ public sealed class Parser
         var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
 
         return new StructDeclarationSyntax(_syntaxTree, structKeyword, identifier, lessThanToken, typeParameters, greaterThanToken, openCurlyToken, fields.ToImmutable(), closeCurlyToken);
+    }
+
+    private EnumDeclarationSyntax ParseEnumDeclaration()
+    {
+        var enumKeyword = Match(SyntaxKind.EnumKeyword);
+        var identifier = Match(SyntaxKind.IdentifierToken);
+        var openCurlyToken = Match(SyntaxKind.LeftCurlyToken);
+
+        var members = ImmutableArray.CreateBuilder<EnumMemberSyntax>();
+
+        while (Current.Kind != SyntaxKind.RightCurlyToken && Current.Kind != SyntaxKind.EofToken)
+        {
+            var startToken = Current;
+            var memberIdentifier = Match(SyntaxKind.IdentifierToken);
+
+            SyntaxToken? equalsToken = null;
+            ExpressionSyntax? initializer = null;
+
+            if (Current.Kind == SyntaxKind.EqualsToken)
+            {
+                equalsToken = Match(SyntaxKind.EqualsToken);
+                initializer = ParsePrimaryExpression();
+            }
+
+            // Accept commas or semicolons as member separators
+            if (Current.Kind == SyntaxKind.CommaToken || Current.Kind == SyntaxKind.SemiColonToken)
+                NextToken();
+
+            members.Add(new EnumMemberSyntax(_syntaxTree, memberIdentifier, equalsToken, initializer));
+
+            if (Current == startToken)
+                NextToken();
+        }
+
+        var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
+
+        return new EnumDeclarationSyntax(_syntaxTree, enumKeyword, identifier, openCurlyToken, members.ToImmutable(), closeCurlyToken);
     }
 
     private SeparatedSyntaxList<SyntaxToken> ParseTypeParameterList()

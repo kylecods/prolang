@@ -29,6 +29,23 @@ public static class DotNetTypeMapper
         RegisterPrimitiveMapping(typeof(decimal), TypeSymbol.Int);
         RegisterPrimitiveMapping(typeof(string), TypeSymbol.String);
         RegisterPrimitiveMapping(typeof(char), TypeSymbol.String);
+
+        // WinForms / Drawing value types that map one-to-one to prolang int
+        // System.Drawing.Color   → int (ARGB): Color.FromArgb(int) / Color.ToArgb()
+        // All .NET enums         → int (underlying type is always int)
+        TryRegisterDrawingTypes();
+    }
+
+    private static void TryRegisterDrawingTypes()
+    {
+        try
+        {
+            var colorType = Type.GetType("System.Drawing.Color, System.Drawing.Primitives")
+                ?? Type.GetType("System.Drawing.Color, System.Drawing");
+            if (colorType != null)
+                _typeMap[colorType] = TypeSymbol.Int;
+        }
+        catch { }
     }
 
     private static void RegisterPrimitiveMapping(Type clrType, TypeSymbol proLangType)
@@ -45,6 +62,10 @@ public static class DotNetTypeMapper
     {
         if (_typeMap.TryGetValue(dotNetType, out var mapped))
             return mapped;
+
+        // All .NET enums are int-backed — map to int
+        if (dotNetType.IsEnum)
+            return TypeSymbol.Int;
 
         // Handle nullable types
         if (dotNetType.IsGenericType && dotNetType.GetGenericTypeDefinition() == typeof(Nullable<>))
@@ -100,6 +121,18 @@ public static class DotNetTypeMapper
 
         if (targetType.IsInstanceOfType(value))
             return value;
+
+        // Convert int to .NET enum type
+        if (targetType.IsEnum && value is int intVal)
+            return Enum.ToObject(targetType, intVal);
+
+        // Convert int to System.Drawing.Color via Color.FromArgb
+        if (IsColorType(targetType) && value is int argb)
+        {
+            var fromArgb = targetType.GetMethod("FromArgb", new[] { typeof(int) });
+            if (fromArgb != null)
+                return fromArgb.Invoke(null, new object[] { argb })!;
+        }
 
         // Handle numeric conversions
         if (IsNumericType(targetType) && value is int)
@@ -160,6 +193,19 @@ public static class DotNetTypeMapper
     {
         if (value == null)
             return null;
+
+        // Convert .NET enum values to int
+        if (value is Enum)
+            return Convert.ToInt32(value);
+
+        // Convert System.Drawing.Color to ARGB int
+        var valueType = value.GetType();
+        if (IsColorType(valueType))
+        {
+            var toArgb = valueType.GetMethod("ToArgb");
+            if (toArgb != null)
+                return (int)toArgb.Invoke(value, null)!;
+        }
 
         // Convert numeric types to int
         if (value is byte or sbyte or short or ushort or int or uint or long or ulong)
@@ -225,6 +271,9 @@ public static class DotNetTypeMapper
         if (type == TypeSymbol.String) return "";
         return null;
     }
+
+    private static bool IsColorType(Type type)
+        => type.FullName is "System.Drawing.Color";
 
     /// <summary>
     /// Checks if a .NET type is numeric.

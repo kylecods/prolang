@@ -30,6 +30,7 @@ internal static partial class SyntaxFacts
         { "import", SyntaxKind.ImportKeyword },
         { "struct", SyntaxKind.StructKeyword },
         { "as", SyntaxKind.AsKeyword },
+        { "enum", SyntaxKind.EnumKeyword },
     };
 
     private static readonly Dictionary<SyntaxKind, int> UnaryOperatorPrecedenceMap = new()
@@ -170,6 +171,8 @@ internal static partial class SyntaxFacts
                 return "struct";
             case SyntaxKind.AsKeyword:
                 return "as";
+            case SyntaxKind.EnumKeyword:
+                return "enum";
             default:
                 return null;
         }
