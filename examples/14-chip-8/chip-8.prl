@@ -29,7 +29,7 @@ func init_chip8(): Chip8 {
         IndexRegister: 0,
         DT: 0,
         ST : 0,
-        PC : 512,
+        PC : 0x200,
         Stack: stack,
         Screen: screen,
         Opcode: 0,
@@ -67,11 +67,24 @@ func LoadFonts(memory: array<uint8>): void
     }
 }
 
+func Reset(prog: array<uint8>, chip8: Chip8): void {
+    chip8 = init_chip8()
+    LoadFonts(chip8.Memory)
+    LoadProgram(prog, chip8.Memory)
+}
 
-func main(){
+func LoadProgram(prog: array<uint8>, memory: array<uint8>): void {
+
+    for(let i = 0 to prog.length() - 1)
+    {
+        memory[0x200 + i] = prog[i]
+    }
+}
+
+
+func main()
+{
     let chip8: Chip8 = init_chip8()
 
     LoadFonts(chip8.Memory)
-
-    print("Hello world")
 }
