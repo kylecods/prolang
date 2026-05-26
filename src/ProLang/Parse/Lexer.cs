@@ -125,6 +125,11 @@ internal sealed class Lexer
                     // Return whitespace token (comments are ignored)
                     _kind = SyntaxKind.WhitespaceToken;
                 }
+                else if (Current == '=')
+                {
+                    _position++;
+                    _kind = SyntaxKind.SlashEqualsToken;
+                }
                 else if (Current != '>')
                 {
                     _kind = SyntaxKind.SlashToken;
@@ -162,24 +167,32 @@ internal sealed class Lexer
                     _kind = SyntaxKind.LessThanEqualToken;
                     _position+=2;
                 }
+                else if(LookAhead == '<')
+                {
+                    _kind = SyntaxKind.LessThanLessThanToken;
+                    _position+=2;
+                }
                 else
                 {
                     _position++;
                     _kind = SyntaxKind.LessThanToken;
                 }
-
                 break;
             case '>':
                 _position++;
-                if (Current != '=')
-                {
-                    _kind = SyntaxKind.GreaterThanToken;
-                }
-                else
+                if (Current == '=')
                 {
                     _kind = SyntaxKind.GreaterThanEqualToken;
                     _position++;
-                    
+                }
+                else if (Current == '>')
+                {
+                    _kind = SyntaxKind.GreaterThanGreaterThanToken;
+                    _position++;
+                }
+                else
+                {
+                    _kind = SyntaxKind.GreaterThanToken;
                 }
                 break;
             case '=':

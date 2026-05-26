@@ -675,20 +675,11 @@ internal sealed class Binder
         {
             if (_function.Type == TypeSymbol.Void)
             {
+                // Bare "return;" is valid in a void function — nothing to do.
+                // "return <expr>;" in a void function is an error.
                 if (expression != null)
                 {
-                    _diagnostics.ReportInvalidReturnExpression(syntax.Expression.Location, _function.Name);
-                }
-                else
-                {
-                    if (expression == null)
-                    {
-                        _diagnostics.ReportMissingReturnExpression(syntax.ReturnKeyword.Location, _function.Type);
-                    }
-                    else
-                    {
-                        expression = BindConversion(syntax.Expression.Location, expression, _function.Type);
-                    }
+                    _diagnostics.ReportInvalidReturnExpression(syntax.Expression!.Location, _function.Name);
                 }
             }
         }
@@ -1080,6 +1071,51 @@ internal sealed class Binder
         var boundLhs = BindExpression(syntax.Left);
         var boundRhs = BindExpression(syntax.Right);
 
+        // Desugar compound operators: x += y  →  x = x + y
+        if (syntax.OperatorToken.Kind != SyntaxKind.EqualsToken)
+        {
+            var binaryOpKind = syntax.OperatorToken.Kind switch
+            {
+                SyntaxKind.PlusEqualsToken  => SyntaxKind.PlusToken,
+                SyntaxKind.MinusEqualsToken => SyntaxKind.MinusToken,
+                SyntaxKind.StarEqualsToken  => SyntaxKind.StarToken,
+                SyntaxKind.SlashEqualsToken => SyntaxKind.SlashToken,
+                _ => throw new Exception($"Unexpected compound assignment operator {syntax.OperatorToken.Kind}")
+            };
+
+            // Try exact match first, then numeric promotion (e.g. uint8 -= int → int - int)
+            var boundOp = BoundBinaryOperator.Bind(binaryOpKind, boundLhs.Type, boundRhs.Type);
+            var rhsForBinary = boundRhs;
+            if (boundOp == null)
+            {
+                boundOp = BoundBinaryOperator.BindWithPromotion(
+                    binaryOpKind, boundLhs.Type, boundRhs.Type,
+                    out var promotedLeft, out var promotedRight);
+
+                if (boundOp != null)
+                {
+                    // Promote the operands so the binary expression is well-typed.
+                    var lhsForBinary = promotedLeft  != null
+                        ? (BoundExpression)new BoundConversionExpression(promotedLeft,  boundLhs)
+                        : boundLhs;
+                    rhsForBinary = promotedRight != null
+                        ? new BoundConversionExpression(promotedRight, boundRhs)
+                        : boundRhs;
+                    boundRhs = new BoundBinaryExpression(lhsForBinary, boundOp, rhsForBinary);
+                }
+            }
+            else
+            {
+                boundRhs = new BoundBinaryExpression(boundLhs, boundOp, rhsForBinary);
+            }
+
+            if (boundOp == null)
+            {
+                _diagnostics.ReportUndefinedBinaryOperator(syntax.OperatorToken.Location, syntax.OperatorToken.Text, boundLhs.Type, boundRhs.Type);
+                return new BoundErrorExpression();
+            }
+        }
+
         if (boundLhs is BoundVariableExpression variableExpression)
         {
             var variable = variableExpression.Variable;
@@ -1217,15 +1253,30 @@ internal sealed class Binder
 
     private BoundExpression BindBinaryExpression(BinaryExpressionSyntax syntax)
     {
-        var boundLeft = BindExpression(syntax.Left);
+        var boundLeft  = BindExpression(syntax.Left);
         var boundRight = BindExpression(syntax.Right);
 
         if (boundLeft.Type == TypeSymbol.Error || boundRight.Type == TypeSymbol.Error)
-        {
             return new BoundErrorExpression();
-        }
 
         var boundOperator = BoundBinaryOperator.Bind(syntax.OperatorToken.Kind, boundLeft.Type, boundRight.Type);
+
+        // Fallback: try numeric promotion (e.g. uint8 - int → int - int)
+        if (boundOperator == null)
+        {
+            boundOperator = BoundBinaryOperator.BindWithPromotion(
+                syntax.OperatorToken.Kind,
+                boundLeft.Type,
+                boundRight.Type,
+                out var promotedLeft,
+                out var promotedRight);
+
+            if (boundOperator != null)
+            {
+                if (promotedLeft  != null) boundLeft  = new BoundConversionExpression(promotedLeft,  boundLeft);
+                if (promotedRight != null) boundRight = new BoundConversionExpression(promotedRight, boundRight);
+            }
+        }
 
         if (boundOperator == null)
         {

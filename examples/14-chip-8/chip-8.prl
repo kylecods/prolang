@@ -1,90 +1,580 @@
 import "io"
+import "console"
+import "math"
+import "fs"
+
+// ── Chip8 state ──────────────────────────────────────────────────────────────
 
 struct Chip8 {
-    Registers: array<uint8>;
-    Memory: array<uint8>;
-    IndexRegister: uint16;
-    DT: uint8;
-    ST: uint8;
-    PC: uint16;
-    Stack: array<uint16>;
-    Screen: array<uint8>;
-    Opcode: uint16;
-    SP: uint8;
-    DrawFlag: bool;
-    Keys: array<bool>;
+    Registers:     array<uint8>;   // V0-VF
+    Memory:        array<uint8>;   // 4 KiB
+    IndexRegister: uint16;         // I
+    DT:            uint8;          // delay timer
+    ST:            uint8;          // sound timer
+    PC:            uint16;         // program counter
+    Stack:         array<uint16>;  // call stack (16 levels)
+    Screen:        array<uint8>;   // 64x32 pixels, 0 or 1
+    Opcode:        uint16;
+    SP:            uint8;          // stack pointer
+    DrawFlag:      bool;
+    Keys:          array<bool>;    // 16-key hex pad
 }
 
 func init_chip8(): Chip8 {
-    let registers: array<uint8> = array_new(16)
-    let memory: array<uint8> = array_new(4096)
-    let keys: array<bool> = array_new(16)
-    let stack: array<uint16> = array_new(16)
-    let screen: array<uint8> = array_new(64 * 32)
+    let registers: array<uint8>  = array_new(16)
+    let memory:    array<uint8>  = array_new(4096)
+    let keys:      array<bool>   = array_new(16)
+    let stack:     array<uint16> = array_new(16)
+    let screen:    array<uint8>  = array_new(64 * 32)
 
-    return Chip8 
-    {
-        Registers: registers,
-        Memory: memory,
+    return Chip8 {
+        Registers:     registers,
+        Memory:        memory,
         IndexRegister: 0,
-        DT: 0,
-        ST : 0,
-        PC : 0x200,
-        Stack: stack,
-        Screen: screen,
-        Opcode: 0,
-        SP : 0,
-        DrawFlag: false,
-        Keys: keys
+        DT:            0,
+        ST:            0,
+        PC:            0x200,
+        Stack:         stack,
+        Screen:        screen,
+        Opcode:        0,
+        SP:            0,
+        DrawFlag:      false,
+        Keys:          keys
     }
 }
 
-func LoadFonts(memory: array<uint8>): void 
-{
-    let fonts: array<uint8> =
-    [
-            0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
-            0x20, 0x60, 0x20, 0x20, 0x70, // 1
-            0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
-            0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
-            0x90, 0x90, 0xF0, 0x10, 0x10, // 4
-            0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
-            0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
-            0xF0, 0x10, 0x20, 0x40, 0x40, // 7
-            0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
-            0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
-            0xF0, 0x90, 0xF0, 0x90, 0x90, // A
-            0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
-            0xF0, 0x80, 0x80, 0x80, 0xF0, // C
-            0xE0, 0x90, 0x90, 0x90, 0xE0, // D
-            0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
-            0xF0, 0x80, 0xF0, 0x80, 0x80  // F
+// ── Font data (sprites 0-F, 5 bytes each, stored at 0x000) ───────────────────
+
+func LoadFonts(memory: array<uint8>): void {
+    let fonts: array<uint8> = [
+        0xF0, 0x90, 0x90, 0x90, 0xF0, // 0
+        0x20, 0x60, 0x20, 0x20, 0x70, // 1
+        0xF0, 0x10, 0xF0, 0x80, 0xF0, // 2
+        0xF0, 0x10, 0xF0, 0x10, 0xF0, // 3
+        0x90, 0x90, 0xF0, 0x10, 0x10, // 4
+        0xF0, 0x80, 0xF0, 0x10, 0xF0, // 5
+        0xF0, 0x80, 0xF0, 0x90, 0xF0, // 6
+        0xF0, 0x10, 0x20, 0x40, 0x40, // 7
+        0xF0, 0x90, 0xF0, 0x90, 0xF0, // 8
+        0xF0, 0x90, 0xF0, 0x10, 0xF0, // 9
+        0xF0, 0x90, 0xF0, 0x90, 0x90, // A
+        0xE0, 0x90, 0xE0, 0x90, 0xE0, // B
+        0xF0, 0x80, 0x80, 0x80, 0xF0, // C
+        0xE0, 0x90, 0x90, 0x90, 0xE0, // D
+        0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
+        0xF0, 0x80, 0xF0, 0x80, 0x80  // F
     ]
-    
+
     for(let i = 0 to fonts.length() - 1)
     {
         memory[i] = fonts[i]
     }
 }
 
-func Reset(prog: array<uint8>, chip8: Chip8): void {
-    chip8 = init_chip8()
-    LoadFonts(chip8.Memory)
-    LoadProgram(prog, chip8.Memory)
-}
+// ── ROM loader (copies bytes into memory starting at 0x200) ──────────────────
 
 func LoadProgram(prog: array<uint8>, memory: array<uint8>): void {
-
     for(let i = 0 to prog.length() - 1)
     {
         memory[0x200 + i] = prog[i]
     }
 }
 
+// ── Keyboard mapping (ConsoleKey int values → CHIP-8 key 0-F, -1 = unknown) ─
+//
+//   CHIP-8 layout   →   PC keyboard layout
+//   1 2 3 C             1 2 3 4
+//   4 5 6 D             Q W E R
+//   7 8 9 E             A S D F
+//   A 0 B F             Z X C V
 
-func main()
+func MapKey(key: int): int {
+    if(key == 49) { return 1  }  // 1
+    if(key == 50) { return 2  }  // 2
+    if(key == 51) { return 3  }  // 3
+    if(key == 52) { return 12 }  // 4 -> C
+    if(key == 81) { return 4  }  // Q
+    if(key == 87) { return 5  }  // W
+    if(key == 69) { return 6  }  // E
+    if(key == 82) { return 13 }  // R -> D
+    if(key == 65) { return 7  }  // A
+    if(key == 83) { return 8  }  // S
+    if(key == 68) { return 9  }  // D
+    if(key == 70) { return 14 }  // F -> E
+    if(key == 90) { return 10 }  // Z -> A
+    if(key == 88) { return 0  }  // X -> 0
+    if(key == 67) { return 11 }  // C -> B
+    if(key == 86) { return 15 }  // V -> F
+    if(key == 27) { return -2 }  // Escape -> signal exit
+    return -1
+}
+
+// Polls for a key press; clears all keys then sets the pressed one.
+// Returns true if the user pressed Escape (exit signal).
+func UpdateKeys(chip8: Chip8): bool {
+    let i: int = 0
+    while(i < 16) {
+        chip8.Keys[i] = false
+        i += 1
+    }
+    if(console_key_available()) {
+        let k: int = console_read_key()
+        let mapped: int = MapKey(k)
+        if(mapped == -2) {
+            return true
+        }
+        if(mapped >= 0) {
+            chip8.Keys[mapped] = true
+        }
+    }
+    return false
+}
+
+// ── Terminal renderer ─────────────────────────────────────────────────────────
+// 64x32 pixels -> 64x32 characters; '#' = on, ' ' = off.
+
+func RenderScreen(chip8: Chip8): void {
+    let row: int = 0
+    while(row < 32) {
+        console_set_cursor(0, row)
+        let col: int = 0
+        while(col < 64) {
+            if(chip8.Screen[row * 64 + col] == 1) {
+                console_write("#")
+            } else {
+                console_write(" ")
+            }
+            col += 1
+        }
+        row += 1
+    }
+    console_set_cursor(0, 33)
+}
+
+// ── Instruction decode & execute ──────────────────────────────────────────────
+// Returns the updated Chip8 (scalar fields like PC, SP, DT, ST, DrawFlag).
+// Array-field mutations (Memory, Registers, Screen, Stack, Keys) are visible
+// to the caller automatically because arrays are reference types.
+
+func RunProgram(chip8: Chip8): Chip8 {
+    // Fetch
+    let opcode: uint16 = (chip8.Memory[chip8.PC] << 8) | (chip8.Memory[chip8.PC + 1])
+    chip8.PC += 2
+    chip8.Opcode = opcode
+
+    // Pre-decode common fields
+    let nnn: uint16 = opcode & 0x0FFF          // 12-bit address
+    let n:   uint8  = opcode & 0x000F          // 4-bit nibble
+    let kk:  uint8  = opcode & 0x00FF          // 8-bit immediate
+    let x:   uint8  = (opcode & 0x0F00) >> 8  // Vx index (0-F)
+    let y:   uint8  = (opcode & 0x00F0) >> 4  // Vy index (0-F)
+    let code         = opcode & 0xF000         // upper nibble (int via promotion)
+
+    // ── 0x0NNN ───────────────────────────────────────────────────────────────
+    if(code == 0x0000)
+    {
+        if(kk == 0xE0)
+        {
+            // 00E0 CLS: clear screen
+            let si: int = 0
+            while(si < 2048) {
+                chip8.Screen[si] = 0
+                si += 1
+            }
+            chip8.DrawFlag = true
+        }
+        elif(kk == 0xEE)
+        {
+            // 00EE RET: return from subroutine
+            chip8.PC = chip8.Stack[chip8.SP]
+            chip8.SP -= 1
+        }
+    }
+
+    // ── 0x1NNN JP addr ───────────────────────────────────────────────────────
+    elif(code == 0x1000)
+    {
+        chip8.PC = nnn
+    }
+
+    // ── 0x2NNN CALL addr ─────────────────────────────────────────────────────
+    elif(code == 0x2000)
+    {
+        chip8.SP += 1
+        chip8.Stack[chip8.SP] = chip8.PC
+        chip8.PC = nnn
+    }
+
+    // ── 0x3XKK SE Vx, byte ───────────────────────────────────────────────────
+    elif(code == 0x3000)
+    {
+        if(chip8.Registers[x] == kk) {
+            chip8.PC += 2
+        }
+    }
+
+    // ── 0x4XKK SNE Vx, byte ──────────────────────────────────────────────────
+    elif(code == 0x4000)
+    {
+        if(chip8.Registers[x] != kk) {
+            chip8.PC += 2
+        }
+    }
+
+    // ── 0x5XY0 SE Vx, Vy ─────────────────────────────────────────────────────
+    elif(code == 0x5000)
+    {
+        if(chip8.Registers[x] == chip8.Registers[y]) {
+            chip8.PC += 2
+        }
+    }
+
+    // ── 0x6XKK LD Vx, byte ───────────────────────────────────────────────────
+    elif(code == 0x6000)
+    {
+        chip8.Registers[x] = kk
+    }
+
+    // ── 0x7XKK ADD Vx, byte (no carry flag) ──────────────────────────────────
+    elif(code == 0x7000)
+    {
+        chip8.Registers[x] += kk
+    }
+
+    // ── 0x8XYN ALU ───────────────────────────────────────────────────────────
+    elif(code == 0x8000)
+    {
+        if(n == 0)
+        {
+            // 8XY0 LD Vx, Vy
+            chip8.Registers[x] = chip8.Registers[y]
+        }
+        elif(n == 1)
+        {
+            // 8XY1 OR Vx, Vy
+            chip8.Registers[x] = chip8.Registers[x] | chip8.Registers[y]
+        }
+        elif(n == 2)
+        {
+            // 8XY2 AND Vx, Vy
+            chip8.Registers[x] = chip8.Registers[x] & chip8.Registers[y]
+        }
+        elif(n == 3)
+        {
+            // 8XY3 XOR Vx, Vy
+            chip8.Registers[x] = chip8.Registers[x] ^ chip8.Registers[y]
+        }
+        elif(n == 4)
+        {
+            // 8XY4 ADD Vx, Vy  (VF = carry)
+            let vx4: int = chip8.Registers[x]
+            let vy4: int = chip8.Registers[y]
+            let sum4: int = vx4 + vy4
+            if(sum4 > 255) {
+                chip8.Registers[15] = 1
+            } else {
+                chip8.Registers[15] = 0
+            }
+            chip8.Registers[x] = sum4
+        }
+        elif(n == 5)
+        {
+            // 8XY5 SUB Vx, Vy  (VF = NOT borrow)
+            if(chip8.Registers[x] >= chip8.Registers[y]) {
+                chip8.Registers[15] = 1
+            } else {
+                chip8.Registers[15] = 0
+            }
+            chip8.Registers[x] -= chip8.Registers[y]
+        }
+        elif(n == 6)
+        {
+            // 8XY6 SHR Vx  (VF = lsb)
+            chip8.Registers[15] = chip8.Registers[x] & 0x1
+            chip8.Registers[x] = chip8.Registers[x] >> 1
+        }
+        elif(n == 7)
+        {
+            // 8XY7 SUBN Vx, Vy  (VF = NOT borrow, Vx = Vy - Vx)
+            if(chip8.Registers[y] >= chip8.Registers[x]) {
+                chip8.Registers[15] = 1
+            } else {
+                chip8.Registers[15] = 0
+            }
+            chip8.Registers[x] = chip8.Registers[y] - chip8.Registers[x]
+        }
+        elif(n == 14)
+        {
+            // 8XYE SHL Vx  (VF = msb, n = 0xE = 14)
+            chip8.Registers[15] = (chip8.Registers[x] >> 7) & 0x1
+            chip8.Registers[x] = chip8.Registers[x] << 1
+        }
+    }
+
+    // ── 0x9XY0 SNE Vx, Vy ────────────────────────────────────────────────────
+    elif(code == 0x9000)
+    {
+        if(chip8.Registers[x] != chip8.Registers[y]) {
+            chip8.PC += 2
+        }
+    }
+
+    // ── 0xANNN LD I, addr ────────────────────────────────────────────────────
+    elif(code == 0xA000)
+    {
+        chip8.IndexRegister = nnn
+    }
+
+    // ── 0xBNNN JP V0, addr ───────────────────────────────────────────────────
+    elif(code == 0xB000)
+    {
+        chip8.PC = nnn + chip8.Registers[0]
+    }
+
+    // ── 0xCXKK RND Vx, byte ──────────────────────────────────────────────────
+    elif(code == 0xC000)
+    {
+        let rnd: int = random(256)
+        chip8.Registers[x] = rnd & kk
+    }
+
+    // ── 0xDXYN DRW Vx, Vy, nibble ────────────────────────────────────────────
+    // XOR-draws an N-row sprite from memory[I] at pixel (Vx, Vy).
+    // VF = 1 if any lit pixel is erased (collision detection).
+    elif(code == 0xD000)
+    {
+        let vx:     int = chip8.Registers[x]
+        let vy:     int = chip8.Registers[y]
+        let height: int = n
+        chip8.Registers[15] = 0
+
+        let drow: int = 0
+        while(drow < height)
+        {
+            let sprite: uint8 = chip8.Memory[chip8.IndexRegister + drow]
+            let dcol: int = 0
+            while(dcol < 8)
+            {
+                if((sprite & (0x80 >> dcol)) != 0)
+                {
+                    let px:   int = (vx + dcol) % 64
+                    let py:   int = (vy + drow) % 32
+                    let pidx: int = py * 64 + px
+                    if(chip8.Screen[pidx] == 1) {
+                        chip8.Registers[15] = 1
+                    }
+                    chip8.Screen[pidx] = chip8.Screen[pidx] ^ 1
+                }
+                dcol += 1
+            }
+            drow += 1
+        }
+        chip8.DrawFlag = true
+    }
+
+    // ── 0xEXNN keyboard skip ─────────────────────────────────────────────────
+    elif(code == 0xE000)
+    {
+        let eki: int = chip8.Registers[x]
+        if(kk == 0x9E)
+        {
+            // EX9E SKP Vx: skip next if key[Vx] is pressed
+            if(chip8.Keys[eki]) {
+                chip8.PC += 2
+            }
+        }
+        elif(kk == 0xA1)
+        {
+            // EXA1 SKNP Vx: skip next if key[Vx] is NOT pressed
+            if(!chip8.Keys[eki]) {
+                chip8.PC += 2
+            }
+        }
+    }
+
+    // ── 0xFXNN misc ──────────────────────────────────────────────────────────
+    elif(code == 0xF000)
+    {
+        if(kk == 0x07)
+        {
+            // FX07 LD Vx, DT
+            chip8.Registers[x] = chip8.DT
+        }
+        elif(kk == 0x0A)
+        {
+            // FX0A LD Vx, K  (block until any key is pressed)
+            let got_key: bool = false
+            while(!got_key)
+            {
+                if(console_key_available()) {
+                    let wk: int = console_read_key()
+                    let wm: int = MapKey(wk)
+                    if(wm >= 0) {
+                        chip8.Registers[x] = wm
+                        got_key = true
+                    }
+                }
+                thread_sleep(5)
+            }
+        }
+        elif(kk == 0x15)
+        {
+            // FX15 LD DT, Vx
+            chip8.DT = chip8.Registers[x]
+        }
+        elif(kk == 0x18)
+        {
+            // FX18 LD ST, Vx
+            chip8.ST = chip8.Registers[x]
+        }
+        elif(kk == 0x1E)
+        {
+            // FX1E ADD I, Vx
+            chip8.IndexRegister += chip8.Registers[x]
+        }
+        elif(kk == 0x29)
+        {
+            // FX29 LD F, Vx  (I = address of built-in sprite for digit Vx)
+            chip8.IndexRegister = chip8.Registers[x] * 5
+        }
+        elif(kk == 0x33)
+        {
+            // FX33 LD B, Vx  (BCD of Vx into mem[I], mem[I+1], mem[I+2])
+            let bval: int = chip8.Registers[x]
+            chip8.Memory[chip8.IndexRegister]     = bval / 100
+            chip8.Memory[chip8.IndexRegister + 1] = (bval / 10) % 10
+            chip8.Memory[chip8.IndexRegister + 2] = bval % 10
+        }
+        elif(kk == 0x55)
+        {
+            // FX55 LD [I], Vx  (store V0..Vx in memory starting at I)
+            let fi: int = 0
+            while(fi <= x)
+            {
+                chip8.Memory[chip8.IndexRegister + fi] = chip8.Registers[fi]
+                fi += 1
+            }
+        }
+        elif(kk == 0x65)
+        {
+            // FX65 LD Vx, [I]  (load V0..Vx from memory starting at I)
+            let li: int = 0
+            while(li <= x)
+            {
+                chip8.Registers[li] = chip8.Memory[chip8.IndexRegister + li]
+                li += 1
+            }
+        }
+    }
+
+    return chip8
+}
+
+// ── Entry point ───────────────────────────────────────────────────────────────
+//
+// Usage:
+//   dotnet chip-8.dll                      — runs the built-in HELLO demo
+//   dotnet chip-8.dll path/to/game.ch8     — loads and runs a ROM file
+//
+// Keyboard layout (CHIP-8 hex pad → PC keys):
+//   1 2 3 C  →  1 2 3 4
+//   4 5 6 D  →  Q W E R
+//   7 8 9 E  →  A S D F
+//   A 0 B F  →  Z X C V
+//   Escape   →  exit
+
+func main(args: array<string>): void
 {
     let chip8: Chip8 = init_chip8()
-
     LoadFonts(chip8.Memory)
+
+    // ── ROM selection ────────────────────────────────────────────────────────
+    if(args.length() > 0)
+    {
+        let romPath: string = args[0]
+        if(!fileExists(romPath))
+        {
+            print("error: ROM file not found: " + romPath)
+            return
+        }
+        let romBytes: array<uint8> = readFileBytes(romPath)
+        LoadProgram(romBytes, chip8.Memory)
+        print("Loaded ROM: " + romPath + " (" + string(romBytes.length()) + " bytes)")
+    }
+    else
+    {
+        // Built-in "HELLO" demo ROM
+        // Draws H E L L O at y=9 across the screen, then loops forever.
+        // Sprite data lives at ROM offset 0x50 -> memory address 0x250.
+        let helloWorldRom: array<uint8> = [
+            0xA2, 0x50,  // LD I, 0x250  — point at H sprite
+            0x60, 0x01,  // LD V0, 1     — x = 1
+            0x61, 0x09,  // LD V1, 9     — y = 9
+            0xD0, 0x15,  // DRW V0,V1,5  — draw H
+            0xA2, 0x55,  // LD I, 0x255  — point at E sprite
+            0x60, 0x09,  // LD V0, 9     — x = 9
+            0xD0, 0x15,  // DRW V0,V1,5  — draw E
+            0xA2, 0x5A,  // LD I, 0x25A  — point at L sprite
+            0x60, 0x11,  // LD V0, 17    — x = 17
+            0xD0, 0x15,  // DRW V0,V1,5  — draw first L
+            0xA2, 0x5A,  // LD I, 0x25A  — reuse L sprite
+            0x60, 0x19,  // LD V0, 25    — x = 25
+            0xD0, 0x15,  // DRW V0,V1,5  — draw second L
+            0xA2, 0x5F,  // LD I, 0x25F  — point at O sprite
+            0x60, 0x21,  // LD V0, 33    — x = 33
+            0xD0, 0x15,  // DRW V0,V1,5  — draw O
+            0x12, 0x20,  // JP 0x220     — infinite loop (jumps to itself at 0x220)
+            // 46 bytes of zero padding so sprites land at ROM offset 0x50
+            0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+            0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+            // Sprite data at ROM offset 0x50 -> memory 0x250
+            0x90, 0x90, 0xF0, 0x90, 0x90,  // H
+            0xF0, 0x80, 0xE0, 0x80, 0xF0,  // E
+            0x80, 0x80, 0x80, 0x80, 0xF0,  // L
+            0x60, 0x90, 0x90, 0x90, 0x60   // O
+        ]
+        LoadProgram(helloWorldRom, chip8.Memory)
+        print("Running built-in HELLO demo (press Escape to exit)")
+    }
+
+    console_hide_cursor()
+
+    // ── Main emulation loop ──────────────────────────────────────────────────
+    // ~60 frames/sec (16 ms sleep), 9 instructions/frame ~ 540 Hz CPU clock.
+    let running: bool = true
+    while(running)
+    {
+        // Poll keyboard (Keys array is a reference; mutations are visible to callers)
+        let quit: bool = UpdateKeys(chip8)
+        if(quit) {
+            running = false
+        }
+
+        if(running)
+        {
+            // Execute 9 instructions this frame
+            let instr: int = 0
+            while(instr < 9)
+            {
+                chip8 = RunProgram(chip8)
+                instr += 1
+            }
+
+            // Decrement timers once per frame (60 Hz)
+            if(chip8.DT > 0) {
+                chip8.DT -= 1
+            }
+            if(chip8.ST > 0) {
+                chip8.ST -= 1
+            }
+
+            // Render only when a draw instruction was executed this frame
+            if(chip8.DrawFlag) {
+                RenderScreen(chip8)
+                chip8.DrawFlag = false
+            }
+
+            thread_sleep(16)
+        }
+    }
 }

@@ -22,8 +22,12 @@ internal static class BuiltInFunctions
         TypeSymbol.Int);
 
     public static readonly FunctionSymbol FileExists = new("fileExists", ImmutableArray.Create(new ParameterSymbol("path",TypeSymbol.String,0)),TypeSymbol.Bool);
-    
+
     public static readonly FunctionSymbol ReadFile = new("readFile", ImmutableArray.Create(new ParameterSymbol("path",TypeSymbol.String,0)),TypeSymbol.String);
+
+    public static readonly FunctionSymbol ReadFileBytes = new("readFileBytes",
+        ImmutableArray.Create(new ParameterSymbol("path", TypeSymbol.String, 0)),
+        TypeSymbol.Array.WithArgs(TypeSymbol.UInt8));
 
     public static readonly FunctionSymbol WriteFile = new("writeFile",
         [new ParameterSymbol("path", TypeSymbol.String,0), new ParameterSymbol("contents", TypeSymbol.String,0)],

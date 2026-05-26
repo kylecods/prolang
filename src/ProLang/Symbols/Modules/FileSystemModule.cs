@@ -8,6 +8,7 @@ public sealed class FileSystemModule : BuiltInModule
     [
         BuiltInFunctions.FileExists,
         BuiltInFunctions.ReadFile,
+        BuiltInFunctions.ReadFileBytes,
         BuiltInFunctions.WriteFile
     ];
 }

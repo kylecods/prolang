@@ -51,6 +51,9 @@ public enum SyntaxKind
     SlashEqualsToken,// '/='
     StarEqualsToken,// '*='
     HatEqualsToken,// '^='
+
+    LessThanLessThanToken, // <<
+    GreaterThanGreaterThanToken,// >>
     
     //html tokens
     ForwardSlashCloseAngleToken, // <input '/>'

@@ -1355,6 +1355,13 @@ namespace ProLang.Compiler
                 if (method != null)
                     EmitInstruction(ilProcessor, OpCodes.Call, method);
             }
+            else if (node.Function == BuiltInFunctions.ReadFileBytes)
+            {
+                // File.ReadAllBytes(path) returns byte[] which is array<uint8> at the IL level.
+                var method = ResolveMethod("System.IO.File", "ReadAllBytes", new[] { "System.String" });
+                if (method != null)
+                    EmitInstruction(ilProcessor, OpCodes.Call, method);
+            }
             else if (node.Function == BuiltInFunctions.WriteFile)
             {
                 var method = ResolveMethod("System.IO.File", "WriteAllText", new[] { "System.String", "System.String" });
@@ -1363,35 +1370,126 @@ namespace ProLang.Compiler
             }
             else if (node.Function == BuiltInFunctions.ConsoleWrite)
             {
-                var method = ResolveMethod("System.Console", "Write", new[] { "System.String" });
-                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+                // Stack: [text]  — pop and skip when stdout is redirected.
+                var isOutRedir  = ResolveMethod("System.Console", "get_IsOutputRedirected", Array.Empty<string>());
+                var writeMethod = ResolveMethod("System.Console", "Write", new[] { "System.String" });
+                if (isOutRedir != null && writeMethod != null)
+                {
+                    var doWrite = ilProcessor.Create(OpCodes.Nop);
+                    var done    = ilProcessor.Create(OpCodes.Nop);
+                    EmitInstruction(ilProcessor, OpCodes.Call, isOutRedir);
+                    ilProcessor.Emit(OpCodes.Brfalse, doWrite);
+                    ilProcessor.Emit(OpCodes.Pop);                          // discard text arg
+                    ilProcessor.Emit(OpCodes.Br, done);
+                    ilProcessor.Append(doWrite);
+                    EmitInstruction(ilProcessor, OpCodes.Call, writeMethod);
+                    ilProcessor.Append(done);
+                }
+                else if (writeMethod != null)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Call, writeMethod);
+                }
             }
             else if (node.Function == BuiltInFunctions.ConsoleSetCursor)
             {
-                var method = ResolveMethod("System.Console", "SetCursorPosition", new[] { "System.Int32", "System.Int32" });
-                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+                // Stack: [left, top]  — pop both and skip when stdout is redirected.
+                var isOutRedir   = ResolveMethod("System.Console", "get_IsOutputRedirected", Array.Empty<string>());
+                var setCursorPos = ResolveMethod("System.Console", "SetCursorPosition", new[] { "System.Int32", "System.Int32" });
+                if (isOutRedir != null && setCursorPos != null)
+                {
+                    var doSet = ilProcessor.Create(OpCodes.Nop);
+                    var done  = ilProcessor.Create(OpCodes.Nop);
+                    EmitInstruction(ilProcessor, OpCodes.Call, isOutRedir);
+                    ilProcessor.Emit(OpCodes.Brfalse, doSet);
+                    ilProcessor.Emit(OpCodes.Pop);                          // discard top
+                    ilProcessor.Emit(OpCodes.Pop);                          // discard left
+                    ilProcessor.Emit(OpCodes.Br, done);
+                    ilProcessor.Append(doSet);
+                    EmitInstruction(ilProcessor, OpCodes.Call, setCursorPos);
+                    ilProcessor.Append(done);
+                }
+                else if (setCursorPos != null)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Call, setCursorPos);
+                }
             }
             else if (node.Function == BuiltInFunctions.ConsoleHideCursor)
             {
-                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
-                var method = ResolveMethod("System.Console", "set_CursorVisible", new[] { "System.Boolean" });
-                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+                // No args — just guard with IsOutputRedirected.
+                var isOutRedir      = ResolveMethod("System.Console", "get_IsOutputRedirected", Array.Empty<string>());
+                var setCursorVisble = ResolveMethod("System.Console", "set_CursorVisible", new[] { "System.Boolean" });
+                if (isOutRedir != null && setCursorVisble != null)
+                {
+                    var skip = ilProcessor.Create(OpCodes.Nop);
+                    EmitInstruction(ilProcessor, OpCodes.Call, isOutRedir);
+                    ilProcessor.Emit(OpCodes.Brtrue, skip);
+                    EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
+                    EmitInstruction(ilProcessor, OpCodes.Call, setCursorVisble);
+                    ilProcessor.Append(skip);
+                }
             }
             else if (node.Function == BuiltInFunctions.ConsoleSetColor)
             {
-                // color int is already on stack; ConsoleColor is int-backed enum — compatible at IL level
-                var method = ResolveMethod("System.Console", "set_ForegroundColor", new[] { "System.ConsoleColor" });
-                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+                // Stack: [color] — pop and skip when stdout is redirected.
+                var isOutRedir   = ResolveMethod("System.Console", "get_IsOutputRedirected", Array.Empty<string>());
+                var setFgColor   = ResolveMethod("System.Console", "set_ForegroundColor", new[] { "System.ConsoleColor" });
+                if (isOutRedir != null && setFgColor != null)
+                {
+                    var doSet = ilProcessor.Create(OpCodes.Nop);
+                    var done  = ilProcessor.Create(OpCodes.Nop);
+                    EmitInstruction(ilProcessor, OpCodes.Call, isOutRedir);
+                    ilProcessor.Emit(OpCodes.Brfalse, doSet);
+                    ilProcessor.Emit(OpCodes.Pop);
+                    ilProcessor.Emit(OpCodes.Br, done);
+                    ilProcessor.Append(doSet);
+                    EmitInstruction(ilProcessor, OpCodes.Call, setFgColor);
+                    ilProcessor.Append(done);
+                }
+                else if (setFgColor != null)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Call, setFgColor);
+                }
             }
             else if (node.Function == BuiltInFunctions.ConsoleResetColor)
             {
-                var method = ResolveMethod("System.Console", "ResetColor", Array.Empty<string>());
-                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+                // No args — guard with IsOutputRedirected.
+                var isOutRedir    = ResolveMethod("System.Console", "get_IsOutputRedirected", Array.Empty<string>());
+                var resetColorMth = ResolveMethod("System.Console", "ResetColor", Array.Empty<string>());
+                if (isOutRedir != null && resetColorMth != null)
+                {
+                    var skip = ilProcessor.Create(OpCodes.Nop);
+                    EmitInstruction(ilProcessor, OpCodes.Call, isOutRedir);
+                    ilProcessor.Emit(OpCodes.Brtrue, skip);
+                    EmitInstruction(ilProcessor, OpCodes.Call, resetColorMth);
+                    ilProcessor.Append(skip);
+                }
+                else if (resetColorMth != null)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Call, resetColorMth);
+                }
             }
             else if (node.Function == BuiltInFunctions.ConsoleKeyAvailable)
             {
-                var method = ResolveMethod("System.Console", "get_KeyAvailable", Array.Empty<string>());
-                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
+                // Return false when stdin is redirected (non-interactive context).
+                // if (Console.IsInputRedirected) push false; else push Console.KeyAvailable
+                var isInputRedirected = ResolveMethod("System.Console", "get_IsInputRedirected", Array.Empty<string>());
+                var keyAvailableMethod = ResolveMethod("System.Console", "get_KeyAvailable", Array.Empty<string>());
+                if (isInputRedirected != null && keyAvailableMethod != null)
+                {
+                    var callReal = ilProcessor.Create(OpCodes.Nop);
+                    var done     = ilProcessor.Create(OpCodes.Nop);
+                    EmitInstruction(ilProcessor, OpCodes.Call, isInputRedirected);
+                    ilProcessor.Emit(OpCodes.Brfalse, callReal);
+                    EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);  // redirected → false
+                    ilProcessor.Emit(OpCodes.Br, done);
+                    ilProcessor.Append(callReal);
+                    EmitInstruction(ilProcessor, OpCodes.Call, keyAvailableMethod);
+                    ilProcessor.Append(done);
+                }
+                else if (keyAvailableMethod != null)
+                {
+                    EmitInstruction(ilProcessor, OpCodes.Call, keyAvailableMethod);
+                }
             }
             else if (node.Function == BuiltInFunctions.ConsoleReadKey)
             {
@@ -1410,6 +1508,21 @@ namespace ProLang.Compiler
                 var getKeyMethod = ResolveMethod("System.ConsoleKeyInfo", "get_Key", Array.Empty<string>());
                 if (getKeyMethod != null) EmitInstruction(ilProcessor, OpCodes.Call, getKeyMethod);
                 ilProcessor.Emit(OpCodes.Conv_I4);
+            }
+            else if (node.Function == BuiltInFunctions.Random)
+            {
+                // Stack: [maxValue]
+                // Emit: Random.Shared.Next(maxValue)
+                // Need to save maxValue, load Random.Shared instance, reload maxValue, then call.
+                var int32Type = ResolveType("System.Int32");
+                var tempMax = new VariableDefinition(int32Type!);
+                ilProcessor.Body.Variables.Add(tempMax);
+                EmitInstruction(ilProcessor, OpCodes.Stloc, tempMax);
+                var getShared = ResolveMethod("System.Random", "get_Shared", Array.Empty<string>());
+                if (getShared != null) EmitInstruction(ilProcessor, OpCodes.Call, getShared);
+                EmitInstruction(ilProcessor, OpCodes.Ldloc, tempMax);
+                var nextMethod = ResolveMethod("System.Random", "Next", new[] { "System.Int32" });
+                if (nextMethod != null) EmitInstruction(ilProcessor, OpCodes.Callvirt, nextMethod);
             }
             else if (node.Function == BuiltInFunctions.ThreadSleep)
             {
@@ -1775,6 +1888,26 @@ namespace ProLang.Compiler
             else if (node.Op.Kind == BoundBinaryOperatorKind.Modulo)
             {
                 EmitInstruction(ilProcessor, OpCodes.Rem);
+            }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.BitwiseAnd)
+            {
+                EmitInstruction(ilProcessor, OpCodes.And);
+            }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.BitwiseOr)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Or);
+            }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.BitwiseXor)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Xor);
+            }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.BitwiseLeftShift)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Shl);
+            }
+            else if (node.Op.Kind == BoundBinaryOperatorKind.BitwiseRightShift)
+            {
+                EmitInstruction(ilProcessor, OpCodes.Shr_Un);
             }
             else
             {
