@@ -112,11 +112,16 @@ func MapKey(key: int): int {
 // Polls for a key press; clears all keys then sets the pressed one.
 // Returns true if the user pressed Escape (exit signal).
 func UpdateKeys(chip8: Chip8): bool {
+    writeFile("D:/c8_uk0.txt", "UK_ENTRY Stk=" + string(chip8.Stack.length()) + " Keys=" + string(chip8.Keys.length()))
     let i: int = 0
     while(i < 16) {
+        let pre_stk: int = chip8.Stack.length()
         chip8.Keys[i] = false
+        let post_stk: int = chip8.Stack.length()
+        writeFile("D:/c8_l" + string(i) + ".txt", "i=" + string(i) + " pre=" + string(pre_stk) + " post=" + string(post_stk))
         i += 1
     }
+    writeFile("D:/c8_uk1.txt", "UK_AFTER_LOOP Stk=" + string(chip8.Stack.length()) + " Keys=" + string(chip8.Keys.length()))
     if(console_key_available()) {
         let k: int = console_read_key()
         let mapped: int = MapKey(k)
@@ -157,10 +162,17 @@ func RenderScreen(chip8: Chip8): void {
 // to the caller automatically because arrays are reference types.
 
 func RunProgram(chip8: Chip8): Chip8 {
+    // PC bounds check
+    if(chip8.PC + 1 >= 4096) {
+        writeFile("D:/chip8_debug.txt", "ERROR: PC out of bounds: " + string(chip8.PC))
+        return chip8
+    }
+    writeFile("D:/c8_e" + string(chip8.PC) + ".txt", "ENTRY Stk=" + string(chip8.Stack.length()) + " Reg=" + string(chip8.Registers.length()) + " Mem=" + string(chip8.Memory.length()) + " Scr=" + string(chip8.Screen.length()) + " Keys=" + string(chip8.Keys.length()) + " PC=" + string(chip8.PC) + " SP=" + string(chip8.SP))
     // Fetch
     let opcode: uint16 = (chip8.Memory[chip8.PC] << 8) | (chip8.Memory[chip8.PC + 1])
     chip8.PC += 2
     chip8.Opcode = opcode
+    writeFile("D:/c8_f" + string(chip8.PC) + ".txt", "AFTER-FETCH Stk=" + string(chip8.Stack.length()) + " Reg=" + string(chip8.Registers.length()) + " PC=" + string(chip8.PC))
 
     // Pre-decode common fields
     let nnn: uint16 = opcode & 0x0FFF          // 12-bit address
@@ -186,8 +198,13 @@ func RunProgram(chip8: Chip8): Chip8 {
         elif(kk == 0xEE)
         {
             // 00EE RET: return from subroutine
-            chip8.PC = chip8.Stack[chip8.SP]
-            chip8.SP -= 1
+            if(chip8.SP == 0) {
+                writeFile("D:/chip8_debug.txt", "ERROR: RET underflow PC=" + string(chip8.PC))
+            } else {
+                writeFile("D:/chip8_debug.txt", "RET Stack[SP=" + string(chip8.SP) + "]")
+                chip8.PC = chip8.Stack[chip8.SP]
+                chip8.SP -= 1
+            }
         }
     }
 
@@ -200,9 +217,15 @@ func RunProgram(chip8: Chip8): Chip8 {
     // ── 0x2NNN CALL addr ─────────────────────────────────────────────────────
     elif(code == 0x2000)
     {
-        chip8.SP += 1
-        chip8.Stack[chip8.SP] = chip8.PC
-        chip8.PC = nnn
+        if(chip8.SP >= 15) {
+            writeFile("D:/chip8_debug.txt", "ERROR: CALL overflow PC=" + string(chip8.PC) + " SP=" + string(chip8.SP))
+        } else {
+            chip8.SP += 1
+            writeFile("D:/chip8_debug.txt", "CALL SP=" + string(chip8.SP) + " nnn=" + string(nnn) + " StackLen=" + string(chip8.Stack.length()))
+            chip8.Stack[chip8.SP] = chip8.PC
+            writeFile("D:/chip8_debug.txt", "CALL_STACK_OK SP=" + string(chip8.SP))
+            chip8.PC = nnn
+        }
     }
 
     // ── 0x3XKK SE Vx, byte ───────────────────────────────────────────────────
@@ -351,23 +374,29 @@ func RunProgram(chip8: Chip8): Chip8 {
         let drow: int = 0
         while(drow < height)
         {
-            let sprite: uint8 = chip8.Memory[chip8.IndexRegister + drow]
-            let dcol: int = 0
-            while(dcol < 8)
-            {
-                if((sprite & (0x80 >> dcol)) != 0)
+            if(chip8.IndexRegister + drow >= 4096) {
+                writeFile("D:/chip8_debug.txt", "ERROR: DRW I=" + string(chip8.IndexRegister) + " drow=" + string(drow) + " OOB")
+                drow = height
+            } else {
+                writeFile("D:/chip8_debug.txt", "DRW Memory[" + string(chip8.IndexRegister) + "+" + string(drow) + "]")
+                let sprite: uint8 = chip8.Memory[chip8.IndexRegister + drow]
+                let dcol: int = 0
+                while(dcol < 8)
                 {
-                    let px:   int = (vx + dcol) % 64
-                    let py:   int = (vy + drow) % 32
-                    let pidx: int = py * 64 + px
-                    if(chip8.Screen[pidx] == 1) {
-                        chip8.Registers[15] = 1
+                    if((sprite & (0x80 >> dcol)) != 0)
+                    {
+                        let px:   int = (vx + dcol) % 64
+                        let py:   int = (vy + drow) % 32
+                        let pidx: int = py * 64 + px
+                        if(chip8.Screen[pidx] == 1) {
+                            chip8.Registers[15] = 1
+                        }
+                        chip8.Screen[pidx] = chip8.Screen[pidx] ^ 1
                     }
-                    chip8.Screen[pidx] = chip8.Screen[pidx] ^ 1
+                    dcol += 1
                 }
-                dcol += 1
+                drow += 1
             }
-            drow += 1
         }
         chip8.DrawFlag = true
     }
@@ -376,7 +405,9 @@ func RunProgram(chip8: Chip8): Chip8 {
     elif(code == 0xE000)
     {
         let eki: int = chip8.Registers[x]
-        if(kk == 0x9E)
+        if(eki < 0 || eki > 15) {
+            writeFile("D:/chip8_debug.txt", "ERROR: Keys[" + string(eki) + "] OOB PC=" + string(chip8.PC))
+        } elif(kk == 0x9E)
         {
             // EX9E SKP Vx: skip next if key[Vx] is pressed
             if(chip8.Keys[eki]) {
@@ -467,6 +498,7 @@ func RunProgram(chip8: Chip8): Chip8 {
         }
     }
 
+    writeFile("D:/c8_r" + string(chip8.PC) + ".txt", "PRE-RET Stk=" + string(chip8.Stack.length()) + " Reg=" + string(chip8.Registers.length()) + " SP=" + string(chip8.SP) + " PC=" + string(chip8.PC))
     return chip8
 }
 
@@ -486,7 +518,9 @@ func RunProgram(chip8: Chip8): Chip8 {
 func main(args: array<string>): void
 {
     let chip8: Chip8 = init_chip8()
+    writeFile("D:/c8_a.txt", "INIT Stk=" + string(chip8.Stack.length()) + " Reg=" + string(chip8.Registers.length()) + " Mem=" + string(chip8.Memory.length()) + " Scr=" + string(chip8.Screen.length()) + " Keys=" + string(chip8.Keys.length()) + " PC=" + string(chip8.PC) + " SP=" + string(chip8.SP))
     LoadFonts(chip8.Memory)
+    writeFile("D:/c8_b.txt", "AFTER_FONTS Stk=" + string(chip8.Stack.length()) + " Reg=" + string(chip8.Registers.length()) + " Mem=" + string(chip8.Memory.length()) + " Scr=" + string(chip8.Screen.length()) + " Keys=" + string(chip8.Keys.length()))
 
     // ── ROM selection ────────────────────────────────────────────────────────
     if(args.length() > 0)
@@ -499,6 +533,7 @@ func main(args: array<string>): void
         }
         let romBytes: array<uint8> = readFileBytes(romPath)
         LoadProgram(romBytes, chip8.Memory)
+        writeFile("D:/c8_lp.txt", "AFTER-LP Stk=" + string(chip8.Stack.length()))
         print("Loaded ROM: " + romPath + " (" + string(romBytes.length()) + " bytes)")
     }
     else
@@ -537,6 +572,7 @@ func main(args: array<string>): void
         print("Running built-in HELLO demo (press Escape to exit)")
     }
 
+    writeFile("D:/c8_aif.txt", "AFTER-IF Stk=" + string(chip8.Stack.length()))
     console_hide_cursor()
 
     // ── Main emulation loop ──────────────────────────────────────────────────
@@ -546,6 +582,7 @@ func main(args: array<string>): void
     {
         // Poll keyboard (Keys array is a reference; mutations are visible to callers)
         let quit: bool = UpdateKeys(chip8)
+        writeFile("D:/c8_au.txt", "AFTER-UK Stk=" + string(chip8.Stack.length()))
         if(quit) {
             running = false
         }
@@ -556,7 +593,11 @@ func main(args: array<string>): void
             let instr: int = 0
             while(instr < 9)
             {
+                if(instr == 0) {
+                    writeFile("D:/c8_pre0.txt", "PRE0 Stk=" + string(chip8.Stack.length()) + " Reg=" + string(chip8.Registers.length()) + " Mem=" + string(chip8.Memory.length()) + " Scr=" + string(chip8.Screen.length()) + " Keys=" + string(chip8.Keys.length()) + " PC=" + string(chip8.PC) + " SP=" + string(chip8.SP))
+                }
                 chip8 = RunProgram(chip8)
+                writeFile("D:/c8_i" + string(instr) + ".txt", "POST instr=" + string(instr) + " Stk=" + string(chip8.Stack.length()) + " SP=" + string(chip8.SP) + " PC=" + string(chip8.PC))
                 instr += 1
             }
 

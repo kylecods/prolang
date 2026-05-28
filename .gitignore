@@ -25,3 +25,6 @@ vscode-extension/bun.lock
 src/ProLang.Benchmarks/BenchmarkDotNet.Artifacts/**
 OPTIMIZATIONS_IN_PROGRESS.md
 COMPREHENSIVE_BENCHMARKS.md
+**/.prolang/artifacts/
+*.obj
+*.runtimeconfig.json
