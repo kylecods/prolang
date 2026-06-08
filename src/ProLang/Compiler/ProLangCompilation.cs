@@ -406,7 +406,7 @@ public sealed class ProLangCompilation
         var emitDiagnostics = CEmitter.Emit(program, moduleName, cFile);
 
         // Copy runtime header
-        File.WriteAllText(Path.Combine(outputDir, "prolang_runtime.h"), CRuntimeHeader.Content);
+        // File.WriteAllText(Path.Combine(outputDir, "prolang_runtime.h"), CRuntimeHeader.Content);
 
         // Build scripts — use plain string concatenation to avoid brace-escape issues
         var n = moduleName;
