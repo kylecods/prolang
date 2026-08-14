@@ -1,0 +1,2 @@
+/usr/local/lib/libprlruntime.a
+/usr/local/include/prl_runtime.h
