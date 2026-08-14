@@ -15,6 +15,7 @@ public abstract class BuiltInModule
         Register(new FileSystemModule());
         Register(new ArrayModule());
         Register(new ConsoleModule());
+        Register(new PspModule());
     }
 
     public static void Register(BuiltInModule module)

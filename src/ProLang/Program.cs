@@ -19,6 +19,7 @@ internal sealed class Program
         var helpRequested = false;
         var disassemble = false;
         var emitC = false;
+        var emitPsp = false;
 
         var options = new OptionSet
         {
@@ -29,6 +30,7 @@ internal sealed class Program
             {"d|disassemble", "Compile sources and print IR disassembly to stdout", v => disassemble = true },
             {"msil=", "Disassemble a compiled .dll and print MSIL listing to stdout", v => msilPath = v },
             {"emit-c", "Transpile to C99 and write to .prolang/artifacts/", v => emitC = true },
+            {"emit-psp", "Transpile to C99 for PSP and write PSP wrapper + Makefile", v => emitPsp = true },
             {"c-output=", "Override output directory for C transpilation", v => cOutputDir = v },
             {"h|help", "Prints help", v=>helpRequested = true},
             {"<>", v=>sourcePaths.Add(v) }
@@ -129,6 +131,37 @@ internal sealed class Program
                     return 1;
                 }
                 Console.WriteLine($"C output written to: {cOutputDir}");
+                return 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine(ex.ToString());
+                return 1;
+            }
+        }
+
+        // PSP transpile mode
+        if (emitPsp)
+        {
+            if (moduleName == null)
+                moduleName = Path.GetFileNameWithoutExtension(sourcePaths[0]);
+
+            if (cOutputDir == null)
+            {
+                var srcDir = Path.GetDirectoryName(Path.GetFullPath(sourcePaths[0])) ?? Directory.GetCurrentDirectory();
+                cOutputDir = Path.Combine(srcDir, ".prolang", "psp");
+            }
+
+            try
+            {
+                var diagnostics = compilation.EmitPsp(moduleName, cOutputDir);
+                if (diagnostics.Any())
+                {
+                    Console.Error.WriteDiagnostics(diagnostics);
+                    return 1;
+                }
+                Console.WriteLine($"PSP output written to: {cOutputDir}");
+                Console.WriteLine($"  Run: (cd {cOutputDir} && make -f Makefile.psp)");
                 return 0;
             }
             catch (Exception ex)

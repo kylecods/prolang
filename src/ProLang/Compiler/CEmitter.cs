@@ -25,15 +25,15 @@ internal sealed class CEmitter
         _moduleName = moduleName;
     }
 
-    public static ImmutableArray<Diagnostic> Emit(BoundProgram program, string moduleName, string outputPath)
+    public static ImmutableArray<Diagnostic> Emit(BoundProgram program, string moduleName, string outputPath, bool emitMainEntry = true)
     {
         var emitter = new CEmitter(program, moduleName);
-        emitter.EmitAll();
+        emitter.EmitAll(emitMainEntry);
         File.WriteAllText(outputPath, emitter._sb.ToString());
         return ImmutableArray<Diagnostic>.Empty;
     }
 
-    private void EmitAll()
+    private void EmitAll(bool emitMainEntry = true)
     {
         // Collect all array element types used across the program
         CollectArrayTypes();
@@ -88,15 +88,18 @@ internal sealed class CEmitter
             EmitFunction(_program.MainFunction, mainBody);
 
         // C entry point
-        Line();
-        Line("int main(void) {");
-        _indent++;
-        var entryFunc = FindEntryFunction();
-        if (entryFunc != null)
-            Line($"{SanitizeName(entryFunc.Name)}();");
-        Line("return 0;");
-        _indent--;
-        Line("}");
+        if (emitMainEntry)
+        {
+            Line();
+            Line("int main(void) {");
+            _indent++;
+            var entryFunc = FindEntryFunction();
+            if (entryFunc != null)
+                Line($"{SanitizeName(entryFunc.Name)}();");
+            Line("return 0;");
+            _indent--;
+            Line("}");
+        }
     }
 
     // Find the function to call from C main(). The binder may rename user's "main" to "__UserMain"
@@ -532,6 +535,8 @@ internal sealed class CEmitter
 
     private void EmitStringCoerce(BoundExpression expr)
     {
+        expr = UnwrapAny(expr);
+
         if (expr.Type == TypeSymbol.String)
         {
             EmitExpression(expr);
@@ -547,6 +552,28 @@ internal sealed class CEmitter
         EmitExpression(expr);
         if (IsIntegerType(expr.Type) && expr.Type != TypeSymbol.Int64) _sb.Append(")");
         else _sb.Append(")");
+    }
+
+    // The binder inserts an implicit conversion/cast to `any` around values passed to
+    // print(), length(), etc. Look through it to reach the underlying typed value, so we
+    // don't try to cast a struct (PrlString / typed array) to void*.
+    private static BoundExpression UnwrapAny(BoundExpression expr)
+    {
+        while (true)
+        {
+            if (expr is BoundConversionExpression cvt && cvt.Expression.Type != TypeSymbol.Any)
+            {
+                expr = cvt.Expression;
+                continue;
+            }
+            if (expr is BoundCastExpression cast && cast.Expression.Type != TypeSymbol.Any)
+            {
+                expr = cast.Expression;
+                continue;
+            }
+            break;
+        }
+        return expr;
     }
 
     private void EmitUnaryExpression(BoundUnaryExpression expr)
@@ -599,7 +626,7 @@ internal sealed class CEmitter
         if (ReferenceEquals(fn, BuiltInFunctions.ArrayLength))
         {
             _sb.Append("(");
-            EmitExpression(args[0]);
+            EmitExpression(UnwrapAny(args[0]));
             _sb.Append(").len");
             return;
         }
@@ -608,7 +635,7 @@ internal sealed class CEmitter
         if (ReferenceEquals(fn, BuiltInFunctions.StringLength))
         {
             _sb.Append("(");
-            EmitExpression(args[0]);
+            EmitExpression(UnwrapAny(args[0]));
             _sb.Append(").len");
             return;
         }
@@ -644,6 +671,16 @@ internal sealed class CEmitter
         if (ReferenceEquals(fn, BuiltInFunctions.ConsoleKeyAvailable))  { _sb.Append("prl_console_key_available()"); return; }
         if (ReferenceEquals(fn, BuiltInFunctions.ConsoleReadKey))       { _sb.Append("prl_console_read_key()"); return; }
         if (ReferenceEquals(fn, BuiltInFunctions.ThreadSleep))          { _sb.Append("prl_thread_sleep("); EmitExpression(args[0]); _sb.Append(")"); return; }
+
+        // PSP graphics/input built-ins
+        if (ReferenceEquals(fn, BuiltInFunctions.PspInit))        { _sb.Append("prl_psp_init()"); return; }
+        if (ReferenceEquals(fn, BuiltInFunctions.PspClear))       { _sb.Append("prl_psp_clear("); EmitExpression(args[0]); _sb.Append(")"); return; }
+        if (ReferenceEquals(fn, BuiltInFunctions.PspFillRect))    { _sb.Append("prl_psp_fill_rect("); for (int i=0;i<5;i++){ if(i>0)_sb.Append(", "); EmitExpression(args[i]); } _sb.Append(")"); return; }
+        if (ReferenceEquals(fn, BuiltInFunctions.PspDrawText))    { _sb.Append("prl_psp_draw_text("); EmitExpression(args[0]); _sb.Append(", "); EmitExpression(args[1]); _sb.Append(", "); EmitStringCoerce(args[2]); _sb.Append(", "); EmitExpression(args[3]); _sb.Append(")"); return; }
+        if (ReferenceEquals(fn, BuiltInFunctions.PspSwapBuffers)) { _sb.Append("prl_psp_swap_buffers()"); return; }
+        if (ReferenceEquals(fn, BuiltInFunctions.PspVsync))       { _sb.Append("prl_psp_vsync()"); return; }
+        if (ReferenceEquals(fn, BuiltInFunctions.PspButtonsHeld)) { _sb.Append("prl_psp_buttons_held()"); return; }
+        if (ReferenceEquals(fn, BuiltInFunctions.PspButtonPressed)) { _sb.Append("prl_psp_button_pressed("); EmitExpression(args[0]); _sb.Append(")"); return; }
 
         // User-defined function call
         _sb.Append($"{SanitizeName(fn.Name)}(");

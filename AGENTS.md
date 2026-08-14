@@ -783,6 +783,77 @@ Output: [result]
 
 ---
 
+## PSP Support (Compile to PlayStation Portable)
+
+ProLang can target the **PSP** by transpiling to C99 and cross-compiling with the `pspdev`
+toolchain (installed in WSL). This produces a native MIPS `EBOOT.PBP` — no .NET runtime
+is needed on the PSP.
+
+### Pipeline
+
+```
+foo.prl  →  prolang --emit-psp  →  .c + prolang_runtime.h + psp_main.c + Makefile.psp
+                                              ↓  (WSL) make -f Makefile.psp
+                                          EBOOT.PBP  →  PPSSPP / PSP memory stick
+```
+
+### Building (WSL2 Ubuntu)
+
+```bash
+# Toolchain: extract pspdev release into $PSPDEV, then:
+export PSPDEV=$HOME/pspdev-tmp/pspdev
+export PATH=$PATH:$PSPDEV/bin
+```
+
+```bash
+# 1. On Windows, transpile (outputs to examples/xxx/.prolang/psp/):
+dotnet run --project src/ProLang/ProLang.csproj -- foo.prl --emit-psp
+
+# 2. In WSL, build (psp_main.c provides PSP_MODULE_INFO, exit callback, GU-less bootstrap):
+make -f Makefile.psp
+# Produces EBOOT.PBP
+```
+
+Run in PPSSPP by placing `EBOOT.PBP` in `PSP/GAME/YourGame/EBOOT.PBP`, or copy to a
+PSP memory stick (`ms0:/PSP/GAME/YourGame/`) on custom firmware (e.g. 6.61 Infinity).
+
+### The `psp` module
+
+Programs can `import "psp"` to access GU graphics + controller input. The built-ins
+map to `prl_psp_*` functions defined in the `__PSP__` branch of `prolang_runtime.h`:
+
+| Function | Description |
+|---|---|
+| `psp_init()` | Initialise GU, double-buffered 480×272, set analog sampling |
+| `psp_clear(color)` | Clear screen (0x00BBGGRR) |
+| `psp_fill_rect(x, y, w, h, color)` | Draw filled rectangle (GU 2D) |
+| `psp_draw_text(x, y, text, color)` | Draw text with an 8×8 bitmap font |
+| `psp_swap_buffers()` | Finish frame, wait vblank, swap display |
+| `psp_vsync()` | Wait for vblank |
+| `psp_buttons_held()` | Return controller button bitmask (see `pspctrl.h`) |
+| `psp_button_pressed(button)` | True if a button bit is held |
+
+Other `prl_*` runtime functions (print, sleep, console) also get PSP implementations:
+`prl_print` → `pspDebugScreenPrintf`, `prl_thread_sleep` → `sceKernelDelayThread`.
+
+### Examples
+
+- `examples/15-psp-demo/psp_demo.prl` — moving rectangles + text + controller exit
+- `examples/15-psp-demo/psp_chip8.prl` — a CHIP-8 emulator rendered via GU with
+  controller-mapped hex keypad (D-pad + face buttons), Start exits
+
+### Notes / limitations
+
+- `--emit-psp` also emits the desktop C files/build scripts; only `Makefile.psp`,
+  `.c`, `prolang_runtime.h`, and `psp_main.c` are used for PSP.
+- `.NET interop` (`System.*`, WinForms, assembly loading) is unavailable on PSP —
+  use the C transpiler path which has no managed runtime.
+- Integer-heavy code requires explicit casts for narrowing (e.g. `uint8(x & 0xFF)`)
+  — the conversion classifier treats widening as implicit, narrowing as explicit.
+- Memory: generated C uses `malloc`/structs (no GC), friendly to the PSP's 32 MB.
+
+---
+
 ## Summary
 
 **ProLang** is a fully-featured language compiler that:

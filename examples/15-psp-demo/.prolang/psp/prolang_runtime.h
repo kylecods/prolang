@@ -1,8 +1,3 @@
-namespace ProLang.Compiler;
-
-internal static class CRuntimeHeader
-{
-    public const string Content = """
 #ifndef PROLANG_RUNTIME_H
 #define PROLANG_RUNTIME_H
 
@@ -534,5 +529,3 @@ static inline void prl_console_write(PrlString s) {
 }
 
 #endif /* PROLANG_RUNTIME_H */
-""";
-}

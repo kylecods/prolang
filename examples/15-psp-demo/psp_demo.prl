@@ -1,0 +1,24 @@
+import "psp"
+
+func main() {
+    psp_init()
+    let i = 0
+    while (true) {
+        if (psp_buttons_held() != 0) {
+            break
+        }
+        psp_clear(0)
+        if (i < 60) {
+            psp_fill_rect(i * 3, i, 120, 80, 16711680)
+        } else {
+            psp_fill_rect(i * 2, i - 40, 120, 80, 65280)
+        }
+        psp_draw_text(10, 220, "Hello from ProLang on PSP!", 16777215)
+        psp_draw_text(10, 240, "Press any button to exit.", 10526880)
+        psp_swap_buffers()
+        i = i + 1
+        if (i >= 120) {
+            i = 0
+        }
+    }
+}

@@ -1,0 +1,10 @@
+TARGET = 03_control_flow
+OBJS = psp_main.o 03_control_flow.o
+CFLAGS = -O2 -G0 -Wall -D__PSP__
+LIBS = -lpspdebug -lpspdisplay -lpspctrl -lpspuser -lc
+
+EXTRA_TARGETS = EBOOT.PBP
+PSP_EBOOT_TITLE = 03_control_flow
+
+PSPSDK = $(shell psp-config --pspsdk-path)
+include $(PSPSDK)/lib/build.mak
