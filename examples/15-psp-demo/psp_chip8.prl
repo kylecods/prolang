@@ -121,6 +121,7 @@ func RenderScreen(chip8: Chip8): void {
         y = y + 1
     }
     psp_draw_text(4, 4, "CHIP-8 on PSP (Start to exit)", 16777215)
+    psp_swap_buffers()
 }
 
 // ── Single instruction step ──────────────────────────────────────────────────
@@ -359,13 +360,8 @@ func main() {
             if (chip8.DT > 0) {
                 chip8.DT = uint8(chip8.DT - 1)
             }
-            if (chip8.Draw) {
-                RenderScreen(chip8)
-                chip8.Draw = false
-            } else {
-                psp_draw_text(4, 4, "CHIP-8 on PSP (Start to exit)", 16777215)
-                psp_swap_buffers()
-            }
+            RenderScreen(chip8)
+            chip8.Draw = false
             thread_sleep(16)
         }
     }

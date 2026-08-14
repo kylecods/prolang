@@ -47,6 +47,7 @@ __prl_lbl_countinue2:;
 __prl_lbl_countinue1:;
     if ((y < 32)) goto __prl_lbl_Label1;
     prl_psp_draw_text(4, 4, prl_string_from_lit("CHIP-8 on PSP (Start to exit)"), 16777215);
+    prl_psp_swap_buffers();
 }
 
 void LoadFonts(Chip8 chip8) {
@@ -118,14 +119,8 @@ __prl_lbl_countinue2:;
     if (!(((int32_t)(chip8.DT) > 0))) goto __prl_lbl_Label5;
     chip8.DT = (uint8_t)(((int32_t)(chip8.DT) - 1));
 __prl_lbl_Label5:;
-    if (!(chip8.Draw)) goto __prl_lbl_Label6;
     RenderScreen(chip8);
     chip8.Draw = false;
-    goto __prl_lbl_Label7;
-__prl_lbl_Label6:;
-    prl_psp_draw_text(4, 4, prl_string_from_lit("CHIP-8 on PSP (Start to exit)"), 16777215);
-    prl_psp_swap_buffers();
-__prl_lbl_Label7:;
     prl_thread_sleep(16);
 __prl_lbl_Label3:;
 __prl_lbl_countinue1:;

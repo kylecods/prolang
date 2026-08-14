@@ -20,6 +20,10 @@
     </Content>
   </ItemGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\native\*.h" LogicalName="ProLang.native.%(Filename)%(Extension)" />
+  </ItemGroup>
+
   <!--
     On Windows, build WinFormsHelper after the main ProLang build and drop
     WinFormsHelper.dll into the compiler output's lib/ subdirectory.

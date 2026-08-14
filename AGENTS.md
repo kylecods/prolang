@@ -833,8 +833,16 @@ map to `prl_psp_*` functions defined in the `__PSP__` branch of `prolang_runtime
 | `psp_buttons_held()` | Return controller button bitmask (see `pspctrl.h`) |
 | `psp_button_pressed(button)` | True if a button bit is held |
 
-Other `prl_*` runtime functions (print, sleep, console) also get PSP implementations:
-`prl_print` → `pspDebugScreenPrintf`, `prl_thread_sleep` → `sceKernelDelayThread`.
+Other `prl_*` runtime functions (print, sleep, console) also get PSP implementations.
+`prl_print` / `prl_console_write` route through the **same GU 8×8 font renderer** (not
+`pspDebugScreenPrintf`) and `prl_thread_sleep` → `sceKernelDelayThread`.
+
+> **Important (rendering):** GU must be the *single* owner of VRAM (`0x44000000`).
+> Do **not** call `pspDebugScreenInit()` alongside GU — both grab the same VRAM base and
+> corrupt each other (broken multicolor pixels). `psp_main.c` deliberately omits it, and
+> all text/`print()` output goes through the GU font so there is one framebuffer.
+> `prl_psp_start_frame()` guards against calling `sceGuStart` twice per frame; always end
+> a frame with `psp_swap_buffers()`.
 
 ### Examples
 

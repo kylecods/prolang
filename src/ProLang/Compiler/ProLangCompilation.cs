@@ -405,8 +405,8 @@ public sealed class ProLangCompilation
         var cFile = Path.Combine(outputDir, $"{moduleName}.c");
         var emitDiagnostics = CEmitter.Emit(program, moduleName, cFile);
 
-        // Copy runtime header
-        // File.WriteAllText(Path.Combine(outputDir, "prolang_runtime.h"), CRuntimeHeader.Content);
+        // Copy runtime headers (base.h, prl_*.h, prolang_runtime.h)
+        CRuntimeHeader.WriteAll(outputDir);
 
         // Build scripts — use plain string concatenation to avoid brace-escape issues
         var n = moduleName;
@@ -514,8 +514,8 @@ public sealed class ProLangCompilation
         var cFile = Path.Combine(outputDir, $"{moduleName}.c");
         var emitDiagnostics = CEmitter.Emit(program, moduleName, cFile, emitMainEntry: false);
 
-        // Copy runtime header (contains the __PSP__ platform branch)
-        File.WriteAllText(Path.Combine(outputDir, "prolang_runtime.h"), CRuntimeHeader.Content);
+        // Copy runtime headers (base.h, prl_*.h, prolang_runtime.h)
+        CRuntimeHeader.WriteAll(outputDir);
 
         // Step 2: write PSP wrapper (psp_main.c)
         var pspMain = 
@@ -552,7 +552,6 @@ public sealed class ProLangCompilation
             "    int thid = sceKernelCreateThread(\"cb\", cb_thread, 0x11, 0xFA0, 0, 0);\n" +
             "    if (thid >= 0) sceKernelStartThread(thid, 0, NULL);\n" +
             "\n" +
-            "    pspDebugScreenInit();\n" +
             "    sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);\n" +
             "\n" +
             "    prl___UserMain();\n" +

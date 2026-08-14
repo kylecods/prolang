@@ -31,7 +31,6 @@ int main(int argc, char *argv[]) {
     int thid = sceKernelCreateThread("cb", cb_thread, 0x11, 0xFA0, 0, 0);
     if (thid >= 0) sceKernelStartThread(thid, 0, NULL);
 
-    pspDebugScreenInit();
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
 
     prl___UserMain();

@@ -21,9 +21,6 @@ option(BUILD_SHARED_LIBS "Build as a shared library (.dll / .so)" OFF)
 # -----------------------------------------------------------------------
 set(PRL_SOURCES
     base.c
-    arena.c
-    strings.c
-    vector.c
 )
 
 set(PRL_HEADERS
@@ -31,7 +28,15 @@ set(PRL_HEADERS
     arena.h
     strings.h
     vector.h
+    prl_memory.h
+    prl_types.h
+    prl_array.h
+    prl_string.h
+    prl_io.h
+    prl_console.h
+    prl_psp.h
     prl_runtime.h
+    prolang_runtime.h
 )
 
 # -----------------------------------------------------------------------
