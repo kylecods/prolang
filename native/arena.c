@@ -24,7 +24,7 @@ static void Arena_Release(Arena *arena)
     base->release(base->ctx,arena->memory,arena->capacity);
 }
 
-void *Arena_Push(Arena *arena, UINT64 size)
+static void *Arena_Push(Arena *arena, UINT64 size)
 {
     void *result = 0;
     if(arena->pos + size <= arena->capacity){
@@ -72,6 +72,7 @@ static void Arena_Pop_To(Arena *arena, UINT64 pos)
 
 static void *Arena_Push_Zero(Arena *arena, UINT64 size)
 {
+    return NULL;
 }
 
 static void Arena_Align(Arena *arena, UINT64 pow2Align)

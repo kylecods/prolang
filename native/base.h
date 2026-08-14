@@ -1,5 +1,5 @@
 #ifndef BASE_H
-#define BASE_ H
+#define BASE_H
 
 #include <stdint.h>
 #include <string.h>
@@ -45,8 +45,8 @@ static INT8  MIN_I8_VALUE  =  (INT8)0x80;
 #define MIN(A,B) (((A)<(B)) ? (A):(B))
 #define MAX(A,B) (((A)>(B)) ? (A):(B))
 
-#define ClampTop(a,b) Min(a,b)
-#define ClampBottom(a,b) Max(a,b)
+#define ClampTop(a,b) MIN(a,b)
+#define ClampBottom(a,b) MAX(a,b)
 
 #define AlignUpPow2(x,p) (((x) + (p) - 1)&~((p) - 1))
 #define AlignDownPow2(x,p) ((x)&~((p) - 1))

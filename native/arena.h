@@ -35,7 +35,7 @@ static Arena Make_Arena(BaseMemory *base);
 
 static void Arena_Release(Arena* arena);
 
-static void* Arena_Push(Arena *arena, UINT64 size);
+static void *Arena_Push(Arena *arena, UINT64 size);
 
 static void Arena_Pop_To(Arena *arena, UINT64 pos);
 
