@@ -260,6 +260,11 @@ internal sealed class Binder
 
         var functionBodies = ImmutableDictionary.CreateBuilder<FunctionSymbol, BoundBlockStatement>();
 
+        // The same bodies before lowering, keeping if/while/for intact. Text backends emit from
+        // these so their output reads like the source rather than like a jump table; the MSIL
+        // emitter uses the lowered form. See BoundProgram.StructuredFunctions.
+        var structuredBodies = ImmutableDictionary.CreateBuilder<FunctionSymbol, BoundStatement>();
+
         // Shared registry for monomorphized generic function instantiations.
         // Keys are concrete function names; values are (symbol, lowered body).
         var sharedInstantiations = new Dictionary<string, (FunctionSymbol Symbol, BoundBlockStatement Body)>();
@@ -289,15 +294,17 @@ internal sealed class Binder
             }
 
             functionBodies.Add(function, loweredBody);
+            structuredBodies.Add(function, body);
 
             diagnostics.AddRange(binder.Diagnostics);
         }
 
         if (globalScope.MainFunction != null && globalScope.Statements.Any())
         {
-            var body = Lowerer.Lower(new BoundBlockStatement(globalScope.Statements));
+            var structured = new BoundBlockStatement(globalScope.Statements);
 
-            functionBodies.Add(globalScope.MainFunction, body);
+            functionBodies.Add(globalScope.MainFunction, Lowerer.Lower(structured));
+            structuredBodies.Add(globalScope.MainFunction, structured);
         }
         else if (globalScope.ScriptFunction != null)
         {
@@ -314,9 +321,10 @@ internal sealed class Binder
                 statements = statements.Add(new BoundReturnStatement(nullValue));
             }
 
-            var body = Lowerer.Lower(new BoundBlockStatement(statements));
+            var structured = new BoundBlockStatement(statements);
 
-            functionBodies.Add(globalScope.ScriptFunction, body);
+            functionBodies.Add(globalScope.ScriptFunction, Lowerer.Lower(structured));
+            structuredBodies.Add(globalScope.ScriptFunction, structured);
         }
 
         // Add all collected generic instantiations to the function bodies
@@ -326,7 +334,7 @@ internal sealed class Binder
                 functionBodies.Add(concreteSymbol, instBody);
         }
 
-        return new BoundProgram(previous, diagnostics.ToImmutable(), globalScope.MainFunction, globalScope.ScriptFunction, functionBodies.ToImmutable(), globalScope.StructTypes, globalScope.EnumTypes);
+        return new BoundProgram(previous, diagnostics.ToImmutable(), globalScope.MainFunction, globalScope.ScriptFunction, functionBodies.ToImmutable(), globalScope.StructTypes, globalScope.EnumTypes, structuredBodies.ToImmutable());
     }
 
     private void BindFunctionDeclaration(FunctionDeclarationSyntax syntax)

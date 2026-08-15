@@ -19,6 +19,17 @@ internal sealed class CEmitter
     // Labels actually targeted by goto statements — unlisted ones are skipped to avoid C4102 warnings
     private HashSet<string> _referencedLabels = new(StringComparer.Ordinal);
 
+    /// <summary>
+    /// Break and continue labels of the loops currently being emitted, innermost last.
+    /// </summary>
+    /// <remarks>
+    /// ProLang's <c>break</c> and <c>continue</c> are gotos targeting labels their loop owns. A
+    /// structured C loop never emits those labels, so the jump has to become C's own keyword —
+    /// and only when it targets the *innermost* loop, since C's break and continue cannot reach
+    /// an outer one.
+    /// </remarks>
+    private readonly Stack<(string Break, string Continue)> _loopLabels = new();
+
     private CEmitter(BoundProgram program, string moduleName)
     {
         _program = program;
@@ -95,10 +106,41 @@ internal sealed class CEmitter
             _indent++;
             var entryFunc = FindEntryFunction();
             if (entryFunc != null)
-                Line($"{SanitizeName(entryFunc.Name)}();");
+                Line($"{SanitizeName(entryFunc.Name)}({BuildEntryArguments(entryFunc)});");
             Line("return 0;");
             _indent--;
             Line("}");
+        }
+    }
+
+    /// <summary>
+    /// Builds the argument list for the call to the entry function from C's <c>main</c>.
+    /// </summary>
+    /// <remarks>
+    /// A ProLang <c>main(args: array&lt;string&gt;)</c> needs something passed for <c>args</c>.
+    /// An empty array is used rather than wiring up <c>argc</c>/<c>argv</c>, because the C entry
+    /// point is generated as <c>main(void)</c>; a program that reads its arguments will see none.
+    /// Passing nothing at all, which is what happened before, does not compile.
+    /// </remarks>
+    private string BuildEntryArguments(FunctionSymbol entryFunction)
+    {
+        if (entryFunction.Parameters.IsEmpty)
+        {
+            return string.Empty;
+        }
+
+        return string.Join(", ", entryFunction.Parameters.Select(EmptyValueFor));
+
+        string EmptyValueFor(ParameterSymbol parameter)
+        {
+            if (parameter.Type.Name == "array" && parameter.Type.TypeArguments.Length == 1)
+            {
+                return $"prl_array_new_{GetArraySuffix(parameter.Type.TypeArguments[0])}(0)";
+            }
+
+            // Zero-initialise anything else. C99 permits a compound literal here, and a
+            // main() taking a non-array parameter is not something the language produces.
+            return $"({EmitTypeName(parameter.Type)}){{0}}";
         }
     }
 
@@ -271,27 +313,93 @@ internal sealed class CEmitter
         Line($"{retType} {SanitizeName(func.Name)}({paramList});");
     }
 
-    private void EmitFunction(FunctionSymbol func, BoundBlockStatement body)
+    /// <summary>
+    /// Emits a function, preferring the structured body so the C reads like the ProLang source.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="BoundProgram.StructuredFunctions"/> holds the body before lowering, with
+    /// <c>if</c>, <c>while</c>, and <c>for</c> intact. Emitting from it produces C with real
+    /// control flow rather than the labels and jumps the lowered form would give — generated C is
+    /// read, debugged, and stepped through by people, so that difference matters.
+    /// </para>
+    /// <para>
+    /// Falls back to the lowered body for any function with no structured form, which keeps the
+    /// goto path alive rather than leaving it to rot.
+    /// </para>
+    /// </remarks>
+    private void EmitFunction(FunctionSymbol func, BoundBlockStatement loweredBody)
     {
-        // Pre-pass: collect all labels that are actually jumped to in this function
-        _referencedLabels = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var stmt in body.Statements)
-        {
-            if (stmt is BoundGotoStatement g)
-                _referencedLabels.Add(g.BoundLabel.Name);
-            else if (stmt is BoundConditionalGotoStatement cg)
-                _referencedLabels.Add(cg.BoundLabel.Name);
-        }
+        var structuredBody = _program.StructuredFunctions.GetValueOrDefault(func);
+        BoundStatement body = structuredBody ?? loweredBody;
+
+        CollectReferencedLabels(body);
+        _loopLabels.Clear();
 
         var retType = EmitTypeName(func.Type);
         var paramList = BuildParamList(func);
         Line($"{retType} {SanitizeName(func.Name)}({paramList}) {{");
         _indent++;
-        foreach (var stmt in body.Statements)
-            EmitStatement(stmt);
+
+        // A block at function level contributes the function's own braces, so its statements are
+        // emitted directly rather than nested in a redundant inner scope.
+        if (body is BoundBlockStatement block)
+        {
+            foreach (var stmt in block.Statements)
+                EmitStatement(stmt);
+        }
+        else
+        {
+            EmitStatement(body);
+        }
+
         _indent--;
         Line("}");
         Line();
+    }
+
+    /// <summary>
+    /// Records every label actually jumped to, so unreferenced ones are not emitted.
+    /// </summary>
+    /// <remarks>
+    /// An unreferenced label is a hard warning under MSVC's <c>/WX</c> (C4102). Structured
+    /// emission removes most of them, but a <c>break</c> or <c>continue</c> that cannot be
+    /// expressed as C's own keyword still needs one.
+    /// </remarks>
+    private void CollectReferencedLabels(BoundStatement statement)
+    {
+        _referencedLabels = new HashSet<string>(StringComparer.Ordinal);
+        Walk(statement);
+
+        void Walk(BoundStatement node)
+        {
+            switch (node)
+            {
+                case BoundGotoStatement g:
+                    _referencedLabels.Add(g.BoundLabel.Name);
+                    break;
+                case BoundConditionalGotoStatement cg:
+                    _referencedLabels.Add(cg.BoundLabel.Name);
+                    break;
+                case BoundBlockStatement b:
+                    foreach (var s in b.Statements) Walk(s);
+                    break;
+                case BoundIfStatement i:
+                    Walk(i.Body);
+                    if (i.ElseIfStatement != null) Walk(i.ElseIfStatement);
+                    if (i.ElseStatement != null) Walk(i.ElseStatement);
+                    break;
+                case BoundElIfStatement ei:
+                    Walk(ei.Body);
+                    break;
+                case BoundWhileStatement w:
+                    Walk(w.Body);
+                    break;
+                case BoundForStatement f:
+                    Walk(f.Body);
+                    break;
+            }
+        }
     }
 
     private string BuildParamList(FunctionSymbol func)
@@ -322,7 +430,16 @@ internal sealed class CEmitter
                     _sb.AppendLine($"{LabelName(lbl.BoundLabel.Name)}:;");
                 break;
             case BoundNodeKind.GotoStatement:
-                Line($"goto {LabelName(((BoundGotoStatement)stmt).BoundLabel.Name)};");
+                EmitGoto((BoundGotoStatement)stmt);
+                break;
+            case BoundNodeKind.IfStatement:
+                EmitIfStatement((BoundIfStatement)stmt);
+                break;
+            case BoundNodeKind.WhileStatement:
+                EmitWhileStatement((BoundWhileStatement)stmt);
+                break;
+            case BoundNodeKind.ForStatement:
+                EmitForStatement((BoundForStatement)stmt);
                 break;
             case BoundNodeKind.ConditionalGotoStatement:
                 EmitConditionalGoto((BoundConditionalGotoStatement)stmt);
@@ -330,8 +447,9 @@ internal sealed class CEmitter
             case BoundNodeKind.ReturnStatement:
                 EmitReturnStatement((BoundReturnStatement)stmt);
                 break;
-            // These should be lowered away, but handle gracefully:
             case BoundNodeKind.BlockStatement:
+                // Braces are written by whatever introduced the scope, so a bare block just
+                // contributes its statements at the current indent.
                 foreach (var s in ((BoundBlockStatement)stmt).Statements)
                     EmitStatement(s);
                 break;
@@ -348,6 +466,130 @@ internal sealed class CEmitter
         Write($"{Indent()}{typeName} {name} = ");
         EmitExpression(vd.Initializer, vd.Variable.Type);
         _sb.AppendLine(";");
+    }
+
+    /// <summary>
+    /// Emits a nested statement as a braced block, so that a single-statement body is still safe
+    /// to extend and reads consistently.
+    /// </summary>
+    private void EmitBlock(BoundStatement body)
+    {
+        _sb.AppendLine(" {");
+        _indent++;
+
+        if (body is BoundBlockStatement block)
+        {
+            foreach (var stmt in block.Statements)
+                EmitStatement(stmt);
+        }
+        else
+        {
+            EmitStatement(body);
+        }
+
+        _indent--;
+        Write($"{Indent()}}}");
+    }
+
+    private void EmitIfStatement(BoundIfStatement stmt)
+    {
+        Write($"{Indent()}if (");
+        EmitExpression(stmt.Condition);
+        _sb.Append(')');
+        EmitBlock(stmt.Body);
+
+        // elif chains arrive as a nested BoundElIfStatement rather than as an else containing an
+        // if, so they are flattened here into `else if` instead of nesting a scope per branch.
+        var elseIf = stmt.ElseIfStatement;
+
+        while (elseIf is BoundElIfStatement elIf)
+        {
+            _sb.Append(" else if (");
+            EmitExpression(elIf.Condition);
+            _sb.Append(')');
+            EmitBlock(elIf.Body);
+
+            elseIf = null;
+        }
+
+        if (stmt.ElseStatement != null)
+        {
+            _sb.Append(" else");
+            EmitBlock(stmt.ElseStatement);
+        }
+
+        _sb.AppendLine();
+    }
+
+    private void EmitWhileStatement(BoundWhileStatement stmt)
+    {
+        Write($"{Indent()}while (");
+        EmitExpression(stmt.Condition);
+        _sb.Append(')');
+
+        _loopLabels.Push((stmt.BreakLabel.Name, stmt.ContinueLabel.Name));
+        EmitBlock(stmt.Body);
+        _loopLabels.Pop();
+
+        _sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Emits a ProLang <c>for(v = lo to hi)</c> as a C counting loop.
+    /// </summary>
+    /// <remarks>
+    /// The bound is inclusive in ProLang, hence <c>&lt;=</c>. Lowering would otherwise turn this
+    /// into a while loop with a synthetic <c>upperBound</c> local and three labels.
+    /// </remarks>
+    private void EmitForStatement(BoundForStatement stmt)
+    {
+        var name = SanitizeName(stmt.Variable.Name);
+        var type = EmitTypeName(stmt.Variable.Type);
+
+        Write($"{Indent()}for ({type} {name} = ");
+        EmitExpression(stmt.LowerBound, stmt.Variable.Type);
+        _sb.Append($"; {name} <= ");
+        EmitExpression(stmt.UpperBound, stmt.Variable.Type);
+        _sb.Append($"; {name}++)");
+
+        _loopLabels.Push((stmt.BreakLabel.Name, stmt.ContinueLabel.Name));
+        EmitBlock(stmt.Body);
+        _loopLabels.Pop();
+
+        _sb.AppendLine();
+    }
+
+    /// <summary>
+    /// Emits a goto, preferring C's own <c>break</c> and <c>continue</c> where the target is the
+    /// enclosing loop's exit or continue label.
+    /// </summary>
+    /// <remarks>
+    /// ProLang's <c>break</c> and <c>continue</c> bind to gotos targeting labels the loop owns.
+    /// Inside a structured loop those labels are never emitted, so the jump has to become the
+    /// corresponding C keyword. The <c>continue</c> case relies on ProLang's <c>for</c> mapping
+    /// onto a C counting loop, where <c>continue</c> also runs the increment — the same
+    /// semantics the lowered form gives by placing the continue label before the increment.
+    /// </remarks>
+    private void EmitGoto(BoundGotoStatement stmt)
+    {
+        if (_loopLabels.Count > 0)
+        {
+            var (breakLabel, continueLabel) = _loopLabels.Peek();
+
+            if (breakLabel == stmt.BoundLabel.Name)
+            {
+                Line("break;");
+                return;
+            }
+
+            if (continueLabel == stmt.BoundLabel.Name)
+            {
+                Line("continue;");
+                return;
+            }
+        }
+
+        Line($"goto {LabelName(stmt.BoundLabel.Name)};");
     }
 
     private void EmitConditionalGoto(BoundConditionalGotoStatement stmt)
