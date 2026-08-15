@@ -179,6 +179,7 @@ dotnet run --project src/ProLang/ProLang.csproj -- [OPTIONS] <SOURCE-FILES>
 | `--msil=PATH` | Print an MSIL listing for a compiled assembly | `--msil=out.dll` |
 | `--emit-c` | Transpile to C99 | `--emit-c` |
 | `--emit-psp` | Transpile to C99 for the PSP | `--emit-psp` |
+| `--emit-csharp` | Render the lowered program as C# for inspection | `--emit-csharp` |
 | `--c-output=PATH` | Override the transpiler output directory | `--c-output=./gen` |
 | `-h, --help` | Show help | `-h` |
 

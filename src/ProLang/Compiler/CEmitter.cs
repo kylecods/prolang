@@ -107,7 +107,7 @@ internal sealed class CEmitter
     private FunctionSymbol? FindEntryFunction()
     {
         // Prefer __UserMain (user's main() renamed by binder)
-        var userMain = _program.Functions.Keys.FirstOrDefault(f => f.Name == "__UserMain");
+        var userMain = _program.Functions.Keys.FirstOrDefault(f => f.Name == SyntheticNames.UserMain);
         if (userMain != null) return userMain;
 
         // Fall back to MainFunction if it's actually in the dictionary

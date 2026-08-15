@@ -640,6 +640,30 @@ public sealed class ProLangCompilation
     }
 
     /// <summary>
+    /// Renders the program as C# for inspection, rather than compiling it.
+    /// </summary>
+    /// <remarks>
+    /// A diagnostic aid, not a compilation target. It shows the same lowered program the MSIL
+    /// backend consumes, so control flow appears as labels and gotos. See
+    /// <see cref="CodeGen.CSharp.CSharpBackend"/>.
+    /// </remarks>
+    public ImmutableArray<Diagnostic> EmitCSharp(string moduleName, string outputDir)
+    {
+        var prepared = PrepareProgram();
+
+        if (!prepared.IsReady)
+        {
+            return prepared.Diagnostics;
+        }
+
+        Directory.CreateDirectory(outputDir);
+
+        var outputPath = Path.Combine(outputDir, $"{moduleName}.cs");
+
+        return CodeGen.CSharp.CSharpBackend.Emit(prepared.Program!, moduleName, outputPath);
+    }
+
+    /// <summary>
     /// Copies <c>ProLang.Runtime.dll</c> next to a compiled program.
     /// </summary>
     /// <remarks>

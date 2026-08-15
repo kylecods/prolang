@@ -269,6 +269,21 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Report(default, message);
     }
 
+    /// <summary>
+    /// Reports a bound node the C# rendering backend does not know how to write out.
+    /// </summary>
+    /// <remarks>
+    /// Only <c>--emit-csharp</c> raises this. It means the debug rendering is incomplete for this
+    /// program, not that the program is wrong — the MSIL backend is unaffected.
+    /// </remarks>
+    public void ReportUnsupportedCSharpNode(string nodeKind)
+    {
+        var message = $"The C# rendering backend does not support '{nodeKind}' nodes. " +
+                      "The generated C# is incomplete; the compiled assembly is unaffected.";
+
+        Report(default, message);
+    }
+
     public void ReportInvalidAssignmentTarget(TextLocation location)
     {
         var message = "Invalid assignment target.";

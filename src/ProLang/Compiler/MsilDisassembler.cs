@@ -5,14 +5,6 @@ namespace ProLang.Compiler;
 
 internal static class MsilDisassembler
 {
-    // Methods emitted by the runtime infrastructure that are not user code
-    private static readonly HashSet<string> InfrastructureMethods = new(StringComparer.Ordinal)
-    {
-        "__InitializeOutput",
-        "__AppendToOutput",
-        "__FlushOutput",
-    };
-
     public static void Disassemble(string dllPath, TextWriter output)
     {
         AssemblyDefinition assembly;
@@ -60,8 +52,10 @@ internal static class MsilDisassembler
 
             if (programType != null)
             {
+                // Every method on Program is now user code. Output buffering used to be
+                // synthesised in here as __InitializeOutput/__AppendToOutput/__FlushOutput and
+                // had to be filtered out; it lives in ProLang.Runtime.Output now.
                 var userMethods = programType.Methods
-                    .Where(m => !InfrastructureMethods.Contains(m.Name))
                     .OrderBy(m => m.Name)
                     .ToList();
 

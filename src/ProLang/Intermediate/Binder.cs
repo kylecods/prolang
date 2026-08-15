@@ -174,7 +174,7 @@ internal sealed class Binder
 
                 // Create __UserMain symbol with the same signature as main
                 // This internal symbol will be the actual implementation
-                userMainFunction = new FunctionSymbol("__UserMain", userMain.Parameters, userMain.Type, userMain.Declaration);
+                userMainFunction = new FunctionSymbol(SyntheticNames.UserMain, userMain.Parameters, userMain.Type, userMain.Declaration);
 
                 // Remove the user's "main" from the scope and replace with "__UserMain"
                 // We need to update the scope to use __UserMain instead
@@ -228,7 +228,7 @@ internal sealed class Binder
         {
             // Create synthetic __Main that will be the actual entry point
             // It takes string[] args from CLR but doesn't expose them to user
-            syntheticMainFunction = new FunctionSymbol("__Main", ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Void, null);
+            syntheticMainFunction = new FunctionSymbol(SyntheticNames.Main, ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Void, null);
 
             // Add synthetic __Main to scope and functions list
             binder._scope.TryDeclareFunction(syntheticMainFunction);

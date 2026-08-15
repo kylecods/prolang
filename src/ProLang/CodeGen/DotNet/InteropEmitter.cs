@@ -170,11 +170,18 @@ internal sealed class InteropEmitter
     /// </summary>
     /// <exception cref="MissingMethodException">No matching method was found.</exception>
     /// <remarks>
-    /// <b>Known limitation:</b> matching is by name and parameter <i>count</i>, not parameter
-    /// types. Overloads that differ only in parameter types resolve to whichever appears first in
-    /// metadata order, which can silently emit a call to the wrong one. Fixing this needs a
-    /// reflection-to-Cecil comparison for arbitrary parameter types, which
-    /// <see cref="ResolveFieldType"/> only covers for a handful of primitives today.
+    /// <para>
+    /// Overloads are distinguished by comparing parameter type names, falling back to arity alone
+    /// when no exact match is found. Matching on arity alone had been the only strategy, so
+    /// overloads differing only in parameter types resolved to whichever appeared first in
+    /// metadata order — silently emitting a call to the wrong one.
+    /// </para>
+    /// <para>
+    /// The fallback is necessary rather than lax: reflection and Cecil spell constructed generics
+    /// differently (<c>List`1[[System.Int32, ...]]</c> against <c>List`1&lt;System.Int32&gt;</c>),
+    /// so an exact comparison cannot match every parameter list. Preferring exact and degrading
+    /// to arity fixes the common case without regressing the ones that never matched exactly.
+    /// </para>
     /// </remarks>
     public MethodReference ResolveMethod(System.Reflection.MethodInfo method, TypeReference typeRef)
     {
@@ -183,13 +190,12 @@ internal sealed class InteropEmitter
         var typeDef = _references.FindTypeDefinition(typeRef.FullName)
             ?? throw new TypeLoadException($"Cannot resolve type '{typeRef.FullName}' in loaded assemblies");
 
-        var parameterCount = method.GetParameters().Length;
+        var parameters = method.GetParameters();
         TypeDefinition? current = typeDef;
 
         while (current != null)
         {
-            var methodDef = current.Methods.FirstOrDefault(
-                m => m.Name == method.Name && m.Parameters.Count == parameterCount);
+            var methodDef = FindOverload(current, method.Name, parameters);
 
             if (methodDef != null)
             {
@@ -227,19 +233,66 @@ internal sealed class InteropEmitter
     /// <summary>
     /// Converts a reflection constructor into a Cecil reference.
     /// </summary>
-    /// <exception cref="MissingMethodException">No constructor of matching arity was found.</exception>
-    /// <remarks>Matches on arity only, with the same overload caveat as <see cref="ResolveMethod"/>.</remarks>
+    /// <exception cref="MissingMethodException">No matching constructor was found.</exception>
+    /// <remarks>Uses the same exact-then-arity overload matching as <see cref="ResolveMethod"/>.</remarks>
     public MethodReference ResolveConstructor(System.Reflection.ConstructorInfo constructor, TypeReference typeRef)
     {
         var typeDef = typeRef.Resolve();
-        var parameterCount = constructor.GetParameters().Length;
-
-        var ctorDef = typeDef.Methods.FirstOrDefault(
-            m => m.IsConstructor && m.Parameters.Count == parameterCount);
+        var ctorDef = FindOverload(typeDef, ".ctor", constructor.GetParameters());
 
         return ctorDef != null
             ? _references.Import(ctorDef)
             : throw new MissingMethodException($"Cannot resolve constructor on type '{typeRef.FullName}'");
+    }
+
+    /// <summary>
+    /// Finds the member of <paramref name="type"/> named <paramref name="name"/> whose parameters
+    /// best match <paramref name="parameters"/>.
+    /// </summary>
+    /// <returns>
+    /// The overload whose parameter type names match exactly, or failing that the first of the
+    /// right arity, or <see langword="null"/> if there is neither.
+    /// </returns>
+    private static MethodDefinition? FindOverload(
+        TypeDefinition type,
+        string name,
+        System.Reflection.ParameterInfo[] parameters)
+    {
+        MethodDefinition? arityMatch = null;
+
+        foreach (var candidate in type.Methods)
+        {
+            if (candidate.Name != name || candidate.Parameters.Count != parameters.Length)
+            {
+                continue;
+            }
+
+            if (ParameterTypesMatch(candidate, parameters))
+            {
+                return candidate;
+            }
+
+            // Remember the first same-arity candidate in case nothing matches exactly.
+            arityMatch ??= candidate;
+        }
+
+        return arityMatch;
+    }
+
+    /// <summary>
+    /// Compares a Cecil method's parameter types against a reflection method's, by full name.
+    /// </summary>
+    private static bool ParameterTypesMatch(MethodDefinition candidate, System.Reflection.ParameterInfo[] parameters)
+    {
+        for (var i = 0; i < parameters.Length; i++)
+        {
+            if (candidate.Parameters[i].ParameterType.FullName != parameters[i].ParameterType.FullName)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /// <summary>

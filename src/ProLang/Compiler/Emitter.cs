@@ -40,15 +40,12 @@ namespace ProLang.Compiler
 
         private Dictionary<FunctionSymbol, MethodDefinition> _methods = new();
 
-        private Dictionary<VariableSymbol, VariableDefinition> _locals = new();
 
         // Keyed by struct name so concrete instantiations (DynArray<int>) are deduplicated by name.
         private Dictionary<string, TypeDefinition> _structTypes = new(StringComparer.Ordinal);
 
         private TypeDefinition _typeDefinition;
 
-        private Dictionary<BoundLabel, Instruction> _labels = new();
-        private List<(BoundLabel label, Instruction instruction)> _fixups = new();
         private static readonly string[] stringArray = ["System.String"];
 
         private Emitter(string moduleName, string[] references)
@@ -304,7 +301,7 @@ namespace ProLang.Compiler
             }
 
             // Emit synthetic __Main entry point if we have a main function
-            if (program.MainFunction != null && program.MainFunction.Name == "__Main")
+            if (program.MainFunction != null && program.MainFunction.Name == SyntheticNames.Main)
             {
                 EmitSyntheticMainMethod(program);
             }
@@ -370,7 +367,7 @@ namespace ProLang.Compiler
         private void EmitSyntheticMainMethod(BoundProgram program)
         {
             // Find the __UserMain function
-            var userMainFunction = program.Functions.Keys.FirstOrDefault(f => f.Name == "__UserMain");
+            var userMainFunction = program.Functions.Keys.FirstOrDefault(f => f.Name == SyntheticNames.UserMain);
             if (userMainFunction == null)
                 return;
 
@@ -379,7 +376,7 @@ namespace ProLang.Compiler
             var stringArrayType = stringType?.MakeArrayType();
 
             // Create __Main(string[] args) method
-            var mainMethod = new MethodDefinition("__Main",
+            var mainMethod = new MethodDefinition(SyntheticNames.Main,
                 CecilMethodAttributes.Static | CecilMethodAttributes.Public,
                 voidType);
 
@@ -388,10 +385,10 @@ namespace ProLang.Compiler
                 CecilParameterAttributes.None,
                 stringArrayType));
 
-            var ilProcessor = mainMethod.Body.GetILProcessor();
+            var scope = new MethodBodyScope(mainMethod);
 
-            // 1. Call __InitializeOutput()
-            ilProcessor.Emit(OpCodes.Call, _outputInitMethod);
+            // 1. Start the runtime's output buffer
+            scope.IL.Emit(OpCodes.Call, _outputInitMethod);
 
             // 2. Prepare to call __UserMain
             // If __UserMain expects args, pass the string[] directly
@@ -401,20 +398,20 @@ namespace ProLang.Compiler
             {
                 // __UserMain expects array<string> parameter - pass args directly
                 // (string[] from CLR maps directly to array<string> in ProLang IL)
-                ilProcessor.Emit(OpCodes.Ldarg_0);  // Load args parameter
-                ilProcessor.Emit(OpCodes.Call, _methods[userMainFunction]);
+                scope.IL.Emit(OpCodes.Ldarg_0);  // Load args parameter
+                scope.IL.Emit(OpCodes.Call, _methods[userMainFunction]);
             }
             else
             {
                 // __UserMain takes no parameters - just call it
-                ilProcessor.Emit(OpCodes.Call, _methods[userMainFunction]);
+                scope.IL.Emit(OpCodes.Call, _methods[userMainFunction]);
             }
 
             // 3. Call __FlushOutput() to print accumulated output
-            ilProcessor.Emit(OpCodes.Call, _outputFlushMethod);
+            scope.IL.Emit(OpCodes.Call, _outputFlushMethod);
 
             // 4. Return void
-            ilProcessor.Emit(OpCodes.Ret);
+            scope.IL.Emit(OpCodes.Ret);
 
             mainMethod.Body.OptimizeMacros();
             _typeDefinition.Methods.Add(mainMethod);
@@ -449,345 +446,332 @@ namespace ProLang.Compiler
         {
             var method = _methods[function];
 
-            _locals.Clear();
-            _labels.Clear();
-            _fixups.Clear();
+            // All per-method state lives in the scope, so nothing has to be reset between bodies
+            // and emitting one body cannot disturb another.
+            var scope = new MethodBodyScope(method);
 
-            var ilProcessor = method.Body.GetILProcessor();
             foreach (var statement in body.Statements)
             {
-                EmitStatement(ilProcessor, statement);
+                EmitStatement(scope, statement);
             }
 
             if (method.ReturnType.FullName == "System.Void")
             {
-                ilProcessor.Emit(OpCodes.Ret);
+                scope.IL.Emit(OpCodes.Ret);
             }
             else if (function.Type == TypeSymbol.Any && method.ReturnType.IsValueType)
             {
-                ilProcessor.Emit(OpCodes.Box, method.ReturnType);
-                ilProcessor.Emit(OpCodes.Ret);
+                scope.IL.Emit(OpCodes.Box, method.ReturnType);
+                scope.IL.Emit(OpCodes.Ret);
             }
 
-            // Fixup goto instructions
-            foreach (var (label, instruction) in _fixups)
-            {
-                if (!_labels.TryGetValue(label, out var target))
-                {
-                    throw new Exception($"Label {label.Name} not found");
-                }
-                instruction.Operand = target;
-            }
+            scope.PatchBranches();
 
             method.Body.OptimizeMacros();
         }
 
-        private void EmitStatement(ILProcessor ilProcessor, BoundStatement node)
+        private void EmitStatement(MethodBodyScope scope, BoundStatement node)
         {
             switch (node.Kind)
             {
                 case BoundNodeKind.VariableDeclaration:
-                    EmitVariableDeclaration(ilProcessor, (BoundVariableDeclaration)node);
+                    EmitVariableDeclaration(scope, (BoundVariableDeclaration)node);
                     break;
                 case BoundNodeKind.LabelStatement:
-                    EmitLabelStatement(ilProcessor, (BoundLabelStatement)node);
+                    EmitLabelStatement(scope, (BoundLabelStatement)node);
                     break;
                 case BoundNodeKind.GotoStatement:
-                    EmitGotoStatement(ilProcessor, (BoundGotoStatement)node);
+                    EmitGotoStatement(scope, (BoundGotoStatement)node);
                     break;
                 case BoundNodeKind.ConditionalGotoStatement:
-                    EmitConditionalGotoStatement(ilProcessor, (BoundConditionalGotoStatement)node);
+                    EmitConditionalGotoStatement(scope, (BoundConditionalGotoStatement)node);
                     break;
                 case BoundNodeKind.ReturnStatement:
-                    EmitReturnStatement(ilProcessor, (BoundReturnStatement)node);
+                    EmitReturnStatement(scope, (BoundReturnStatement)node);
                     break;
                 case BoundNodeKind.ExpressionStatement:
-                    EmitExpressionStatement(ilProcessor, (BoundExpressionStatement)node);
+                    EmitExpressionStatement(scope, (BoundExpressionStatement)node);
                     break;
                 default:
                     throw new Exception($"Unexpected node kind {node.Kind}");
             }
         }
 
-        private void EmitExpressionStatement(ILProcessor ilProcessor, BoundExpressionStatement node)
+        private void EmitExpressionStatement(MethodBodyScope scope, BoundExpressionStatement node)
         {
-            EmitExpression(ilProcessor, node.Expression);
+            EmitExpression(scope, node.Expression);
 
             if (node.Expression.Type != TypeSymbol.Void)
             {
-                ilProcessor.Emit(OpCodes.Pop);
+                scope.IL.Emit(OpCodes.Pop);
             }
         }
 
-        private void EmitReturnStatement(ILProcessor ilProcessor, BoundReturnStatement node)
+        private void EmitReturnStatement(MethodBodyScope scope, BoundReturnStatement node)
         {
             if (node.Expression != null)
             {
-                EmitExpression(ilProcessor, node.Expression);
+                EmitExpression(scope, node.Expression);
             }
 
-            ilProcessor.Emit(OpCodes.Ret);
+            scope.IL.Emit(OpCodes.Ret);
         }
 
-        private void EmitConditionalGotoStatement(ILProcessor ilProcessor, BoundConditionalGotoStatement node)
+        private void EmitConditionalGotoStatement(MethodBodyScope scope, BoundConditionalGotoStatement node)
         {
-            EmitExpression(ilProcessor, node.Condition);
+            EmitExpression(scope, node.Condition);
 
             // Create a placeholder instruction - we'll fixup the target later
             var opCode = node.JumpIfTrue ? OpCodes.Brtrue : OpCodes.Brfalse;
-            var instruction = ilProcessor.Create(opCode, Instruction.Create(OpCodes.Nop));
-            ilProcessor.Append(instruction);
-            _fixups.Add((node.BoundLabel, instruction));
+            var instruction = scope.IL.Create(opCode, Instruction.Create(OpCodes.Nop));
+            scope.IL.Append(instruction);
+            scope.RecordFixup(node.BoundLabel, instruction);
         }
 
-        private void EmitGotoStatement(ILProcessor ilProcessor, BoundGotoStatement node)
+        private void EmitGotoStatement(MethodBodyScope scope, BoundGotoStatement node)
         {
             // Create a placeholder instruction - we'll fixup the target later
-            var instruction = ilProcessor.Create(OpCodes.Br, Instruction.Create(OpCodes.Nop));
-            ilProcessor.Append(instruction);
-            _fixups.Add((node.BoundLabel, instruction));
+            var instruction = scope.IL.Create(OpCodes.Br, Instruction.Create(OpCodes.Nop));
+            scope.IL.Append(instruction);
+            scope.RecordFixup(node.BoundLabel, instruction);
         }
 
-        private void EmitLabelStatement(ILProcessor ilProcessor, BoundLabelStatement node)
+        private void EmitLabelStatement(MethodBodyScope scope, BoundLabelStatement node)
         {
-            var instruction = ilProcessor.Create(OpCodes.Nop);
-            ilProcessor.Append(instruction);
-            _labels[node.BoundLabel] = instruction;
+            var instruction = scope.IL.Create(OpCodes.Nop);
+            scope.IL.Append(instruction);
+            scope.MarkLabel(node.BoundLabel, instruction);
         }
 
-        private void EmitVariableDeclaration(ILProcessor ilProcessor, BoundVariableDeclaration node)
+        private void EmitVariableDeclaration(MethodBodyScope scope, BoundVariableDeclaration node)
         {
             var typeReference = GetTypeReference(node.Variable.Type);
 
-            var variableDefinition = new VariableDefinition(typeReference);
-
-            _locals.Add(node.Variable, variableDefinition);
-
-            ilProcessor.Body.Variables.Add(variableDefinition);
+            var variableDefinition = scope.DeclareLocal(node.Variable, typeReference);
 
             if (node.Variable.Type is StructSymbol)
             {
-                ilProcessor.Emit(OpCodes.Ldloca, variableDefinition);
-                ilProcessor.Emit(OpCodes.Initobj, typeReference);
+                scope.IL.Emit(OpCodes.Ldloca, variableDefinition);
+                scope.IL.Emit(OpCodes.Initobj, typeReference);
             }
 
-            EmitExpression(ilProcessor, node.Initializer);
+            EmitExpression(scope, node.Initializer);
 
             if (node.Variable.Type == TypeSymbol.Any && typeReference.IsValueType)
             {
-                ilProcessor.Emit(OpCodes.Box, typeReference);
+                scope.IL.Emit(OpCodes.Box, typeReference);
             }
 
-            ilProcessor.Emit(OpCodes.Stloc, variableDefinition);
+            scope.IL.Emit(OpCodes.Stloc, variableDefinition);
         }
 
 
-        private void EmitExpression(ILProcessor ilProcessor, BoundExpression node)
+        private void EmitExpression(MethodBodyScope scope, BoundExpression node)
         {
             switch (node.Kind)
             {
                 case BoundNodeKind.BoundLiteralExpression:
-                    EmitLiteralExpression(ilProcessor, (BoundLiteralExpression)node);
+                    EmitLiteralExpression(scope, (BoundLiteralExpression)node);
                     break;
                 case BoundNodeKind.BoundVariableExpression:
-                    EmitVariableExpression(ilProcessor, (BoundVariableExpression)node);
+                    EmitVariableExpression(scope, (BoundVariableExpression)node);
                     break;
                 case BoundNodeKind.BoundAssignmentExpression:
-                    EmitAssignmentExpression(ilProcessor, (BoundAssignmentExpression)node);
+                    EmitAssignmentExpression(scope, (BoundAssignmentExpression)node);
                     break;
                 case BoundNodeKind.BoundUnaryExpression:
-                    EmitUnaryExpression(ilProcessor, (BoundUnaryExpression)node);
+                    EmitUnaryExpression(scope, (BoundUnaryExpression)node);
                     break;
                 case BoundNodeKind.BoundBinaryExpression:
-                    EmitBinaryExpression(ilProcessor, (BoundBinaryExpression)node);
+                    EmitBinaryExpression(scope, (BoundBinaryExpression)node);
                     break;
                 case BoundNodeKind.BoundCallExpression:
-                    EmitCallExpression(ilProcessor, (BoundCallExpression)node);
+                    EmitCallExpression(scope, (BoundCallExpression)node);
                     break;
                 case BoundNodeKind.BoundConversionExpression:
-                    EmitConversionExpression(ilProcessor, (BoundConversionExpression)node);
+                    EmitConversionExpression(scope, (BoundConversionExpression)node);
                     break;
                 case BoundNodeKind.BoundArrayExpression:
-                    EmitArrayExpression(ilProcessor, (BoundArrayExpression)node);
+                    EmitArrayExpression(scope, (BoundArrayExpression)node);
                     break;
                 case BoundNodeKind.BoundMapExpression:
-                    EmitMapExpression(ilProcessor, (BoundMapExpression)node);
+                    EmitMapExpression(scope, (BoundMapExpression)node);
                     break;
                 case BoundNodeKind.BoundIndexExpression:
-                    EmitIndexExpression(ilProcessor, (BoundIndexExpression)node);
+                    EmitIndexExpression(scope, (BoundIndexExpression)node);
                     break;
                 case BoundNodeKind.BoundIndexAssignmentExpression:
-                    EmitIndexAssignmentExpression(ilProcessor, (BoundIndexAssignmentExpression)node);
+                    EmitIndexAssignmentExpression(scope, (BoundIndexAssignmentExpression)node);
                     break;
                 case BoundNodeKind.BoundStructCreationExpression:
-                    EmitStructCreationExpression(ilProcessor, (BoundStructCreationExpression)node);
+                    EmitStructCreationExpression(scope, (BoundStructCreationExpression)node);
                     break;
                 case BoundNodeKind.BoundFieldAccessExpression:
-                    EmitFieldAccessExpression(ilProcessor, (BoundFieldAccessExpression)node);
+                    EmitFieldAccessExpression(scope, (BoundFieldAccessExpression)node);
                     break;
                 case BoundNodeKind.BoundFieldAssignmentExpression:
-                    EmitFieldAssignmentExpression(ilProcessor, (BoundFieldAssignmentExpression)node);
+                    EmitFieldAssignmentExpression(scope, (BoundFieldAssignmentExpression)node);
                     break;
                 case BoundNodeKind.BoundCastExpression:
-                    EmitCastExpression(ilProcessor, (BoundCastExpression)node);
+                    EmitCastExpression(scope, (BoundCastExpression)node);
                     break;
                 case BoundNodeKind.BoundArrayNewExpression:
-                    EmitArrayNewExpression(ilProcessor, (BoundArrayNewExpression)node);
+                    EmitArrayNewExpression(scope, (BoundArrayNewExpression)node);
                     break;
                 case BoundNodeKind.BoundEnumMemberExpression:
-                    ilProcessor.Emit(OpCodes.Ldc_I4, ((BoundEnumMemberExpression)node).Member.Value);
+                    scope.IL.Emit(OpCodes.Ldc_I4, ((BoundEnumMemberExpression)node).Member.Value);
                     break;
                 default:
                     throw new NotSupportedException($"Unexpected node kind {node.Kind}");
             }
         }
 
-        private void EmitIndexAssignmentExpression(ILProcessor ilProcessor, BoundIndexAssignmentExpression node)
+        private void EmitIndexAssignmentExpression(MethodBodyScope scope, BoundIndexAssignmentExpression node)
         {
             if (node.LHS.Type.Name == "array")
             {
                 var elementTypeRef = node.LHS.Type.TypeArguments.Length > 0
                     ? GetTypeReference(node.LHS.Type.TypeArguments[0])
                     : GetCachedType("System.Object");
-                EmitExpression(ilProcessor, node.LHS);
-                EmitExpression(ilProcessor, node.Index);
-                EmitExpression(ilProcessor, node.RHS);
-                EmitStelemForType(ilProcessor, elementTypeRef);
+                EmitExpression(scope, node.LHS);
+                EmitExpression(scope, node.Index);
+                EmitExpression(scope, node.RHS);
+                EmitStelemForType(scope, elementTypeRef);
                 // stelem is void; push null as dummy return value
-                ilProcessor.Emit(OpCodes.Ldnull);
+                scope.IL.Emit(OpCodes.Ldnull);
             }
             else
             {
-                EmitExpression(ilProcessor, node.LHS);
-                EmitExpression(ilProcessor, node.Index);
-                EmitExpression(ilProcessor, node.RHS);
+                EmitExpression(scope, node.LHS);
+                EmitExpression(scope, node.Index);
+                EmitExpression(scope, node.RHS);
                 var collectionType = GetTypeReference(node.LHS.Type);
                 var setMethod = GetGenericMethod(collectionType, "set_Item", 2);
-                ilProcessor.Emit(OpCodes.Callvirt, setMethod);
-                ilProcessor.Emit(OpCodes.Ldnull);
+                scope.IL.Emit(OpCodes.Callvirt, setMethod);
+                scope.IL.Emit(OpCodes.Ldnull);
             }
         }
 
-        private void EmitIndexExpression(ILProcessor ilProcessor, BoundIndexExpression node)
+        private void EmitIndexExpression(MethodBodyScope scope, BoundIndexExpression node)
         {
-            EmitExpression(ilProcessor, node.Expression);
-            EmitExpression(ilProcessor, node.Index);
+            EmitExpression(scope, node.Expression);
+            EmitExpression(scope, node.Index);
 
             if (node.Expression.Type.Name == "array")
             {
                 var elementTypeRef = node.Expression.Type.TypeArguments.Length > 0
                     ? GetTypeReference(node.Expression.Type.TypeArguments[0])
                     : GetCachedType("System.Object");
-                EmitLdelemForType(ilProcessor, elementTypeRef);
+                EmitLdelemForType(scope, elementTypeRef);
             }
             else
             {
                 var collectionType = GetTypeReference(node.Expression.Type);
                 var getMethod = GetGenericMethod(collectionType, "get_Item", 1);
-                ilProcessor.Emit(OpCodes.Callvirt, getMethod);
+                scope.IL.Emit(OpCodes.Callvirt, getMethod);
             }
         }
 
-        private void EmitMapExpression(ILProcessor ilProcessor, BoundMapExpression node)
+        private void EmitMapExpression(MethodBodyScope scope, BoundMapExpression node)
         {
             var mapType = GetTypeReference(node.Type);
             var constructor = GetGenericMethod(mapType, ".ctor", 0);
             var addMethod = GetGenericMethod(mapType, "Add", 2);
 
-            ilProcessor.Emit(OpCodes.Newobj, constructor);
+            scope.IL.Emit(OpCodes.Newobj, constructor);
             foreach (var entry in node.Entries)
             {
-                ilProcessor.Emit(OpCodes.Dup);
-                EmitExpression(ilProcessor, entry.Key);
-                EmitExpression(ilProcessor, entry.Value);
-                ilProcessor.Emit(OpCodes.Callvirt, addMethod);
+                scope.IL.Emit(OpCodes.Dup);
+                EmitExpression(scope, entry.Key);
+                EmitExpression(scope, entry.Value);
+                scope.IL.Emit(OpCodes.Callvirt, addMethod);
             }
         }
 
-        private void EmitArrayExpression(ILProcessor ilProcessor, BoundArrayExpression node)
+        private void EmitArrayExpression(MethodBodyScope scope, BoundArrayExpression node)
         {
             var elementTypeRef = node.Type.TypeArguments.Length > 0
                 ? GetTypeReference(node.Type.TypeArguments[0])
                 : GetCachedType("System.Object");
 
-            ilProcessor.Emit(OpCodes.Ldc_I4, node.Elements.Length);
-            ilProcessor.Emit(OpCodes.Newarr, elementTypeRef);
+            scope.IL.Emit(OpCodes.Ldc_I4, node.Elements.Length);
+            scope.IL.Emit(OpCodes.Newarr, elementTypeRef);
 
             for (int i = 0; i < node.Elements.Length; i++)
             {
-                ilProcessor.Emit(OpCodes.Dup);
-                ilProcessor.Emit(OpCodes.Ldc_I4, i);
-                EmitExpression(ilProcessor, node.Elements[i]);
-                EmitStelemForType(ilProcessor, elementTypeRef);
+                scope.IL.Emit(OpCodes.Dup);
+                scope.IL.Emit(OpCodes.Ldc_I4, i);
+                EmitExpression(scope, node.Elements[i]);
+                EmitStelemForType(scope, elementTypeRef);
             }
         }
 
-        private void EmitArrayNewExpression(ILProcessor ilProcessor, BoundArrayNewExpression node)
+        private void EmitArrayNewExpression(MethodBodyScope scope, BoundArrayNewExpression node)
         {
             var elementTypeRef = GetTypeReference(node.ElementType);
-            EmitExpression(ilProcessor, node.SizeExpression);
-            ilProcessor.Emit(OpCodes.Newarr, elementTypeRef);
+            EmitExpression(scope, node.SizeExpression);
+            scope.IL.Emit(OpCodes.Newarr, elementTypeRef);
         }
 
-        private void EmitStelemForType(ILProcessor ilProcessor, TypeReference elementType)
+        private void EmitStelemForType(MethodBodyScope scope, TypeReference elementType)
         {
             switch (elementType.FullName)
             {
                 case "System.Boolean":
                 case "System.Int32":
                 case "System.UInt32":
-                    ilProcessor.Emit(OpCodes.Stelem_I4); break;
+                    scope.IL.Emit(OpCodes.Stelem_I4); break;
                 case "System.Byte":
                 case "System.SByte":
-                    ilProcessor.Emit(OpCodes.Stelem_I1); break;
+                    scope.IL.Emit(OpCodes.Stelem_I1); break;
                 case "System.Int16":
                 case "System.UInt16":
-                    ilProcessor.Emit(OpCodes.Stelem_I2); break;
+                    scope.IL.Emit(OpCodes.Stelem_I2); break;
                 case "System.Int64":
                 case "System.UInt64":
-                    ilProcessor.Emit(OpCodes.Stelem_I8); break;
+                    scope.IL.Emit(OpCodes.Stelem_I8); break;
                 case "System.Single":
-                    ilProcessor.Emit(OpCodes.Stelem_R4); break;
+                    scope.IL.Emit(OpCodes.Stelem_R4); break;
                 case "System.Double":
-                    ilProcessor.Emit(OpCodes.Stelem_R8); break;
+                    scope.IL.Emit(OpCodes.Stelem_R8); break;
                 default:
-                    ilProcessor.Emit(OpCodes.Stelem_Ref); break;
+                    scope.IL.Emit(OpCodes.Stelem_Ref); break;
             }
         }
 
-        private void EmitLdelemForType(ILProcessor ilProcessor, TypeReference elementType)
+        private void EmitLdelemForType(MethodBodyScope scope, TypeReference elementType)
         {
             switch (elementType.FullName)
             {
                 case "System.Boolean":
                 case "System.Int32":
-                    ilProcessor.Emit(OpCodes.Ldelem_I4); break;
+                    scope.IL.Emit(OpCodes.Ldelem_I4); break;
                 case "System.UInt32":
-                    ilProcessor.Emit(OpCodes.Ldelem_U4); break;
+                    scope.IL.Emit(OpCodes.Ldelem_U4); break;
                 case "System.Byte":
-                    ilProcessor.Emit(OpCodes.Ldelem_U1); break;
+                    scope.IL.Emit(OpCodes.Ldelem_U1); break;
                 case "System.SByte":
-                    ilProcessor.Emit(OpCodes.Ldelem_I1); break;
+                    scope.IL.Emit(OpCodes.Ldelem_I1); break;
                 case "System.Int16":
-                    ilProcessor.Emit(OpCodes.Ldelem_I2); break;
+                    scope.IL.Emit(OpCodes.Ldelem_I2); break;
                 case "System.UInt16":
-                    ilProcessor.Emit(OpCodes.Ldelem_U2); break;
+                    scope.IL.Emit(OpCodes.Ldelem_U2); break;
                 case "System.Int64":
-                    ilProcessor.Emit(OpCodes.Ldelem_I8); break;
+                    scope.IL.Emit(OpCodes.Ldelem_I8); break;
                 case "System.UInt64":
-                    ilProcessor.Emit(OpCodes.Ldelem_I8); break; // CLR has no Ldelem_U8; use I8 (same bits)
+                    scope.IL.Emit(OpCodes.Ldelem_I8); break; // CLR has no Ldelem_U8; use I8 (same bits)
                 case "System.Single":
-                    ilProcessor.Emit(OpCodes.Ldelem_R4); break;
+                    scope.IL.Emit(OpCodes.Ldelem_R4); break;
                 case "System.Double":
-                    ilProcessor.Emit(OpCodes.Ldelem_R8); break;
+                    scope.IL.Emit(OpCodes.Ldelem_R8); break;
                 default:
-                    ilProcessor.Emit(OpCodes.Ldelem_Ref); break;
+                    scope.IL.Emit(OpCodes.Ldelem_Ref); break;
             }
         }
 
-        private void EmitConversionExpression(ILProcessor ilProcessor, BoundConversionExpression node)
+        private void EmitConversionExpression(MethodBodyScope scope, BoundConversionExpression node)
         {
-            EmitExpression(ilProcessor, node.Expression);
+            EmitExpression(scope, node.Expression);
 
             var fromType = node.Expression.Type;
             var toType = node.Type;
@@ -796,24 +780,24 @@ namespace ProLang.Compiler
             {
                 // Box value types before calling ToString()
                 if (IsValueType(fromType))
-                    ilProcessor.Emit(OpCodes.Box, GetTypeReference(fromType));
+                    scope.IL.Emit(OpCodes.Box, GetTypeReference(fromType));
 
                 if (fromType != TypeSymbol.String)
                 {
                     var toStringMethod = GetTypeReference(TypeSymbol.Any).Resolve().Methods.First(m => m.Name == "ToString" && m.Parameters.Count == 0);
-                    ilProcessor.Emit(OpCodes.Callvirt, _assemblyDefinition.MainModule.ImportReference(toStringMethod));
+                    scope.IL.Emit(OpCodes.Callvirt, _assemblyDefinition.MainModule.ImportReference(toStringMethod));
                 }
             }
             else if (fromType == TypeSymbol.Any || toType == TypeSymbol.Any)
             {
                 if (toType == TypeSymbol.Any && IsValueType(fromType))
-                    ilProcessor.Emit(OpCodes.Box, GetTypeReference(fromType));
+                    scope.IL.Emit(OpCodes.Box, GetTypeReference(fromType));
                 else if (fromType == TypeSymbol.Any && IsValueType(toType))
-                    ilProcessor.Emit(OpCodes.Unbox_Any, GetTypeReference(toType));
+                    scope.IL.Emit(OpCodes.Unbox_Any, GetTypeReference(toType));
             }
             else if (IsNumericType(fromType) && IsNumericType(toType))
             {
-                ilProcessor.Emit(NumericConvOpCode(toType));
+                scope.IL.Emit(NumericConvOpCode(toType));
             }
         }
 
@@ -846,9 +830,9 @@ namespace ProLang.Compiler
             type == TypeSymbol.Float64 || type == TypeSymbol.Float  ||
             type is StructSymbol;
 
-        private void EmitCastExpression(ILProcessor ilProcessor, BoundCastExpression node)
+        private void EmitCastExpression(MethodBodyScope scope, BoundCastExpression node)
         {
-            EmitExpression(ilProcessor, node.Expression);
+            EmitExpression(scope, node.Expression);
 
             var targetType = node.TargetType;
 
@@ -856,22 +840,22 @@ namespace ProLang.Compiler
             if (targetType == TypeSymbol.Int || targetType == TypeSymbol.Bool)
             {
                 // Unbox from object to value type - throws InvalidCastException if type mismatch
-                ilProcessor.Emit(OpCodes.Unbox_Any, GetTypeReference(targetType));
+                scope.IL.Emit(OpCodes.Unbox_Any, GetTypeReference(targetType));
             }
             else if (targetType == TypeSymbol.String)
             {
                 // Cast to string - value is already object
-                ilProcessor.Emit(OpCodes.Isinst, GetTypeReference(targetType));
+                scope.IL.Emit(OpCodes.Isinst, GetTypeReference(targetType));
             }
             else if (targetType.Name == "array" || targetType.Name == "map")
             {
                 // For collection types, just cast with isinst (reference types)
-                ilProcessor.Emit(OpCodes.Isinst, GetTypeReference(targetType));
+                scope.IL.Emit(OpCodes.Isinst, GetTypeReference(targetType));
             }
             else
             {
                 // For other types (structs, etc.), use isinst
-                ilProcessor.Emit(OpCodes.Isinst, GetTypeReference(targetType));
+                scope.IL.Emit(OpCodes.Isinst, GetTypeReference(targetType));
             }
         }
 
@@ -884,11 +868,11 @@ namespace ProLang.Compiler
         /// interop symbol backed by reflection, or an ordinary user function emitted into this
         /// same assembly.
         /// </remarks>
-        private void EmitCallExpression(ILProcessor ilProcessor, BoundCallExpression node)
+        private void EmitCallExpression(MethodBodyScope scope, BoundCallExpression node)
         {
             foreach (var argument in node.Arguments)
             {
-                EmitExpression(ilProcessor, argument);
+                EmitExpression(scope, argument);
             }
 
             // print() is the one builtin that cannot live in the registry: it routes through
@@ -902,13 +886,13 @@ namespace ProLang.Compiler
                         "Output infrastructure must be emitted before any call to print().");
                 }
 
-                ilProcessor.Emit(OpCodes.Call, _outputAppendMethod);
+                scope.IL.Emit(OpCodes.Call, _outputAppendMethod);
                 return;
             }
 
             if (IntrinsicRegistry.TryGetEmitter(node.Function, out var intrinsic))
             {
-                intrinsic(new IntrinsicContext(ilProcessor, _references, _diagnostics, GetTypeReference));
+                intrinsic(new IntrinsicContext(scope, _references, _diagnostics, GetTypeReference));
                 return;
             }
 
@@ -916,15 +900,15 @@ namespace ProLang.Compiler
             {
                 // An enum member is a compile-time constant; there is nothing to call.
                 case DotNetEnumConstantSymbol enumConstant:
-                    ilProcessor.Emit(OpCodes.Ldc_I4, enumConstant.Value);
+                    scope.IL.Emit(OpCodes.Ldc_I4, enumConstant.Value);
                     return;
 
                 case DotNetFunctionSymbol dotNetFunction:
-                    _interop.EmitCall(ilProcessor, dotNetFunction);
+                    _interop.EmitCall(scope.IL, dotNetFunction);
                     return;
 
                 default:
-                    ilProcessor.Emit(OpCodes.Call, _methods[node.Function]);
+                    scope.IL.Emit(OpCodes.Call, _methods[node.Function]);
                     return;
             }
         }
@@ -941,7 +925,7 @@ namespace ProLang.Compiler
         /// passed a raw value where a reference was required, producing IL that fails
         /// verification. Strings are already references and must not be boxed.
         /// </remarks>
-        private void BoxForStringConcat(ILProcessor ilProcessor, TypeSymbol operandType)
+        private void BoxForStringConcat(MethodBodyScope scope, TypeSymbol operandType)
         {
             if (operandType == TypeSymbol.String)
             {
@@ -952,57 +936,57 @@ namespace ProLang.Compiler
 
             if (typeReference.IsValueType)
             {
-                ilProcessor.Emit(OpCodes.Box, typeReference);
+                scope.IL.Emit(OpCodes.Box, typeReference);
             }
         }
 
-        private void EmitBinaryExpression(ILProcessor ilProcessor, BoundBinaryExpression node)
+        private void EmitBinaryExpression(MethodBodyScope scope, BoundBinaryExpression node)
         {
             var isStringConcatenation =
                 node.Op.Kind == BoundBinaryOperatorKind.Addition && node.Op.Type == TypeSymbol.String;
 
-            EmitExpression(ilProcessor, node.Left);
+            EmitExpression(scope, node.Left);
             if (isStringConcatenation)
             {
-                BoxForStringConcat(ilProcessor, node.Left.Type);
+                BoxForStringConcat(scope, node.Left.Type);
             }
 
-            EmitExpression(ilProcessor, node.Right);
+            EmitExpression(scope, node.Right);
             if (isStringConcatenation)
             {
-                BoxForStringConcat(ilProcessor, node.Right.Type);
+                BoxForStringConcat(scope, node.Right.Type);
             }
 
             if (node.Op.Kind == BoundBinaryOperatorKind.Addition)
             {
                 if (node.Op.Type == TypeSymbol.String)
                 {
-                    ilProcessor.Emit(OpCodes.Call, _stringConcatReference);
+                    scope.IL.Emit(OpCodes.Call, _stringConcatReference);
                 }
                 else
                 {
-                    ilProcessor.Emit(OpCodes.Add);
+                    scope.IL.Emit(OpCodes.Add);
                 }
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.Subtraction)
             {
-                ilProcessor.Emit(OpCodes.Sub);
+                scope.IL.Emit(OpCodes.Sub);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.Multiplication)
             {
-                ilProcessor.Emit(OpCodes.Mul);
+                scope.IL.Emit(OpCodes.Mul);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.Division)
             {
-                ilProcessor.Emit(OpCodes.Div);
+                scope.IL.Emit(OpCodes.Div);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.LogicalAnd)
             {
-                ilProcessor.Emit(OpCodes.And);
+                scope.IL.Emit(OpCodes.And);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.LogicalOr)
             {
-                ilProcessor.Emit(OpCodes.Or);
+                scope.IL.Emit(OpCodes.Or);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.Equals)
             {
@@ -1010,13 +994,13 @@ namespace ProLang.Compiler
                 {
                     var eqMethod = ResolveMethod("System.String", "op_Equality", new[] { "System.String", "System.String" });
                     if (eqMethod != null)
-                        ilProcessor.Emit(OpCodes.Call, eqMethod);
+                        scope.IL.Emit(OpCodes.Call, eqMethod);
                     else
-                        ilProcessor.Emit(OpCodes.Ceq);
+                        scope.IL.Emit(OpCodes.Ceq);
                 }
                 else
                 {
-                    ilProcessor.Emit(OpCodes.Ceq);
+                    scope.IL.Emit(OpCodes.Ceq);
                 }
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.NotEquals)
@@ -1025,64 +1009,64 @@ namespace ProLang.Compiler
                 {
                     var neqMethod = ResolveMethod("System.String", "op_Inequality", new[] { "System.String", "System.String" });
                     if (neqMethod != null)
-                        ilProcessor.Emit(OpCodes.Call, neqMethod);
+                        scope.IL.Emit(OpCodes.Call, neqMethod);
                     else
                     {
-                        ilProcessor.Emit(OpCodes.Ceq);
-                        ilProcessor.Emit(OpCodes.Ldc_I4_0);
-                        ilProcessor.Emit(OpCodes.Ceq);
+                        scope.IL.Emit(OpCodes.Ceq);
+                        scope.IL.Emit(OpCodes.Ldc_I4_0);
+                        scope.IL.Emit(OpCodes.Ceq);
                     }
                 }
                 else
                 {
-                    ilProcessor.Emit(OpCodes.Ceq);
-                    ilProcessor.Emit(OpCodes.Ldc_I4_0);
-                    ilProcessor.Emit(OpCodes.Ceq);
+                    scope.IL.Emit(OpCodes.Ceq);
+                    scope.IL.Emit(OpCodes.Ldc_I4_0);
+                    scope.IL.Emit(OpCodes.Ceq);
                 }
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.LessThan)
             {
-                ilProcessor.Emit(OpCodes.Clt);
+                scope.IL.Emit(OpCodes.Clt);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.LessEqual)
             {
-                ilProcessor.Emit(OpCodes.Cgt);
-                ilProcessor.Emit(OpCodes.Ldc_I4_0);
-                ilProcessor.Emit(OpCodes.Ceq);
+                scope.IL.Emit(OpCodes.Cgt);
+                scope.IL.Emit(OpCodes.Ldc_I4_0);
+                scope.IL.Emit(OpCodes.Ceq);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.GreaterThan)
             {
-                ilProcessor.Emit(OpCodes.Cgt);
+                scope.IL.Emit(OpCodes.Cgt);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.GreaterEqual)
             {
-                ilProcessor.Emit(OpCodes.Clt);
-                ilProcessor.Emit(OpCodes.Ldc_I4_0);
-                ilProcessor.Emit(OpCodes.Ceq);
+                scope.IL.Emit(OpCodes.Clt);
+                scope.IL.Emit(OpCodes.Ldc_I4_0);
+                scope.IL.Emit(OpCodes.Ceq);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.Modulo)
             {
-                ilProcessor.Emit(OpCodes.Rem);
+                scope.IL.Emit(OpCodes.Rem);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.BitwiseAnd)
             {
-                ilProcessor.Emit(OpCodes.And);
+                scope.IL.Emit(OpCodes.And);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.BitwiseOr)
             {
-                ilProcessor.Emit(OpCodes.Or);
+                scope.IL.Emit(OpCodes.Or);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.BitwiseXor)
             {
-                ilProcessor.Emit(OpCodes.Xor);
+                scope.IL.Emit(OpCodes.Xor);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.BitwiseLeftShift)
             {
-                ilProcessor.Emit(OpCodes.Shl);
+                scope.IL.Emit(OpCodes.Shl);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.BitwiseRightShift)
             {
-                ilProcessor.Emit(OpCodes.Shr_Un);
+                scope.IL.Emit(OpCodes.Shr_Un);
             }
             else
             {
@@ -1090,9 +1074,9 @@ namespace ProLang.Compiler
             }
         }
 
-        private void EmitUnaryExpression(ILProcessor ilProcessor, BoundUnaryExpression node)
+        private void EmitUnaryExpression(MethodBodyScope scope, BoundUnaryExpression node)
         {
-            EmitExpression(ilProcessor, node.Operand);
+            EmitExpression(scope, node.Operand);
 
             if (node.Op.Kind == BoundUnaryOperatorKind.Identity)
             {
@@ -1100,12 +1084,12 @@ namespace ProLang.Compiler
             }
             else if (node.Op.Kind == BoundUnaryOperatorKind.Negation)
             {
-                ilProcessor.Emit(OpCodes.Neg);
+                scope.IL.Emit(OpCodes.Neg);
             }
             else if (node.Op.Kind == BoundUnaryOperatorKind.LogicalNegation)
             {
-                ilProcessor.Emit(OpCodes.Ldc_I4_0);
-                ilProcessor.Emit(OpCodes.Ceq);
+                scope.IL.Emit(OpCodes.Ldc_I4_0);
+                scope.IL.Emit(OpCodes.Ceq);
             }
             else
             {
@@ -1113,37 +1097,37 @@ namespace ProLang.Compiler
             }
         }
 
-        private void EmitAssignmentExpression(ILProcessor ilProcessor, BoundAssignmentExpression node)
+        private void EmitAssignmentExpression(MethodBodyScope scope, BoundAssignmentExpression node)
         {
-            EmitExpression(ilProcessor, node.Expression);
-            ilProcessor.Emit(OpCodes.Dup);
+            EmitExpression(scope, node.Expression);
+            scope.IL.Emit(OpCodes.Dup);
 
             if (node.Variable is ParameterSymbol parameter)
             {
-                ilProcessor.Emit(OpCodes.Starg, ilProcessor.Body.Method.Parameters[parameter.Ordinal]);
+                scope.IL.Emit(OpCodes.Starg, scope.Method.Parameters[parameter.Ordinal]);
             }
             else
             {
-                var variableDefinition = _locals[node.Variable];
-                ilProcessor.Emit(OpCodes.Stloc, variableDefinition);
+                var variableDefinition = scope.GetLocal(node.Variable);
+                scope.IL.Emit(OpCodes.Stloc, variableDefinition);
             }
         }
 
-        private void EmitVariableExpression(ILProcessor ilProcessor, BoundVariableExpression node)
+        private void EmitVariableExpression(MethodBodyScope scope, BoundVariableExpression node)
         {
             if (node.Variable is ParameterSymbol parameter)
             {
-                ilProcessor.Emit(OpCodes.Ldarg, ilProcessor.Body.Method.Parameters[parameter.Ordinal]);
+                scope.IL.Emit(OpCodes.Ldarg, scope.Method.Parameters[parameter.Ordinal]);
             }
             else
             {
-                var variableDefinition = _locals[node.Variable];
+                var variableDefinition = scope.GetLocal(node.Variable);
 
-                ilProcessor.Emit(OpCodes.Ldloc, variableDefinition);
+                scope.IL.Emit(OpCodes.Ldloc, variableDefinition);
             }
         }
 
-        private void EmitLiteralExpression(ILProcessor ilProcessor, BoundLiteralExpression node)
+        private void EmitLiteralExpression(MethodBodyScope scope, BoundLiteralExpression node)
         {
             if (node.Type == TypeSymbol.Bool)
             {
@@ -1151,7 +1135,7 @@ namespace ProLang.Compiler
 
                 var instruction = value ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0;
 
-                ilProcessor.Emit(instruction);
+                scope.IL.Emit(instruction);
             }
             else if (node.Type == TypeSymbol.Int
             || node.Type == TypeSymbol.UInt32
@@ -1161,34 +1145,34 @@ namespace ProLang.Compiler
             {
                 var value = Convert.ToInt32(node.Value);
 
-                ilProcessor.Emit(OpCodes.Ldc_I4, value);
+                scope.IL.Emit(OpCodes.Ldc_I4, value);
             }
             else if (node.Type == TypeSymbol.Int8)//Chosen the more efficient instruction
             {
                 var value = (sbyte)node.Value;
 
-                ilProcessor.Emit(OpCodes.Ldc_I4_S, value);
+                scope.IL.Emit(OpCodes.Ldc_I4_S, value);
             }
             else if (node.Type == TypeSymbol.Int64
             || node.Type == TypeSymbol.UInt64)
             {
                 var value = (long)node.Value;
 
-                ilProcessor.Emit(OpCodes.Ldc_I8, value);
+                scope.IL.Emit(OpCodes.Ldc_I8, value);
             }
             else if (node.Type == TypeSymbol.Float32)
             {
-                ilProcessor.Emit(OpCodes.Ldc_R4, (float)node.Value);
+                scope.IL.Emit(OpCodes.Ldc_R4, (float)node.Value);
             }
             else if (node.Type == TypeSymbol.Float64 || node.Type == TypeSymbol.Float)
             {
-                ilProcessor.Emit(OpCodes.Ldc_R8, (double)node.Value);
+                scope.IL.Emit(OpCodes.Ldc_R8, (double)node.Value);
             }
             else if (node.Type == TypeSymbol.String)
             {
                 var value = (string)node.Value;
 
-                ilProcessor.Emit(OpCodes.Ldstr, value);
+                scope.IL.Emit(OpCodes.Ldstr, value);
             }
             else
             {
@@ -1196,22 +1180,21 @@ namespace ProLang.Compiler
             }
         }
 
-        private void EmitStructCreationExpression(ILProcessor ilProcessor, BoundStructCreationExpression node)
+        private void EmitStructCreationExpression(MethodBodyScope scope, BoundStructCreationExpression node)
         {
             var structSymbol = node.StructType;
             var typeDef = _structTypes[structSymbol.Name];
             var typeRef = _assemblyDefinition.MainModule.ImportReference(typeDef);
 
-            var localVar = new VariableDefinition(typeRef);
-            ilProcessor.Body.Variables.Add(localVar);
+            var localVar = scope.DeclareTemporary(typeRef);
 
             foreach (var field in structSymbol.Fields)
             {
-                ilProcessor.Emit(OpCodes.Ldloca, localVar);
+                scope.IL.Emit(OpCodes.Ldloca, localVar);
 
                 var fieldIndex = structSymbol.Fields.IndexOf(field);
                 var fieldValue = node.FieldValues[fieldIndex];
-                EmitExpression(ilProcessor, fieldValue);
+                EmitExpression(scope, fieldValue);
 
                 var fieldType = GetTypeReference(field.Type);
 
@@ -1221,20 +1204,20 @@ namespace ProLang.Compiler
                 // into non-`any` fields, emitting `box string` and `box Object[]`.
                 if (field.Type == TypeSymbol.Any && GetTypeReference(fieldValue.Type).IsValueType)
                 {
-                    ilProcessor.Emit(OpCodes.Box, GetTypeReference(fieldValue.Type));
+                    scope.IL.Emit(OpCodes.Box, GetTypeReference(fieldValue.Type));
                 }
 
                 var fieldRef = new FieldReference(field.Name, fieldType);
                 fieldRef.DeclaringType = typeRef;
-                ilProcessor.Emit(OpCodes.Stfld, fieldRef);
+                scope.IL.Emit(OpCodes.Stfld, fieldRef);
             }
 
-            ilProcessor.Emit(OpCodes.Ldloc, localVar);
+            scope.IL.Emit(OpCodes.Ldloc, localVar);
         }
 
-        private void EmitFieldAccessExpression(ILProcessor ilProcessor, BoundFieldAccessExpression node)
+        private void EmitFieldAccessExpression(MethodBodyScope scope, BoundFieldAccessExpression node)
         {
-            EmitExpression(ilProcessor, node.Expression);
+            EmitExpression(scope, node.Expression);
 
             var structSymbol = (StructSymbol)node.Expression.Type;
             var typeDef = _structTypes[structSymbol.Name];
@@ -1243,15 +1226,15 @@ namespace ProLang.Compiler
             var fieldRef = new FieldReference(node.FieldName, fieldType);
             fieldRef.DeclaringType = typeRef;
 
-            ilProcessor.Emit(OpCodes.Ldfld, fieldRef);
+            scope.IL.Emit(OpCodes.Ldfld, fieldRef);
 
             if (node.Type == TypeSymbol.Any && fieldType.IsValueType)
             {
-                ilProcessor.Emit(OpCodes.Box, fieldType);
+                scope.IL.Emit(OpCodes.Box, fieldType);
             }
         }
 
-        private void EmitFieldAssignmentExpression(ILProcessor ilProcessor, BoundFieldAssignmentExpression node)
+        private void EmitFieldAssignmentExpression(MethodBodyScope scope, BoundFieldAssignmentExpression node)
         {
             var structSymbol = (StructSymbol)node.Expression.Type;
             var typeDef = _structTypes[structSymbol.Name];
@@ -1265,31 +1248,30 @@ namespace ProLang.Compiler
                 VariableDefinition? varDef = null;
                 if (varExpr.Variable is ParameterSymbol paramSym)
                 {
-                    ilProcessor.Emit(OpCodes.Ldarga, ilProcessor.Body.Method.Parameters[paramSym.Ordinal]);
+                    scope.IL.Emit(OpCodes.Ldarga, scope.Method.Parameters[paramSym.Ordinal]);
                 }
                 else
                 {
-                    varDef = _locals[varExpr.Variable];
-                    ilProcessor.Emit(OpCodes.Ldloca, varDef);
+                    varDef = scope.GetLocal(varExpr.Variable);
+                    scope.IL.Emit(OpCodes.Ldloca, varDef);
                 }
 
-                EmitExpression(ilProcessor, node.Value);
-                ilProcessor.Emit(OpCodes.Dup);
+                EmitExpression(scope, node.Value);
+                scope.IL.Emit(OpCodes.Dup);
 
-                var tempVar = new VariableDefinition(fieldType);
-                ilProcessor.Body.Variables.Add(tempVar);
-                ilProcessor.Emit(OpCodes.Stloc, tempVar);
+                var tempVar = scope.DeclareTemporary(fieldType);
+                scope.IL.Emit(OpCodes.Stloc, tempVar);
 
-                ilProcessor.Emit(OpCodes.Stfld, fieldRef);
+                scope.IL.Emit(OpCodes.Stfld, fieldRef);
 
-                ilProcessor.Emit(OpCodes.Ldloc, tempVar);
+                scope.IL.Emit(OpCodes.Ldloc, tempVar);
             }
             else
             {
-                EmitExpression(ilProcessor, node.Expression);
-                ilProcessor.Emit(OpCodes.Dup);
-                EmitExpression(ilProcessor, node.Value);
-                ilProcessor.Emit(OpCodes.Stfld, fieldRef);
+                EmitExpression(scope, node.Expression);
+                scope.IL.Emit(OpCodes.Dup);
+                EmitExpression(scope, node.Value);
+                scope.IL.Emit(OpCodes.Stfld, fieldRef);
             }
         }
     }

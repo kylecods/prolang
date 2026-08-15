@@ -224,16 +224,48 @@ resolution shows up as an imbalance rather than as a runtime `InvalidProgramExce
 
 ---
 
+## The C# rendering backend
+
+`--emit-csharp` writes the lowered program out as readable C#, into `.prolang/csharp/`. It is a
+**diagnostic aid, not a compilation target** — the MSIL emitter remains the .NET code path.
+
+It consumes the same `BoundProgram`, so what it shows is what the emitter sees, including the
+goto-and-label form lowering leaves behind. Reconstructing `if`/`while` would hide the thing it
+exists to show. Builtins render as calls into `ProLang.Runtime`, matching what the MSIL backend
+emits, so the two read against each other.
+
+The output compiles. All 26 corpus programs that render produce C# that builds clean against
+`ProLang.Runtime.dll`, which is the practical fidelity check — several places where ProLang's type
+system is more permissive than C#'s only surfaced because the generated code failed to compile:
+
+| ProLang | C# | Rendering |
+|---|---|---|
+| `any` in arithmetic or comparison | no operators on `object` | unboxing cast to the other operand's type |
+| implicit narrowing on assignment | explicit only | cast inserted at the assignment |
+| `ushort + 1` stays `uint16` | promotes to `int` | cast back at the assignment |
+| `as` works on value types | reference and nullable only | unboxing cast for value-type targets |
+| shadowing in nested scopes | one flat method scope | shadowed locals get a numeric suffix |
+| conversion to `string` | `(string)someInt` is illegal | `((object)x).ToString()` |
+
+Struct discovery differs from the MSIL backend too. `BoundProgram.StructTypes` holds generic
+*templates*; the monomorphised instantiations are never in it, and the MSIL emitter only gets away
+with that because it emits struct types lazily as `GetTypeReference` meets them. A text backend
+must declare a type before it is referenced, so `CollectStructTypes` gathers them up front from
+signatures, locals, and field types, iterating until closed.
+
+---
+
 ## Outstanding work
 
-- **Per-method state lives on emitter instance fields.** `_locals`, `_labels`, and `_fixups` are
-  reset by `Clear()` at the top of `EmitFunctionBody`. The emitter cannot be re-entered or
-  parallelised until these move into a scope object passed down through emission.
-- **`Emitter.cs` is still ~1,300 lines.** Type mapping, struct emission, function emission,
-  statement emission, and expression emission are all still in it.
-- **Scratch locals are allocated per call site** rather than pooled, so a method with many
-  `substring` calls carries more locals than it needs.
-- **Synthetic names are string literals** in three files.
-- **Interop overload resolution matches on arity only** (see above).
-- **`--emit-csharp`** — a C# debug/inspection backend over the same `BoundProgram` — is designed
-  but not implemented.
+- **`Emitter.cs` is ~1,280 lines.** Type mapping, struct emission, function emission, statement
+  emission, and expression emission are all still in it. Metadata resolution, interop, builtins,
+  and per-method state have been extracted.
+- **`CSharpBackend.BuiltinTarget` is maintained by hand** alongside `IntrinsicRegistry`. A builtin
+  missing from it renders as a plain call — readable, but less faithful about where the work
+  happens. Deriving one from the other would need the registry to carry target metadata rather
+  than opaque delegates.
+- **Two reflection stacks.** The binder discovers interop members with `System.Reflection` while
+  the emitter needs Cecil, so every interop member is resolved twice. Unifying them is a much
+  larger change than this refactor.
+- **Interop overload matching falls back to arity** when parameter type names do not compare
+  equal, which is unavoidable while reflection and Cecil spell constructed generics differently.
