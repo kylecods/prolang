@@ -14,23 +14,23 @@ func main(){
 
     //Addition
     print("a+b= ")
-    print(string(a+b))
+    print(a+b)
 
     //Subtraction
     print("a-b= ")
-    print(string(a-b))
+    print(a-b)
 
     //Multiplication
     print("a*b= ")
-    print(string(a*b))
+    print(a*b)
 
     //Division
     print("a/b= ")
-    print(string(a/b))
+    print(a/b)
 
     //Modulo
     print("a%b=")
-    print(string(a%b))
+    print(a%b)
 
     // Comparision
     let x = 5
@@ -38,22 +38,22 @@ func main(){
     let z = 6
     print("Comparisons with x=5, y=5, z=6")
     print("x == y:")
-    print(string(x == y)) // true
+    print(x == y) // true
     print("x != z:")
-    print(string(x != z)) // true
+    print(x != z) // true
     print("x < z:")
-    print(string(x < z))  // true
+    print(x < z)  // true
     print("z >= y:")
-    print(string(z >= y)) // true
+    print(z >= y) // true
 
     //Logical operators
     let isSunny = true
     let hasCoffee = false
     print("Logical Operators:")
     print("isSunny && hasCoffee (AND):")
-    print(string(isSunny && hasCoffee)) // false
+    print(isSunny && hasCoffee) // false
     print("isSunny || hasCoffee (OR):")
-    print(string(isSunny || hasCoffee))  // true
+    print(isSunny || hasCoffee)  // true
     print("!hasCoffee (NOT):")
-    print(string(!hasCoffee)) // true
+    print(!hasCoffee) // true
 }

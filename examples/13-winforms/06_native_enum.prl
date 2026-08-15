@@ -1,0 +1,61 @@
+/*
+ * Example 13-06: Native prolang enum declaration
+ *
+ * Demonstrates prolang's new enum feature:
+ *   - enum declaration with auto-assigned and explicit int values
+ *   - Enum.Member access resolves to an int constant at compile time
+ *   - Enum variables have type int — no boxing, no overhead
+ *   - Compares directly with int literals
+ *
+ * These native enums are separate from .NET enum interop (see 02_message_box.prl
+ * which uses WinForms DialogResult via the interop system).
+ */
+
+import "io"
+import "winforms"
+
+// Declare a prolang enum — members are int constants starting at 0
+enum Direction {
+    North,
+    East,
+    South,
+    West
+}
+
+// Enum with explicit values
+enum HttpStatus {
+    Ok = 200,
+    NotFound = 404,
+    InternalError = 500
+}
+
+func direction_name(d: int) : string
+{
+    if (d == Direction.North) { return "North" }
+    if (d == Direction.East)  { return "East"  }
+    if (d == Direction.South) { return "South" }
+    if (d == Direction.West)  { return "West"  }
+    return "Unknown"
+}
+
+func http_desc(code: int) : string
+{
+    if (code == HttpStatus.Ok)            { return "200 OK" }
+    if (code == HttpStatus.NotFound)      { return "404 Not Found" }
+    if (code == HttpStatus.InternalError) { return "500 Internal Server Error" }
+    return "Unknown"
+}
+
+func main()
+{
+    // Enum members resolve to their int values
+    let dir: int = Direction.South      // == 2
+    let status: int = HttpStatus.NotFound  // == 404
+
+    let msg: string = "Direction: " + direction_name(dir) + "\n"
+                    + "HTTP: " + http_desc(status) + "\n\n"
+                    + "North=" + direction_name(Direction.North)
+                    + "  East=" + direction_name(Direction.East)
+
+    WinFormsHelper.MessageBoxShow(msg, "ProLang Native Enums")
+}

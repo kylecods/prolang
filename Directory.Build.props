@@ -1,0 +1,30 @@
+<Project>
+
+  <!--
+    Shared settings for every project in the repository. Individual .csproj files may override
+    anything here; this only establishes the defaults.
+
+    Note: examples/ has its own Directory.Build.props that redefines the compile pipeline so
+    MSBuild can build .prlproj projects. MSBuild uses the nearest file walking upwards, so that
+    one shadows this rather than merging with it.
+  -->
+  <PropertyGroup>
+    <!--
+      Pinned rather than left implicit so that a compiler feature does not silently start being
+      used after an SDK upgrade, which would then require that SDK to build the project.
+    -->
+    <LangVersion>13.0</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest</AnalysisLevel>
+
+    <!--
+      Reproducible builds: the same source produces the same assembly bytes, which is what lets
+      the IL snapshot tests compare emitted output meaningfully.
+    -->
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+</Project>

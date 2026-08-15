@@ -26,6 +26,17 @@ internal static class MsilDisassembler
             return;
         }
 
+        // Cecil keeps the file open for the lifetime of the AssemblyDefinition. The CLI exits
+        // immediately so it never noticed, but any caller that goes on to delete or rewrite the
+        // assembly — the snapshot tests, for one — is blocked until the handle is released.
+        using (assembly)
+        {
+            WriteListing(assembly, dllPath, output);
+        }
+    }
+
+    private static void WriteListing(AssemblyDefinition assembly, string dllPath, TextWriter output)
+    {
         output.WriteLine($"=== ProLang MSIL Disassembly: {Path.GetFileName(dllPath)} ===");
         output.WriteLine($"Module : {assembly.Name.Name}  v{assembly.Name.Version}");
         output.WriteLine();

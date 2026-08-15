@@ -47,9 +47,17 @@ public sealed class DotNetInteropModule : BuiltInModule
             if (!type.IsPublic)
                 continue;
 
-            // Skip enums (could add support later)
             if (type.IsEnum)
+            {
+                // Expose each enum member as a zero-arg constant function returning int
+                foreach (var memberName in Enum.GetNames(type))
+                {
+                    var memberValue = (int)Convert.ChangeType(Enum.Parse(type, memberName), typeof(int));
+                    var funcName = $"{type.Name}.{memberName}";
+                    functions.Add(new DotNetEnumConstantSymbol(funcName, memberValue));
+                }
                 continue;
+            }
 
             // Add static methods
             foreach (var method in registry.GetStaticMethods(type))

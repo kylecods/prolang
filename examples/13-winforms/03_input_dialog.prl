@@ -1,0 +1,26 @@
+/*
+ * Example 13-03: Input dialog — string round-trip
+ *
+ * Demonstrates:
+ *   - InputDialog returns a prolang string directly (prolang string ↔ .NET string, one-to-one)
+ *   - String concatenation with "+"
+ *   - Conditional on empty string (length comparison)
+ */
+
+import "io"
+import "winforms"
+
+func main()
+{
+    let name: string = WinFormsHelper.InputDialog("Enter your name:", "Greeting")
+
+    if (name.length() == 0)
+    {
+        WinFormsHelper.MessageBoxShow("No name entered.", "Goodbye")
+    }
+    else
+    {
+        let greeting: string = "Hello, " + name + "! Welcome to ProLang WinForms."
+        WinFormsHelper.MessageBoxShow(greeting, "Greeting")
+    }
+}

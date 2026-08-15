@@ -1,0 +1,368 @@
+import "psp"
+import "console"
+
+// ── CHIP-8 state ─────────────────────────────────────────────────────────────
+
+struct Chip8 {
+    V:       array<uint8>;   // 16 registers V0-VF
+    Memory:  array<uint8>;   // 4 KiB
+    I:       int;           // index register
+    PC:      uint16;         // program counter
+    Stack:   array<uint16>;  // 16-level call stack
+    SP:      uint8;          // stack pointer
+    DT:      uint8;          // delay timer
+    Screen:  array<uint8>;   // 64x32 pixels
+    Keys:    array<bool>;    // 16-key hex pad
+    Draw:    bool;           // screen needs redraw
+    Opcode:  uint16;
+}
+
+func newChip8(): Chip8 {
+    let v: array<uint8>   = array_new(16)
+    let mem: array<uint8> = array_new(4096)
+    let stk: array<uint16> = array_new(16)
+    let scr: array<uint8> = array_new(64 * 32)
+    let keys: array<bool> = array_new(16)
+    let i = 0
+    while (i < 64 * 32) {
+        scr[i] = 0
+        i = i + 1
+    }
+    return Chip8 { V: v, Memory: mem, I: 0, PC: 0x200, Stack: stk, SP: 0, DT: 0, Screen: scr, Keys: keys, Draw: false, Opcode: 0 }
+}
+
+// ── Font (hex digits 0-F, 5 bytes each) at 0x000 ─────────────────────────────
+
+func LoadFonts(chip8: Chip8): void {
+    let fonts: array<uint8> = [
+        0xF0,0x90,0x90,0x90,0xF0,
+        0x20,0x60,0x20,0x20,0x70,
+        0xF0,0x10,0xF0,0x80,0xF0,
+        0xF0,0x10,0xF0,0x10,0xF0,
+        0x90,0x90,0xF0,0x10,0x10,
+        0xF0,0x80,0xF0,0x10,0xF0,
+        0xF0,0x80,0xF0,0x90,0xF0,
+        0xF0,0x10,0x20,0x40,0x40,
+        0xF0,0x90,0xF0,0x90,0xF0,
+        0xF0,0x90,0xF0,0x10,0xF0,
+        0xF0,0x90,0xF0,0x90,0x90,
+        0xE0,0x90,0xE0,0x90,0xE0,
+        0xF0,0x80,0x80,0x80,0xF0,
+        0xE0,0x90,0x90,0x90,0xE0,
+        0xF0,0x80,0xF0,0x80,0xF0,
+        0xF0,0x80,0xF0,0x80,0x80
+    ]
+    let i = 0
+    while (i < fonts.length()) {
+        chip8.Memory[i] = fonts[i]
+        i = i + 1
+    }
+}
+
+// ── PSP button bitmask (pspctrl.h) ───────────────────────────────────────────
+// Select=1 Start=8 Up=0x10 Right=0x20 Down=0x40 Left=0x80
+// L=0x100 R=0x200 Triangle=0x1000 Circle=0x2000 Cross=0x4000 Square=0x8000
+
+// Map PSP buttons to CHIP-8 hex keys (0-F):
+//   1 2 3 C
+//   4 5 6 D
+//   7 8 9 E
+//   A 0 B F
+// Using D-pad + face buttons.
+
+func MapKey(buttons: int): int {
+    if ((buttons & 256) != 0)  { return 5  }  // L  -> 5
+    if ((buttons & 512) != 0)  { return 0  }  // R  -> 0
+    if ((buttons & 65536) != 0){ return 4  }  // Cross  -> 4
+    if ((buttons & 8192) != 0) { return 6  }  // Circle -> 6
+    if ((buttons & 32768) != 0){ return 7  }  // Square -> 7
+    if ((buttons & 4096) != 0) { return 3  }  // Triangle -> 3
+    if ((buttons & 16) != 0)   { return 2  }  // Up    -> 2
+    if ((buttons & 64) != 0)   { return 8  }  // Down  -> 8
+    if ((buttons & 128) != 0)  { return 4 }   // Left  -> 4
+    if ((buttons & 32) != 0)   { return 6 }   // Right -> 6
+    return -1
+}
+
+// Update the key pad from controller; returns true to exit (Start button).
+func UpdateKeys(chip8: Chip8): bool {
+    let held: int = psp_buttons_held()
+    if ((held & 8) != 0) {
+        return true
+    }
+    let i = 0
+    while (i < 16) {
+        chip8.Keys[i] = false
+        i = i + 1
+    }
+    let k: int = MapKey(held)
+    if (k >= 0) {
+        chip8.Keys[k] = true
+    }
+    return false
+}
+
+// ── Render the 64x32 framebuffer scaled up on the 480x272 screen ────────────
+
+func RenderScreen(chip8: Chip8): void {
+    psp_clear(0)
+    let scale: int = 8
+    let offx: int = (480 - 64 * scale) / 2
+    let offy: int = (272 - 32 * scale) / 2
+    let y = 0
+    while (y < 32) {
+        let x = 0
+        while (x < 64) {
+            if (chip8.Screen[y * 64 + x] == 1) {
+                psp_fill_rect(offx + x * scale, offy + y * scale, scale, scale, 65280)
+            }
+            x = x + 1
+        }
+        y = y + 1
+    }
+    psp_draw_text(4, 4, "CHIP-8 on PSP (Start to exit)", 16777215)
+    psp_swap_buffers()
+}
+
+// ── Single instruction step ──────────────────────────────────────────────────
+
+func RunProgram(chip8: Chip8): Chip8 {
+    if (chip8.PC + 1 >= 4096) {
+        return chip8
+    }
+    let opcode: uint16 = uint16((chip8.Memory[chip8.PC] << 8) | (chip8.Memory[chip8.PC + 1]))
+    chip8.PC = chip8.PC + 2
+    chip8.Opcode = opcode
+
+    let nnn: uint16 = uint16(opcode & 0x0FFF)
+    let n: uint8    = uint8(opcode & 0x000F)
+    let kk: uint8   = uint8(opcode & 0x00FF)
+    let x: uint8    = uint8((opcode & 0x0F00) >> 8)
+    let y: uint8    = uint8((opcode & 0x00F0) >> 4)
+    let code: uint16 = uint16(opcode & 0xF000)
+
+    // 0x0NNN / 00E0 CLS / 00EE RET
+    if (code == 0x0000) {
+        if (kk == 0xE0) {
+            let i = 0
+            while (i < 2048) {
+                chip8.Screen[i] = 0
+                i = i + 1
+            }
+            chip8.Draw = true
+        } elif (kk == 0xEE) {
+            if (chip8.SP > 0) {
+                chip8.PC = chip8.Stack[chip8.SP]
+                chip8.SP = uint8(chip8.SP - 1)
+            }
+        }
+    }
+    // 0x1NNN JP
+    elif (code == 0x1000) {
+        chip8.PC = nnn
+    }
+    // 0x2NNN CALL
+    elif (code == 0x2000) {
+        if (chip8.SP < 15) {
+            chip8.SP = uint8(chip8.SP + 1)
+            chip8.Stack[chip8.SP] = chip8.PC
+            chip8.PC = nnn
+        }
+    }
+    // 0x3XKK SE
+    elif (code == 0x3000) {
+        if (chip8.V[x] == kk) { chip8.PC = chip8.PC + 2 }
+    }
+    // 0x4XKK SNE
+    elif (code == 0x4000) {
+        if (chip8.V[x] != kk) { chip8.PC = chip8.PC + 2 }
+    }
+    // 0x5XY0 SE
+    elif (code == 0x5000) {
+        if (chip8.V[x] == chip8.V[y]) { chip8.PC = chip8.PC + 2 }
+    }
+    // 0x6XKK LD
+    elif (code == 0x6000) {
+        chip8.V[x] = kk
+    }
+    // 0x7XKK ADD
+    elif (code == 0x7000) {
+        chip8.V[x] = chip8.V[x] + kk
+    }
+    // 0x8XYN ALU
+    elif (code == 0x8000) {
+        if (n == 0) {
+            chip8.V[x] = chip8.V[y]
+        } elif (n == 1) {
+            chip8.V[x] = chip8.V[x] | chip8.V[y]
+        } elif (n == 2) {
+            chip8.V[x] = chip8.V[x] & chip8.V[y]
+        } elif (n == 3) {
+            chip8.V[x] = chip8.V[x] ^ chip8.V[y]
+        } elif (n == 4) {
+            let sum: int = int(chip8.V[x]) + int(chip8.V[y])
+            chip8.V[x] = uint8(sum & 0xFF)
+            if (sum > 255) { chip8.V[15] = 1 } else { chip8.V[15] = 0 }
+        } elif (n == 5) {
+            if (chip8.V[x] > chip8.V[y]) { chip8.V[15] = 1 } else { chip8.V[15] = 0 }
+            chip8.V[x] = chip8.V[x] - chip8.V[y]
+        } elif (n == 6) {
+            chip8.V[15] = uint8(chip8.V[x] & 1)
+            chip8.V[x] = uint8(chip8.V[x] >> 1)
+        } elif (n == 7) {
+            if (chip8.V[y] > chip8.V[x]) { chip8.V[15] = 1 } else { chip8.V[15] = 0 }
+            chip8.V[x] = chip8.V[y] - chip8.V[x]
+        } elif (n == 14) {
+            chip8.V[15] = uint8((chip8.V[x] & 128) >> 7)
+            chip8.V[x] = uint8(chip8.V[x] << 1)
+        }
+    }
+    // 0x9XY0 SNE
+    elif (code == 0x9000) {
+        if (chip8.V[x] != chip8.V[y]) { chip8.PC = chip8.PC + 2 }
+    }
+    // 0xANNN LD I
+    elif (code == 0xA000) {
+        chip8.I = int(nnn)
+    }
+    // 0xBNNN JP V0
+    elif (code == 0xB000) {
+        chip8.PC = nnn + uint16(chip8.V[0])
+    }
+    // 0xCXKK RND
+    elif (code == 0xC000) {
+        chip8.V[x] = uint8(kk & 0xFF)
+    }
+    // 0xDXYN DRW
+    elif (code == 0xD000) {
+        let px: int = int(chip8.V[x]) % 64
+        let py: int = int(chip8.V[y]) % 32
+        chip8.V[15] = 0
+        let row = 0
+        while (row < int(n)) {
+            if (py + row >= 32) { break }
+            let sprite: uint8 = chip8.Memory[chip8.I + row]
+            let col = 0
+            while (col < 8) {
+                if (px + col >= 64) { break }
+                let bit: uint8 = uint8((sprite >> (7 - col)) & 1)
+                if (bit == 1) {
+                    let idx: int = (py + row) * 64 + (px + col)
+                    if (chip8.Screen[idx] == 1) {
+                        chip8.V[15] = 1
+                        chip8.Screen[idx] = 0
+                    } else {
+                        chip8.Screen[idx] = 1
+                    }
+                }
+                col = col + 1
+            }
+            row = row + 1
+        }
+        chip8.Draw = true
+    }
+    // 0xEX9E / 0xEXA1 SKP
+    elif (code == 0xE000) {
+        let vk: int = int(chip8.V[x])
+        if (kk == 0x9E) {
+            if (vk < 16 && chip8.Keys[vk]) { chip8.PC = chip8.PC + 2 }
+        } elif (kk == 0xA1) {
+            if (vk < 16 && !chip8.Keys[vk]) { chip8.PC = chip8.PC + 2 }
+        }
+    }
+    // 0xFX07 / 0xFX0A / 0xFX15 / 0xFX18 / 0xFX1E / 0xFX29 / 0xFX33 / 0xFX55 / 0xFX65
+    elif (code == 0xF000) {
+        if (kk == 0x07) {
+            chip8.V[x] = chip8.DT
+        } elif (kk == 0x0A) {
+            let waited: bool = false
+            while (!waited) {
+                let held2: int = psp_buttons_held()
+                let k2: int = MapKey(held2)
+                if (k2 >= 0) {
+                    chip8.V[x] = uint8(k2)
+                    waited = true
+                }
+                thread_sleep(16)
+            }
+        } elif (kk == 0x15) {
+            chip8.DT = chip8.V[x]
+        } elif (kk == 0x18) {
+            // sound timer ignored
+        } elif (kk == 0x1E) {
+            chip8.I = chip8.I + int(chip8.V[x])
+        } elif (kk == 0x29) {
+            chip8.I = int(chip8.V[x]) * 5
+        } elif (kk == 0x33) {
+            let val: int = int(chip8.V[x])
+            chip8.Memory[chip8.I]     = uint8((val / 100) % 10)
+            chip8.Memory[chip8.I + 1] = uint8((val / 10) % 10)
+            chip8.Memory[chip8.I + 2] = uint8(val % 10)
+        } elif (kk == 0x55) {
+            let ri = 0
+            while (ri <= int(x)) {
+                chip8.Memory[chip8.I + ri] = chip8.V[ri]
+                ri = ri + 1
+            }
+        } elif (kk == 0x65) {
+            let ri2 = 0
+            while (ri2 <= int(x)) {
+                chip8.V[ri2] = chip8.Memory[chip8.I + ri2]
+                ri2 = ri2 + 1
+            }
+        }
+    }
+    return chip8
+}
+
+// ── Built-in HELLO demo ROM ──────────────────────────────────────────────────
+
+func LoadHello(chip8: Chip8): void {
+    let rom: array<uint8> = [
+        0xA2,0x50, 0x60,0x01, 0x61,0x09, 0xD0,0x15,
+        0xA2,0x55, 0x60,0x09, 0xD0,0x15,
+        0xA2,0x5A, 0x60,0x11, 0xD0,0x15,
+        0xA2,0x5A, 0x60,0x19, 0xD0,0x15,
+        0xA2,0x5F, 0x60,0x21, 0xD0,0x15,
+        0x12,0x20,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,
+        0x90,0x90,0xF0,0x90,0x90,
+        0xF0,0x80,0xE0,0x80,0xF0,
+        0x80,0x80,0x80,0x80,0xF0,
+        0x60,0x90,0x90,0x90,0x60
+    ]
+    let i = 0
+    while (i < rom.length()) {
+        chip8.Memory[0x200 + i] = rom[i]
+        i = i + 1
+    }
+}
+
+func main() {
+    psp_init()
+    let chip8: Chip8 = newChip8()
+    LoadFonts(chip8)
+    LoadHello(chip8)
+
+    let running: bool = true
+    while (running) {
+        let quit: bool = UpdateKeys(chip8)
+        if (quit) {
+            running = false
+        }
+        if (running) {
+            let instr = 0
+            while (instr < 9) {
+                chip8 = RunProgram(chip8)
+                instr = instr + 1
+            }
+            if (chip8.DT > 0) {
+                chip8.DT = uint8(chip8.DT - 1)
+            }
+            RenderScreen(chip8)
+            chip8.Draw = false
+            thread_sleep(16)
+        }
+    }
+}

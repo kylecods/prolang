@@ -1,0 +1,59 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <IsPackable>false</IsPackable>
+    <IsTestProject>true</IsTestProject>
+    <!-- ProLang.csproj is an Exe; referencing it pulls in its entry point. Suppress the clash. -->
+    <NoWarn>$(NoWarn);CS8002</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="17.11.1" />
+    <PackageReference Include="xunit" Version="2.9.2" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="2.8.2" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\ProLang\ProLang.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Using Include="Xunit" />
+  </ItemGroup>
+
+  <!--
+    Import resolution probes AppContext.BaseDirectory for std/ and lib/. std/*.prl arrives here
+    as transitive Content from ProLang.csproj, but lib/WinFormsHelper.dll is produced by a
+    post-build <Exec> into ProLang's own output, so it has to be copied across explicitly.
+    Without it, `import "winforms"` cannot resolve when the compiler is driven from a test.
+  -->
+  <Target Name="CopyCompilerLibDirectory" AfterTargets="Build">
+    <ItemGroup>
+      <_CompilerLibFiles Include="$(MSBuildThisFileDirectory)..\ProLang\bin\$(Configuration)\$(TargetFramework)\lib\**\*" />
+      <_CompilerRuntimeFiles Include="$(MSBuildThisFileDirectory)..\ProLang\bin\$(Configuration)\$(TargetFramework)\runtime\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_CompilerLibFiles)"
+          DestinationFolder="$(OutDir)lib\%(RecursiveDir)"
+          SkipUnchangedFiles="true"
+          Condition="'@(_CompilerLibFiles)' != ''" />
+    <!--
+      ProLang.Runtime supplies the builtins that emitted programs call. RuntimeLibrary probes
+      AppContext.BaseDirectory, which under `dotnet test` is this output directory rather than
+      the compiler's, so it has to be mirrored here too.
+    -->
+    <Copy SourceFiles="@(_CompilerRuntimeFiles)"
+          DestinationFolder="$(OutDir)runtime\%(RecursiveDir)"
+          SkipUnchangedFiles="true"
+          Condition="'@(_CompilerRuntimeFiles)' != ''" />
+  </Target>
+
+  <!--
+    Snapshots/ and Expected/ hold generated baselines and are deliberately not copied to the
+    output directory: TestPaths resolves them against the source tree so that a run with
+    PROLANG_UPDATE_SNAPSHOTS=1 rewrites the files in place rather than a throwaway copy under bin/.
+  -->
+
+</Project>

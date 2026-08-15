@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main, win-forms-bindings]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build-and-test:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Restore
+        run: dotnet restore src/ProLang.sln
+
+      - name: Build
+        run: dotnet build src/ProLang.sln -c Release --no-restore
+
+      # Test baselines (IL snapshots and expected program output) are gitignored, so a fresh
+      # checkout has none. They are generated here first, which means the snapshot and execution
+      # assertions compare this run against itself and cannot detect a regression. What they do
+      # still catch is a program that stops compiling, crashes, or emits unverifiable IL.
+      #
+      # To make them a real cross-commit regression gate, un-ignore
+      # src/ProLang.Tests/{Snapshots,Expected}/ and drop this step.
+      - name: Generate test baselines
+        run: dotnet test src/ProLang.Tests/ProLang.Tests.csproj -c Release --no-build
+        env:
+          PROLANG_UPDATE_SNAPSHOTS: '1'
+
+      - name: Test
+        run: dotnet test src/ProLang.Tests/ProLang.Tests.csproj -c Release --no-build
+
+      # The other backends share the bound program with the MSIL emitter, so a change to the
+      # pipeline can break them without any .NET test noticing.
+      - name: Verify the C99 backend
+        run: dotnet run --project src/ProLang/ProLang.csproj -c Release --no-build -- examples/02-operators/02_operators.prl --emit-c
+
+      - name: Verify the PSP backend
+        run: dotnet run --project src/ProLang/ProLang.csproj -c Release --no-build -- examples/03-control-flow/03_control_flow.prl --emit-psp

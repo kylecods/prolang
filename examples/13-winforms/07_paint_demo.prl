@@ -1,0 +1,158 @@
+/*
+ * Example 13-07: Graphics & Bitmap painting
+ *
+ * Demonstrates the off-screen Bitmap + Graphics painting pipeline:
+ *
+ *   CreateBitmap(w, h)         → int handle (off-screen pixel buffer)
+ *   CreateGraphics(bitmapId)   → int handle (drawing context for that bitmap)
+ *   GClear / GFillRectangle / GFillEllipse / GDrawLine / GDrawString
+ *   SetImage(pictureBoxId, bitmapId) → displays the bitmap in a PictureBox
+ *   RefreshControl(id)         → Invalidate + Update to force repaint
+ *   DisposeGraphics / DisposeBitmap  → release unmanaged GDI resources
+ *
+ * Color encoding:
+ *   WinFormsHelper.MakeColor(a, r, g, b) → packed ARGB int
+ *   All G* drawing methods accept this int directly — prolang int ↔ Color.FromArgb, one-to-one.
+ *
+ * Button tags:
+ *   1 = Paint the scene
+ *   2 = Clear canvas (white)
+ *   3 = Quit
+ */
+
+import "winforms"
+
+func main()
+{
+    let W: int = 500
+    let H: int = 360
+
+    // ── Build the form ────────────────────────────────────────────────────────
+    let form:    int = WinFormsHelper.CreateForm("ProLang Painter", W + 20, H + 90)
+    let canvas:  int = WinFormsHelper.CreatePictureBox(10, 10, W, H)
+    let bPaint:  int = WinFormsHelper.CreateButton("Paint",  10,   H + 25, 100, 32)
+    let bClear:  int = WinFormsHelper.CreateButton("Clear",  125,  H + 25, 100, 32)
+    let bQuit:   int = WinFormsHelper.CreateButton("Quit",   240,  H + 25, 100, 32)
+
+    WinFormsHelper.AddControl(form, canvas)
+    WinFormsHelper.AddControl(form, bPaint)
+    WinFormsHelper.AddControl(form, bClear)
+    WinFormsHelper.AddControl(form, bQuit)
+
+    WinFormsHelper.RegisterClickTag(bPaint, 1)
+    WinFormsHelper.RegisterClickTag(bClear, 2)
+    WinFormsHelper.RegisterClickTag(bQuit,  3)
+
+    // ── Create off-screen bitmap and Graphics context ─────────────────────────
+    let bmp: int = WinFormsHelper.CreateBitmap(W, H)
+    let g:   int = WinFormsHelper.CreateGraphics(bmp)
+
+    // Pre-compute colors via MakeColor — each call packs 4 channel ints into one
+    // ARGB int inside C#, so prolang never has to do the 32-bit bit-packing itself.
+    let white:     int = WinFormsHelper.MakeColor(255, 255, 255, 255)
+    let sky:       int = WinFormsHelper.MakeColor(255, 100, 180, 240)
+    let ground:    int = WinFormsHelper.MakeColor(255,  80, 160,  60)
+    let sunYellow: int = WinFormsHelper.MakeColor(255, 255, 215,   0)
+    let sunRim:    int = WinFormsHelper.MakeColor(255, 220, 140,   0)
+    let cloudCol:  int = WinFormsHelper.MakeColor(255, 245, 245, 245)
+    let houseWall: int = WinFormsHelper.MakeColor(255, 210,  80,  60)
+    let roofCol:   int = WinFormsHelper.MakeColor(255,  90,  55,  30)
+    let doorCol:   int = WinFormsHelper.MakeColor(255, 139,  90,  43)
+    let windowCol: int = WinFormsHelper.MakeColor(255, 173, 216, 230)
+    let textCol:   int = WinFormsHelper.MakeColor(255,  20,  20,  20)
+    let treeGreen: int = WinFormsHelper.MakeColor(255,  34, 139,  34)
+    let treeTrunk: int = WinFormsHelper.MakeColor(255, 101,  67,  33)
+    let roadGray:  int = WinFormsHelper.MakeColor(255, 120, 120, 120)
+    let roadLine:  int = WinFormsHelper.MakeColor(255, 255, 255, 200)
+
+    // Start with a blank white canvas and display it
+    WinFormsHelper.GClear(g, white)
+    WinFormsHelper.SetImage(canvas, bmp)
+    WinFormsHelper.Show(form)
+
+    let running: bool = true
+    while (running)
+    {
+        let tag: int = WinFormsHelper.WaitForClick(form)
+
+        if (tag == 1)
+        {
+            // ── Sky ───────────────────────────────────────────────────────────
+            WinFormsHelper.GClear(g, sky)
+
+            // ── Sun (filled circle + orange rim) ─────────────────────────────
+            WinFormsHelper.GFillEllipse(g, sunYellow, 30, 18, 80, 80)
+            WinFormsHelper.GDrawEllipse(g, sunRim, 2, 30, 18, 80, 80)
+
+            // ── Clouds (overlapping white ellipses) ───────────────────────────
+            WinFormsHelper.GFillEllipse(g, cloudCol, 190, 38,  90, 45)
+            WinFormsHelper.GFillEllipse(g, cloudCol, 220, 25,  80, 50)
+            WinFormsHelper.GFillEllipse(g, cloudCol, 260, 40,  75, 42)
+
+            WinFormsHelper.GFillEllipse(g, cloudCol, 360, 55, 100, 40)
+            WinFormsHelper.GFillEllipse(g, cloudCol, 390, 42,  85, 48)
+            WinFormsHelper.GFillEllipse(g, cloudCol, 430, 57,  70, 38)
+
+            // ── Ground ────────────────────────────────────────────────────────
+            WinFormsHelper.GFillRectangle(g, ground, 0, 255, W, H - 255)
+
+            // ── Road ──────────────────────────────────────────────────────────
+            WinFormsHelper.GFillRectangle(g, roadGray, 0, 290, W, 30)
+            // dashed centre line
+            WinFormsHelper.GFillRectangle(g, roadLine,   0, 303, 60, 5)
+            WinFormsHelper.GFillRectangle(g, roadLine,  90, 303, 60, 5)
+            WinFormsHelper.GFillRectangle(g, roadLine, 180, 303, 60, 5)
+            WinFormsHelper.GFillRectangle(g, roadLine, 270, 303, 60, 5)
+            WinFormsHelper.GFillRectangle(g, roadLine, 360, 303, 60, 5)
+            WinFormsHelper.GFillRectangle(g, roadLine, 450, 303, 60, 5)
+
+            // ── House — wall ──────────────────────────────────────────────────
+            WinFormsHelper.GFillRectangle(g, houseWall, 160, 170, 180, 90)
+
+            // ── House — roof (two lines forming an inverted V) ────────────────
+            WinFormsHelper.GDrawLine(g, roofCol, 3, 150, 170, 250, 110)
+            WinFormsHelper.GDrawLine(g, roofCol, 3, 250, 110, 350, 170)
+
+            // ── House — door ──────────────────────────────────────────────────
+            WinFormsHelper.GFillRectangle(g, doorCol, 225, 215, 50, 45)
+
+            // ── House — windows ───────────────────────────────────────────────
+            WinFormsHelper.GFillRectangle(g, windowCol, 168, 185, 42, 38)
+            WinFormsHelper.GDrawRectangle(g, roofCol, 1, 168, 185, 42, 38)
+            WinFormsHelper.GFillRectangle(g, windowCol, 290, 185, 42, 38)
+            WinFormsHelper.GDrawRectangle(g, roofCol, 1, 290, 185, 42, 38)
+
+            // ── Left tree ────────────────────────────────────────────────────
+            WinFormsHelper.GFillRectangle(g, treeTrunk,  60, 225, 14, 35)
+            WinFormsHelper.GFillEllipse(g,  treeGreen,   30, 175, 74, 70)
+
+            // ── Right tree ───────────────────────────────────────────────────
+            WinFormsHelper.GFillRectangle(g, treeTrunk, 420, 230, 14, 30)
+            WinFormsHelper.GFillEllipse(g,  treeGreen,  392, 182, 70, 65)
+
+            // ── Caption ───────────────────────────────────────────────────────
+            WinFormsHelper.GDrawString(g, "ProLang Painter", textCol, 13, 168, 325)
+
+            WinFormsHelper.SetImage(canvas, bmp)
+            WinFormsHelper.RefreshControl(canvas)
+        }
+        else
+        {
+            if (tag == 2)
+            {
+                WinFormsHelper.GClear(g, white)
+                WinFormsHelper.SetImage(canvas, bmp)
+                WinFormsHelper.RefreshControl(canvas)
+            }
+            else
+            {
+                running = false
+            }
+        }
+    }
+
+    // Release GDI resources
+    WinFormsHelper.DisposeGraphics(g)
+    WinFormsHelper.DisposeBitmap(bmp)
+    WinFormsHelper.CloseForm(form)
+}

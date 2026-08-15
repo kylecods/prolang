@@ -210,6 +210,9 @@ internal abstract class BoundTreeRewriter
                 return RewriteCastExpression((BoundCastExpression)node);
             case BoundNodeKind.BoundArrayNewExpression:
                 return RewriteArrayNewExpression((BoundArrayNewExpression)node);
+            case BoundNodeKind.BoundEnumMemberExpression:
+                // Enum member expressions are compile-time int constants — no rewriting needed.
+                return node;
             default:
                 throw new Exception($"Unexpected node: {node.Kind}");
         }

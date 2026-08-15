@@ -9,6 +9,7 @@ internal sealed class BoundScope
     private Dictionary<string, FunctionSymbol>? _functions;
     private Dictionary<string, StructSymbol>? _types;
     private Dictionary<string, TypeSymbol>? _typeSymbols;
+    private Dictionary<string, EnumSymbol>? _enumTypes;
 
     public BoundScope(BoundScope? parent)
     {
@@ -186,5 +187,37 @@ internal sealed class BoundScope
         }
 
         return _types.Values.ToImmutableArray();
+    }
+
+    public bool TryDeclareEnumType(EnumSymbol enumType)
+    {
+        _enumTypes ??= [];
+
+        if (_enumTypes.ContainsKey(enumType.Name))
+            return false;
+
+        _enumTypes.Add(enumType.Name, enumType);
+        return true;
+    }
+
+    public bool TryLookupEnumType(string name, out EnumSymbol? enumType)
+    {
+        enumType = null;
+
+        if (_enumTypes != null && _enumTypes.TryGetValue(name, out enumType))
+            return true;
+
+        if (Parent == null)
+            return false;
+
+        return Parent.TryLookupEnumType(name, out enumType);
+    }
+
+    public ImmutableArray<EnumSymbol> GetDeclaredEnumTypes()
+    {
+        if (_enumTypes == null)
+            return [];
+
+        return [.. _enumTypes.Values];
     }
 }

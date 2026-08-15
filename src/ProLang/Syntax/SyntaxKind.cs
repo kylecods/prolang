@@ -51,6 +51,9 @@ public enum SyntaxKind
     SlashEqualsToken,// '/='
     StarEqualsToken,// '*='
     HatEqualsToken,// '^='
+
+    LessThanLessThanToken, // <<
+    GreaterThanGreaterThanToken,// >>
     
     //html tokens
     ForwardSlashCloseAngleToken, // <input '/>'
@@ -75,6 +78,7 @@ public enum SyntaxKind
     ImportKeyword,
     StructKeyword,
     AsKeyword,
+    EnumKeyword,
 
     //html keywords
     ScriptKeyword,
@@ -124,6 +128,8 @@ public enum SyntaxKind
     Parameter,
     StructDeclaration,
     FieldDeclaration,
+    EnumDeclaration,
+    EnumMemberDeclaration,
     StructCreationExpression,
     FieldInitializer,
     FieldAccessExpression,

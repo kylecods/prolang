@@ -15,4 +15,20 @@
     <ProjectReference Include="..\ProLang\ProLang.csproj" />
   </ItemGroup>
 
+  <!--
+    Emitted programs call into ProLang.Runtime, so the emitter has to be able to resolve it.
+    BenchmarkDotNet runs benchmarks from a generated project whose output directory is not the
+    compiler's, so the runtime is mirrored here for RuntimeLibrary to find alongside ProLang.dll.
+    Without it, every emit benchmark fails on the first print() it reaches.
+  -->
+  <Target Name="CopyProLangRuntimeForBenchmarks" AfterTargets="Build">
+    <ItemGroup>
+      <_BenchRuntimeFiles Include="$(MSBuildThisFileDirectory)..\ProLang\bin\$(Configuration)\$(TargetFramework)\runtime\**\*" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_BenchRuntimeFiles)"
+          DestinationFolder="$(OutDir)runtime\%(RecursiveDir)"
+          SkipUnchangedFiles="true"
+          Condition="'@(_BenchRuntimeFiles)' != ''" />
+  </Target>
+
 </Project>

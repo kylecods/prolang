@@ -1,0 +1,62 @@
+# Editor and analyzer settings for the ProLang repository.
+# https://editorconfig.org
+
+root = true
+
+[*]
+charset = utf-8
+end_of_line = crlf
+insert_final_newline = true
+indent_style = space
+trim_trailing_whitespace = true
+
+[*.{cs,csproj,props,targets}]
+indent_size = 4
+
+[*.{json,yml,yaml,md}]
+indent_size = 2
+
+# ProLang sources. Trailing whitespace is preserved because several test programs assert on
+# exact output and a trimming editor would silently change what they compare against.
+[*.prl]
+indent_size = 4
+trim_trailing_whitespace = false
+
+# C runtime for the C99 and PSP backends.
+[*.{c,h}]
+indent_size = 4
+
+[Makefile*]
+indent_style = tab
+
+[*.cs]
+# ── Naming ───────────────────────────────────────────────────────────────────────────────
+dotnet_naming_rule.private_fields_with_underscore.severity = suggestion
+dotnet_naming_rule.private_fields_with_underscore.symbols = private_fields
+dotnet_naming_rule.private_fields_with_underscore.style = underscore_camel_case
+
+dotnet_naming_symbols.private_fields.applicable_kinds = field
+dotnet_naming_symbols.private_fields.applicable_accessibilities = private
+dotnet_naming_symbols.private_fields.required_modifiers =
+
+dotnet_naming_style.underscore_camel_case.required_prefix = _
+dotnet_naming_style.underscore_camel_case.capitalization = camel_case
+
+# ── Style ────────────────────────────────────────────────────────────────────────────────
+csharp_new_line_before_open_brace = all
+csharp_prefer_braces = true:warning
+csharp_style_namespace_declarations = file_scoped:suggestion
+csharp_style_var_when_type_is_apparent = true:suggestion
+dotnet_sort_system_directives_first = true
+
+# ── Analyzer severities ──────────────────────────────────────────────────────────────────
+# Throwing a bare Exception loses the ability to catch anything specific. The emitter still has
+# several of these left over from before the diagnostics path existed; surfacing them keeps the
+# remaining ones visible rather than letting more accumulate.
+dotnet_diagnostic.CA2201.severity = suggestion
+
+# The compiler is single-threaded and its output must not vary by machine locale, so the
+# culture-sensitivity analyzers are noise here.
+dotnet_diagnostic.CA1304.severity = none
+dotnet_diagnostic.CA1305.severity = none
+dotnet_diagnostic.CA1310.severity = none

@@ -26,6 +26,8 @@ import {
   TextDocument
 } from 'vscode-languageserver/node';
 import { TextDocument as LSPTextDocument } from 'vscode-languageserver-textdocument';
+import * as fs from 'fs';
+import * as path from 'path';
 
 const connection = createConnection(ProposedFeatures.all);
 
@@ -110,7 +112,7 @@ const builtinFunctions = [
 interface SymbolInfo {
   name: string;
   type: string;
-  kind: 'variable' | 'function' | 'parameter';
+  kind: 'variable' | 'function' | 'parameter' | 'struct';
   location: Location;
   references: Location[];
 }
@@ -139,9 +141,15 @@ class SymbolTable {
 
 const globalSymbolTable = new SymbolTable();
 const documentSymbolTables: Map<string, SymbolTable> = new Map();
+const documentImports: Map<string, Set<string>> = new Map();
 
-connection.onDidChangeWatchedFiles(_change => {
-  connection.console.log('File change detected');
+connection.onDidChangeWatchedFiles(change => {
+  for (const event of change.changes) {
+    if (!documents.get(event.uri)) {
+      documentSymbolTables.delete(event.uri);
+      documentImports.delete(event.uri);
+    }
+  }
 });
 
 function analyzeDocument(textDocument: LSPTextDocument): SymbolTable {
@@ -194,6 +202,34 @@ function analyzeDocument(textDocument: LSPTextDocument): SymbolTable {
       references: []
     });
   }
+
+  const structPattern = /\bstruct\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:<[^>]*>)?\s*\{/g;
+  while ((match = structPattern.exec(text)) !== null) {
+    const name = match[1];
+    const line = text.substring(0, match.index).split('\n').length - 1;
+    const lineStart = text.lastIndexOf('\n', match.index - 1) + 1;
+    symbolTable.add({
+      name,
+      type: 'struct',
+      kind: 'struct',
+      location: {
+        uri: textDocument.uri,
+        range: {
+          start: { line, character: match.index - lineStart },
+          end: { line, character: match.index - lineStart + name.length }
+        }
+      },
+      references: []
+    });
+  }
+
+  const importPattern = /^\s*import\s+"([^"]+)"/gm;
+  const resolvedImports = new Set<string>();
+  while ((match = importPattern.exec(text)) !== null) {
+    const resolved = resolveImportPath(textDocument.uri, match[1]);
+    if (resolved !== null) resolvedImports.add(resolved);
+  }
+  documentImports.set(textDocument.uri, resolvedImports);
 
   return symbolTable;
 }
@@ -330,6 +366,24 @@ connection.onCompletion((params): CompletionItem[] => {
     items.push(...symbolCompletions);
   }
 
+  const importedUris = getImportedUris(params.textDocument.uri);
+  for (const uri of importedUris) {
+    if (uri === params.textDocument.uri) continue;
+    const importedTable = getOrLoadSymbolTable(uri);
+    if (!importedTable) continue;
+    for (const sym of importedTable.getAllSymbols()) {
+      items.push({
+        label: sym.name,
+        kind: sym.kind === 'function' ? CompletionItemKind.Function
+            : sym.kind === 'struct'   ? CompletionItemKind.Struct
+            : CompletionItemKind.Variable,
+        detail: `${sym.kind}: ${sym.type} (imported)`,
+        insertText: sym.name,
+        insertTextFormat: InsertTextFormat.PlainText
+      });
+    }
+  }
+
   return items;
 });
 
@@ -398,13 +452,28 @@ connection.onDefinition((params): Location | null => {
   if (!wordRange) return null;
 
   const word = document.getText(wordRange);
-  const symbolTable = documentSymbolTables.get(params.textDocument.uri);
 
-  if (symbolTable) {
-    const symbols = symbolTable.get(word);
-    if (symbols && symbols.length > 0) {
-      return symbols[0].location;
-    }
+  // (a) current document
+  const currentTable = documentSymbolTables.get(params.textDocument.uri);
+  if (currentTable) {
+    const syms = currentTable.get(word);
+    if (syms?.length) return syms[0].location;
+  }
+
+  // (b) imported files (transitive) — load from disk if not open
+  const importedUris = getImportedUris(params.textDocument.uri);
+  for (const uri of importedUris) {
+    if (uri === params.textDocument.uri) continue;
+    const table = getOrLoadSymbolTable(uri);
+    const syms = table?.get(word);
+    if (syms?.length) return syms[0].location;
+  }
+
+  // (c) fallback: all open documents
+  for (const [uri, table] of documentSymbolTables.entries()) {
+    if (uri === params.textDocument.uri || importedUris.has(uri)) continue;
+    const syms = table.get(word);
+    if (syms?.length) return syms[0].location;
   }
 
   return null;
@@ -420,24 +489,40 @@ connection.onReferences((params): Location[] | null => {
   const word = document.getText(wordRange);
   const locations: Location[] = [];
 
-  const text = document.getText();
-  const lines = text.split('\n');
-  const regex = new RegExp(`\\b${word}\\b`, 'g');
-  let match;
-
-  while ((match = regex.exec(text)) !== null) {
-    const line = text.substring(0, match.index).split('\n').length - 1;
-    const lineStart = text.lastIndexOf('\n', match.index - 1) + 1;
-    locations.push({
-      uri: document.uri,
-      range: {
-        start: { line, character: match.index - lineStart },
-        end: { line, character: match.index - lineStart + word.length }
-      }
-    });
+  const urisToSearch = new Set<string>();
+  for (const openUri of documentSymbolTables.keys()) {
+    for (const u of getImportedUris(openUri)) urisToSearch.add(u);
   }
 
-  return locations;
+  const wordRegex = new RegExp(`\\b${escapeRegex(word)}\\b`, 'g');
+  for (const uri of urisToSearch) {
+    let text: string | null = null;
+    const liveDoc = documents.get(uri);
+    if (liveDoc) {
+      text = liveDoc.getText();
+    } else {
+      const fsPath = uriToFsPath(uri);
+      if (fs.existsSync(fsPath)) {
+        try { text = fs.readFileSync(fsPath, 'utf-8'); } catch { /* skip */ }
+      }
+    }
+    if (!text) continue;
+    wordRegex.lastIndex = 0;
+    let match;
+    while ((match = wordRegex.exec(text)) !== null) {
+      const line = text.substring(0, match.index).split('\n').length - 1;
+      const lineStart = text.lastIndexOf('\n', match.index - 1) + 1;
+      locations.push({
+        uri,
+        range: {
+          start: { line, character: match.index - lineStart },
+          end: { line, character: match.index - lineStart + word.length }
+        }
+      });
+    }
+  }
+
+  return locations.length > 0 ? locations : null;
 });
 
 connection.onDocumentSymbol((params): DocumentSymbol[] => {
@@ -493,6 +578,27 @@ connection.onDocumentSymbol((params): DocumentSymbol[] => {
         end: { line, character: match.index - text.lastIndexOf('\n', match.index - 1) + name.length }
       },
       detail: `(${params}): ${returnType}`
+    });
+  }
+
+  const structPat = /\bstruct\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*(?:<[^>]*>)?\s*\{/g;
+  while ((match = structPat.exec(text)) !== null) {
+    const name = match[1];
+    const structLine = text.substring(0, match.index).split('\n').length - 1;
+    const structEnd  = findMatchingBrace(text, match.index + match[0].length - 1);
+    const lineStart  = text.lastIndexOf('\n', match.index - 1) + 1;
+    symbols.push({
+      name,
+      kind: SymbolKind.Struct,
+      range: {
+        start: { line: structLine, character: 0 },
+        end:   { line: structEnd, character: lines[structEnd]?.length || 0 }
+      },
+      selectionRange: {
+        start: { line: structLine, character: match.index - lineStart },
+        end:   { line: structLine, character: match.index - lineStart + name.length }
+      },
+      detail: 'struct'
     });
   }
 
@@ -602,6 +708,52 @@ connection.onDocumentFormatting((params): any[] => {
     newText: formattedLines.join('\n')
   }];
 });
+
+function uriToFsPath(uri: string): string {
+  let p = decodeURIComponent(uri.replace(/^file:\/\//, ''));
+  if (/^\/[A-Za-z]:/.test(p)) p = p.slice(1);
+  return p.replace(/\//g, path.sep);
+}
+
+function fsPathToUri(fsPath: string): string {
+  const normalized = fsPath.replace(/\\/g, '/');
+  if (/^[A-Za-z]:/.test(normalized)) return 'file:///' + encodeURI(normalized);
+  return 'file://' + encodeURI(normalized);
+}
+
+function resolveImportPath(importerUri: string, importPath: string): string | null {
+  if (/^[a-zA-Z]+:/.test(importPath)) return null;
+  if (!importPath.endsWith('.prl')) return null;
+  const importerFsPath = uriToFsPath(importerUri);
+  const importerDir = path.dirname(importerFsPath);
+  return fsPathToUri(path.resolve(importerDir, importPath));
+}
+
+function getOrLoadSymbolTable(fileUri: string): SymbolTable | null {
+  const cached = documentSymbolTables.get(fileUri);
+  if (cached) return cached;
+  const fsPath = uriToFsPath(fileUri);
+  if (!fs.existsSync(fsPath)) return null;
+  try {
+    const content = fs.readFileSync(fsPath, 'utf-8');
+    const syntheticDoc = LSPTextDocument.create(fileUri, 'prolang', 0, content);
+    const table = analyzeDocument(syntheticDoc);
+    documentSymbolTables.set(fileUri, table);
+    return table;
+  } catch { return null; }
+}
+
+function getImportedUris(startUri: string, visited: Set<string> = new Set()): Set<string> {
+  if (visited.has(startUri)) return visited;
+  visited.add(startUri);
+  const imports = documentImports.get(startUri);
+  if (imports) for (const uri of imports) getImportedUris(uri, visited);
+  return visited;
+}
+
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 function getWordRangeAtPosition(document: LSPTextDocument, position: Position): Range | null {
   const text = document.getText();

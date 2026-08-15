@@ -24,6 +24,7 @@ internal sealed class Binder
     private int _labelCounter;
 
     private ImmutableArray<StructSymbol>.Builder? _structTypes;
+    private ImmutableArray<EnumSymbol>.Builder? _enumTypes;
 
     // Shared across all binders in one compilation — maps concrete function name → (symbol, body).
     private readonly Dictionary<string, (FunctionSymbol Symbol, BoundBlockStatement Body)>? _sharedInstantiations;
@@ -61,8 +62,14 @@ internal sealed class Binder
         // Single-pass collection of all declarations to avoid multiple SelectMany iterations
         var allDeclarations = syntaxTrees.SelectMany(st => st.Root.Declarations).ToList();
         var structDeclarations = allDeclarations.OfType<StructDeclarationSyntax>();
+        var enumDeclarations = allDeclarations.OfType<EnumDeclarationSyntax>();
         var functionDeclarations = allDeclarations.OfType<FunctionDeclarationSyntax>();
         var globalStatements = allDeclarations.OfType<GlobalStatementSyntax>();
+
+        foreach (var enumDecl in enumDeclarations)
+        {
+            binder.BindEnumDeclaration(enumDecl);
+        }
 
         foreach (var structDecl in structDeclarations)
         {
@@ -233,6 +240,7 @@ internal sealed class Binder
         var diagnostics = binder.Diagnostics.ToImmutableArray();
         var variables = binder._scope.GetDeclaredVariables();
         var structTypes = binder._structTypes?.ToImmutable() ?? ImmutableArray<StructSymbol>.Empty;
+        var enumTypes = binder._enumTypes?.ToImmutable() ?? ImmutableArray<EnumSymbol>.Empty;
 
         if (previous != null)
         {
@@ -243,7 +251,7 @@ internal sealed class Binder
         // This ensures the entry point is properly set to __Main
         var finalMainFunction = syntheticMainFunction ?? mainFunction;
 
-        return new BoundGlobalScope(previous, diagnostics, finalMainFunction, scriptFunction, functions, variables, statements.ToImmutableArray(), structTypes, importedModules);
+        return new BoundGlobalScope(previous, diagnostics, finalMainFunction, scriptFunction, functions, variables, statements.ToImmutableArray(), structTypes, importedModules, enumTypes);
     }
 
     public static BoundProgram BindProgram(bool isScript, BoundProgram previous, BoundGlobalScope? globalScope)
@@ -318,7 +326,7 @@ internal sealed class Binder
                 functionBodies.Add(concreteSymbol, instBody);
         }
 
-        return new BoundProgram(previous, diagnostics.ToImmutable(), globalScope.MainFunction, globalScope.ScriptFunction, functionBodies.ToImmutable(), globalScope.StructTypes);
+        return new BoundProgram(previous, diagnostics.ToImmutable(), globalScope.MainFunction, globalScope.ScriptFunction, functionBodies.ToImmutable(), globalScope.StructTypes, globalScope.EnumTypes);
     }
 
     private void BindFunctionDeclaration(FunctionDeclarationSyntax syntax)
@@ -427,6 +435,50 @@ internal sealed class Binder
         }
     }
 
+    private void BindEnumDeclaration(EnumDeclarationSyntax syntax)
+    {
+        var name = syntax.Identifier.Text;
+        var members = ImmutableArray.CreateBuilder<EnumMember>();
+        var seenNames = new HashSet<string>();
+        int nextValue = 0;
+
+        foreach (var memberSyntax in syntax.Members)
+        {
+            var memberName = memberSyntax.Identifier.Text;
+
+            if (!seenNames.Add(memberName))
+            {
+                _diagnostics.ReportSymbolAlreadyDeclared(memberSyntax.Identifier.Location, memberName);
+                continue;
+            }
+
+            if (memberSyntax.Initializer != null)
+            {
+                var initExpr = BindExpression(memberSyntax.Initializer);
+                if (initExpr is BoundLiteralExpression literal && literal.Value is int explicitValue)
+                {
+                    nextValue = explicitValue;
+                }
+            }
+
+            members.Add(new EnumMember(memberName, nextValue));
+            nextValue++;
+        }
+
+        var enumSymbol = new EnumSymbol(name, members.ToImmutable());
+
+        _enumTypes ??= ImmutableArray.CreateBuilder<EnumSymbol>();
+
+        if (!_scope.TryDeclareEnumType(enumSymbol))
+        {
+            _diagnostics.ReportSymbolAlreadyDeclared(syntax.Identifier.Location, name);
+        }
+        else
+        {
+            _enumTypes.Add(enumSymbol);
+        }
+    }
+
     private static BoundScope CreateParentScope(BoundGlobalScope? previous, ImmutableHashSet<string>? importedModules = null)
     {
         var stack = new Stack<BoundGlobalScope>();
@@ -452,6 +504,11 @@ internal sealed class Binder
             foreach (var variable in previous.Variables)
             {
                 scope.TryDeclareVariable(variable);
+            }
+
+            foreach (var enumType in previous.EnumTypes)
+            {
+                scope.TryDeclareEnumType(enumType);
             }
 
             foreach (var structType in previous.StructTypes)
@@ -618,20 +675,11 @@ internal sealed class Binder
         {
             if (_function.Type == TypeSymbol.Void)
             {
+                // Bare "return;" is valid in a void function — nothing to do.
+                // "return <expr>;" in a void function is an error.
                 if (expression != null)
                 {
-                    _diagnostics.ReportInvalidReturnExpression(syntax.Expression.Location, _function.Name);
-                }
-                else
-                {
-                    if (expression == null)
-                    {
-                        _diagnostics.ReportMissingReturnExpression(syntax.ReturnKeyword.Location, _function.Type);
-                    }
-                    else
-                    {
-                        expression = BindConversion(syntax.Expression.Location, expression, _function.Type);
-                    }
+                    _diagnostics.ReportInvalidReturnExpression(syntax.Expression!.Location, _function.Name);
                 }
             }
         }
@@ -853,6 +901,12 @@ internal sealed class Binder
                 return TypeSymbol.UInt64;
             case "int64":
                 return TypeSymbol.Int64;
+            case "float":
+                return TypeSymbol.Float;
+            case "float32":
+                return TypeSymbol.Float32;
+            case "float64":
+                return TypeSymbol.Float64;
             default:
                 if (_scope.TryLookupTypeSymbol(name, out var typeSymbol))
                 {
@@ -1017,6 +1071,51 @@ internal sealed class Binder
         var boundLhs = BindExpression(syntax.Left);
         var boundRhs = BindExpression(syntax.Right);
 
+        // Desugar compound operators: x += y  →  x = x + y
+        if (syntax.OperatorToken.Kind != SyntaxKind.EqualsToken)
+        {
+            var binaryOpKind = syntax.OperatorToken.Kind switch
+            {
+                SyntaxKind.PlusEqualsToken  => SyntaxKind.PlusToken,
+                SyntaxKind.MinusEqualsToken => SyntaxKind.MinusToken,
+                SyntaxKind.StarEqualsToken  => SyntaxKind.StarToken,
+                SyntaxKind.SlashEqualsToken => SyntaxKind.SlashToken,
+                _ => throw new Exception($"Unexpected compound assignment operator {syntax.OperatorToken.Kind}")
+            };
+
+            // Try exact match first, then numeric promotion (e.g. uint8 -= int → int - int)
+            var boundOp = BoundBinaryOperator.Bind(binaryOpKind, boundLhs.Type, boundRhs.Type);
+            var rhsForBinary = boundRhs;
+            if (boundOp == null)
+            {
+                boundOp = BoundBinaryOperator.BindWithPromotion(
+                    binaryOpKind, boundLhs.Type, boundRhs.Type,
+                    out var promotedLeft, out var promotedRight);
+
+                if (boundOp != null)
+                {
+                    // Promote the operands so the binary expression is well-typed.
+                    var lhsForBinary = promotedLeft  != null
+                        ? (BoundExpression)new BoundConversionExpression(promotedLeft,  boundLhs)
+                        : boundLhs;
+                    rhsForBinary = promotedRight != null
+                        ? new BoundConversionExpression(promotedRight, boundRhs)
+                        : boundRhs;
+                    boundRhs = new BoundBinaryExpression(lhsForBinary, boundOp, rhsForBinary);
+                }
+            }
+            else
+            {
+                boundRhs = new BoundBinaryExpression(boundLhs, boundOp, rhsForBinary);
+            }
+
+            if (boundOp == null)
+            {
+                _diagnostics.ReportUndefinedBinaryOperator(syntax.OperatorToken.Location, syntax.OperatorToken.Text, boundLhs.Type, boundRhs.Type);
+                return new BoundErrorExpression();
+            }
+        }
+
         if (boundLhs is BoundVariableExpression variableExpression)
         {
             var variable = variableExpression.Variable;
@@ -1078,6 +1177,23 @@ internal sealed class Binder
 
     private BoundExpression BindFieldAccessExpression(FieldAccessExpressionSyntax syntax)
     {
+        // Check if left side is an enum type name — must intercept before binding as variable
+        if (syntax.Expression is NameExpressionSyntax nameExpr)
+        {
+            var candidateName = nameExpr.IdentifierToken.Text;
+            if (_scope.TryLookupEnumType(candidateName, out var enumSym) && enumSym != null)
+            {
+                var memberName = syntax.FieldName.Text;
+                var member = enumSym.FindMember(memberName);
+                if (member == null)
+                {
+                    _diagnostics.ReportUndefinedField(syntax.FieldName.Location, enumSym.Name, memberName);
+                    return new BoundErrorExpression();
+                }
+                return new BoundEnumMemberExpression(enumSym, member);
+            }
+        }
+
         var expression = BindExpression(syntax.Expression);
 
         if (expression.Type == TypeSymbol.Error)
@@ -1137,15 +1253,30 @@ internal sealed class Binder
 
     private BoundExpression BindBinaryExpression(BinaryExpressionSyntax syntax)
     {
-        var boundLeft = BindExpression(syntax.Left);
+        var boundLeft  = BindExpression(syntax.Left);
         var boundRight = BindExpression(syntax.Right);
 
         if (boundLeft.Type == TypeSymbol.Error || boundRight.Type == TypeSymbol.Error)
-        {
             return new BoundErrorExpression();
-        }
 
         var boundOperator = BoundBinaryOperator.Bind(syntax.OperatorToken.Kind, boundLeft.Type, boundRight.Type);
+
+        // Fallback: try numeric promotion (e.g. uint8 - int → int - int)
+        if (boundOperator == null)
+        {
+            boundOperator = BoundBinaryOperator.BindWithPromotion(
+                syntax.OperatorToken.Kind,
+                boundLeft.Type,
+                boundRight.Type,
+                out var promotedLeft,
+                out var promotedRight);
+
+            if (boundOperator != null)
+            {
+                if (promotedLeft  != null) boundLeft  = new BoundConversionExpression(promotedLeft,  boundLeft);
+                if (promotedRight != null) boundRight = new BoundConversionExpression(promotedRight, boundRight);
+            }
+        }
 
         if (boundOperator == null)
         {
@@ -1722,6 +1853,24 @@ internal sealed class Binder
             {
                 return new BoundLiteralExpression((long)v);
             }
+        }
+
+        // Smart coercion for float64 literals assigned to float32/float targets
+        if (expression is BoundLiteralExpression dblLit && dblLit.Value is double dv)
+        {
+            if (type == TypeSymbol.Float32)
+                return new BoundLiteralExpression((float)dv);
+            if (type == TypeSymbol.Float || type == TypeSymbol.Float64)
+                return new BoundLiteralExpression(dv);
+        }
+
+        // Smart coercion for float32 literals assigned to float64/float targets
+        if (expression is BoundLiteralExpression fltLit && fltLit.Value is float fv)
+        {
+            if (type == TypeSymbol.Float64 || type == TypeSymbol.Float)
+                return new BoundLiteralExpression((double)fv);
+            if (type == TypeSymbol.Float32)
+                return new BoundLiteralExpression(fv);
         }
 
         if (expression.Type == type){

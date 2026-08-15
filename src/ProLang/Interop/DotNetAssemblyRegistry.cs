@@ -29,50 +29,58 @@ public sealed class DotNetAssemblyRegistry
     /// <summary>
     /// Discovers available runtime assemblies from the .NET SDK and runtime directories.
     /// </summary>
+    // Paths to SDK refpack assemblies (for compile-time reference, not runtime loading)
+    private List<string> _refpackPaths = new();
+
     private HashSet<string> DiscoverRuntimeAssemblies()
     {
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Reference assemblies from SDK packs
-        var sdkRoot = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".dotnet", "packs", "Microsoft.NETCore.App.Ref");
-
-        if (Directory.Exists(sdkRoot))
-        {
-            var refAssembliesPath = Directory.GetDirectories(sdkRoot)
-                .OrderByDescending(d => d)
-                .Select(d => Path.Combine(d, "ref"))
-                .Where(Directory.Exists)
-                .SelectMany(d => Directory.GetDirectories(d))
-                .OrderByDescending(d => d)
-                .FirstOrDefault();
-
-            if (refAssembliesPath != null)
-            {
-                foreach (var dll in Directory.GetFiles(refAssembliesPath, "*.dll"))
-                {
-                    paths.Add(dll);
-                }
-            }
-        }
-
-        // Runtime directory fallback
+        // Current runtime directory (implementation assemblies — safe to load)
         var runtimeDir = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
         foreach (var dll in Directory.GetFiles(runtimeDir, "*.dll"))
         {
             paths.Add(dll);
         }
 
-        // Additional SDK packs
-        var sdkPacksRoot = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".dotnet", "packs");
-
-        if (Directory.Exists(sdkPacksRoot))
+        // Windows Desktop shared runtime directories (implementation assemblies for WinForms/WPF)
+        // Must be in _runtimeAssemblyPaths so TryLoadRuntimeAssembly can find System.Windows.Forms.
+        foreach (var sharedRoot in new[]
         {
-            foreach (var packDir in Directory.GetDirectories(sdkPacksRoot))
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "shared", "Microsoft.WindowsDesktop.App"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dotnet", "shared", "Microsoft.WindowsDesktop.App"),
+        })
+        {
+            if (!Directory.Exists(sharedRoot)) continue;
+            // Sort version directories numerically so 10.x beats 9.x
+            var latestVersionDir = Directory.GetDirectories(sharedRoot)
+                .OrderByDescending(d => ParseVersion(Path.GetFileName(d)))
+                .FirstOrDefault();
+            if (latestVersionDir != null)
             {
+                foreach (var dll in Directory.GetFiles(latestVersionDir, "*.dll"))
+                {
+                    paths.Add(dll);
+                }
+            }
+        }
+
+        // Collect refpack reference assemblies into a separate list (NOT in _runtimeAssemblyPaths).
+        // Reference assemblies cannot be loaded for execution — they are used only for type discovery.
+        foreach (var packsRoot in new[]
+        {
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dotnet", "packs"),
+            Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "dotnet", "packs"),
+        })
+        {
+            if (!Directory.Exists(packsRoot)) continue;
+            foreach (var packDir in Directory.GetDirectories(packsRoot))
+            {
+                var packName = Path.GetFileName(packDir);
+                // Skip Windows Desktop refpacks — they contain reference-only assemblies that
+                // poison the load context when attempted (causing subsequent real-assembly loads to fail).
+                if (packName.StartsWith("Microsoft.WindowsDesktop.App.Ref", StringComparison.OrdinalIgnoreCase))
+                    continue;
                 var refDirs = Directory.GetDirectories(packDir, "ref", SearchOption.AllDirectories);
                 foreach (var refDir in refDirs)
                 {
@@ -88,6 +96,11 @@ public sealed class DotNetAssemblyRegistry
         }
 
         return paths;
+    }
+
+    private static Version ParseVersion(string dirName)
+    {
+        return Version.TryParse(dirName, out var v) ? v : new Version(0, 0);
     }
 
     /// <summary>
@@ -110,7 +123,11 @@ public sealed class DotNetAssemblyRegistry
             "System.Text.Json",
             "System.Xml.ReaderWriter",
             "System.Data.Common",
-            "Microsoft.CSharp"
+            "Microsoft.CSharp",
+            // Windows Desktop — silently skipped when not installed (Linux/Mac)
+            "System.Windows.Forms",
+            "System.Drawing.Common",
+            "System.Drawing.Primitives",
         };
 
         foreach (var name in coreAssemblyNames)
@@ -161,6 +178,8 @@ public sealed class DotNetAssemblyRegistry
 
     /// <summary>
     /// Loads an assembly from a file path. Works with C#, F#, VB.NET, and any .NET assembly.
+    /// Registers an AssemblyResolve handler so that the loaded assembly's dependencies
+    /// (e.g., System.Windows.Forms) can be found via the discovered runtime assembly paths.
     /// </summary>
     public Assembly? LoadAssembly(string filePath)
     {
@@ -171,6 +190,10 @@ public sealed class DotNetAssemblyRegistry
 
         if (!File.Exists(fullPath))
             return null;
+
+        // Ensure the AssemblyResolve hook is installed once, so transitive dependencies
+        // of the loaded assembly can be resolved from our discovered runtime paths.
+        EnsureAssemblyResolveHook();
 
         try
         {
@@ -183,6 +206,41 @@ public sealed class DotNetAssemblyRegistry
         {
             return null;
         }
+    }
+
+    private bool _assemblyResolveHookInstalled;
+
+    private void EnsureAssemblyResolveHook()
+    {
+        if (_assemblyResolveHookInstalled) return;
+        _assemblyResolveHookInstalled = true;
+
+        AppDomain.CurrentDomain.AssemblyResolve += (_, args) =>
+        {
+            var name = new AssemblyName(args.Name).Name;
+            if (name == null) return null;
+
+            // Return already-loaded assembly if available
+            if (_loadedAssemblies.TryGetValue(name, out var loaded)) return loaded;
+
+            // Search our discovered runtime paths for the DLL
+            var dllName = name + ".dll";
+            foreach (var path in _runtimeAssemblyPaths)
+            {
+                if (Path.GetFileName(path).Equals(dllName, StringComparison.OrdinalIgnoreCase))
+                {
+                    try
+                    {
+                        var asm = Assembly.LoadFrom(path);
+                        _loadedAssemblies[name] = asm;
+                        return asm;
+                    }
+                    catch { }
+                }
+            }
+
+            return null;
+        };
     }
 
     /// <summary>
@@ -259,6 +317,13 @@ public sealed class DotNetAssemblyRegistry
             {
                 found = assembly.GetTypes().FirstOrDefault(t =>
                     t.IsPublic && t.Name.Equals(simpleName, StringComparison.OrdinalIgnoreCase));
+                if (found != null) break;
+            }
+            catch (ReflectionTypeLoadException ex)
+            {
+                // Some types couldn't be loaded due to missing dependencies; search partial results
+                found = ex.Types.FirstOrDefault(t =>
+                    t != null && t.IsPublic && t.Name.Equals(simpleName, StringComparison.OrdinalIgnoreCase));
                 if (found != null) break;
             }
             catch { }

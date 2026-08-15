@@ -15,6 +15,13 @@ public sealed class ProLangCompilation
     private readonly ImmutableArray<Diagnostic> _importDiagnostics;
     private readonly ImmutableHashSet<string> _importedModules;
 
+    /// <summary>
+    /// Full paths of DLLs that were resolved from the compiler's lib/ directory.
+    /// These are copied next to the output assembly at emit time so the compiled
+    /// program can find them at runtime without any manual deployment step.
+    /// </summary>
+    private readonly ImmutableHashSet<string> _libAssemblyPaths;
+
     internal BoundGlobalScope GlobalScope
     {
         get
@@ -31,28 +38,30 @@ public sealed class ProLangCompilation
     }
  
 
-    private ProLangCompilation(bool isScript, ProLangCompilation? previous, ImmutableArray<Diagnostic> importDiagnostics, ImmutableHashSet<string> importedModules, params SyntaxTree[] syntaxTrees)
+    private ProLangCompilation(bool isScript, ProLangCompilation? previous, ImmutableArray<Diagnostic> importDiagnostics, ImmutableHashSet<string> importedModules, ImmutableHashSet<string> libAssemblyPaths, params SyntaxTree[] syntaxTrees)
     {
         IsScript = isScript;
         Previous = previous;
         SyntaxTrees = syntaxTrees.ToImmutableArray();
         _importDiagnostics = importDiagnostics;
         _importedModules = importedModules;
+        _libAssemblyPaths = libAssemblyPaths;
     }
 
     public static ProLangCompilation Create(params SyntaxTree[] syntaxTrees)
     {
-        var (resolved, diagnostics, importedModules) = ResolveAllImports(syntaxTrees.ToImmutableArray());
-        return new ProLangCompilation(isScript:false, previous: null, diagnostics, importedModules, resolved.ToArray());
+        var (resolved, diagnostics, importedModules, libAssemblyPaths) = ResolveAllImports(syntaxTrees.ToImmutableArray());
+        return new ProLangCompilation(isScript:false, previous: null, diagnostics, importedModules, libAssemblyPaths, resolved.ToArray());
     }
 
-    private static (ImmutableArray<SyntaxTree> Trees, ImmutableArray<Diagnostic> Diagnostics, ImmutableHashSet<string> ImportedModules) ResolveAllImports(
+    private static (ImmutableArray<SyntaxTree> Trees, ImmutableArray<Diagnostic> Diagnostics, ImmutableHashSet<string> ImportedModules, ImmutableHashSet<string> LibAssemblyPaths) ResolveAllImports(
         ImmutableArray<SyntaxTree> syntaxTrees)
     {
         var allTrees = ImmutableArray.CreateBuilder<SyntaxTree>();
         var diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var importedModules = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var libAssemblyPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         // Seed visited with the initially provided files
         foreach (var st in syntaxTrees)
@@ -134,6 +143,23 @@ public sealed class ProLangCompilation
                         }
                     }
 
+                    // Try the compiler's lib/ directory for bare names (no path separators).
+                    // Enables "assembly:WinFormsHelper" without specifying an explicit path.
+                    if (resolvedAssemblyPath == null
+                        && !assemblyPath.Contains('/')
+                        && !assemblyPath.Contains('\\'))
+                    {
+                        var libDir = Path.Combine(AppContext.BaseDirectory, "lib");
+                        var dllName = assemblyPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+                            ? assemblyPath : assemblyPath + ".dll";
+                        var candidate = Path.GetFullPath(Path.Combine(libDir, dllName));
+                        if (File.Exists(candidate))
+                        {
+                            resolvedAssemblyPath = candidate;
+                            libAssemblyPaths.Add(candidate); // deploy alongside output at emit time
+                        }
+                    }
+
                     if (resolvedAssemblyPath != null)
                     {
                         var assembly = BuiltInModule.LoadAssemblyFromFile(resolvedAssemblyPath);
@@ -196,6 +222,33 @@ public sealed class ProLangCompilation
                         resolvedPath = candidate;
                 }
 
+                // Try the compiler's lib/ directory as a native (.dll) stdlib assembly.
+                // Allows plain `import "WinFormsHelper"` to resolve lib/WinFormsHelper.dll
+                // without an explicit "assembly:" prefix or file path.
+                if (resolvedPath == null)
+                {
+                    var libDir = Path.Combine(AppContext.BaseDirectory, "lib");
+                    var dllName = importPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+                        ? importPath : importPath + ".dll";
+                    var candidate = Path.GetFullPath(Path.Combine(libDir, dllName));
+                    if (File.Exists(candidate))
+                    {
+                        var asm = BuiltInModule.LoadAssemblyFromFile(candidate);
+                        if (asm != null)
+                        {
+                            importedModules.Add(importPath);
+                            RegisterAssemblyNamespaces(asm);
+                            libAssemblyPaths.Add(candidate); // deploy alongside output at emit time
+                        }
+                        else
+                        {
+                            diagnostics.Add(new Diagnostic(import.PathToken.Location,
+                                $"Could not load stdlib assembly '{importPath}' from '{candidate}'."));
+                        }
+                        continue; // handled — do NOT enqueue as a source tree
+                    }
+                }
+
                 if (resolvedPath == null)
                 {
                     diagnostics.Add(new Diagnostic(import.PathToken.Location,
@@ -214,7 +267,7 @@ public sealed class ProLangCompilation
             }
         }
 
-        return (allTrees.ToImmutable(), diagnostics.ToImmutable(), importedModules.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase));
+        return (allTrees.ToImmutable(), diagnostics.ToImmutable(), importedModules.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase), libAssemblyPaths.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase));
     }
 
     /// <summary>
@@ -225,7 +278,17 @@ public sealed class ProLangCompilation
         try
         {
             var namespaces = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            foreach (var type in assembly.GetExportedTypes())
+            IEnumerable<Type> exportedTypes;
+            try
+            {
+                exportedTypes = assembly.GetExportedTypes();
+            }
+            catch (System.Reflection.ReflectionTypeLoadException ex)
+            {
+                exportedTypes = ex.Types.Where(t => t != null)!;
+            }
+
+            foreach (var type in exportedTypes)
             {
                 if (!string.IsNullOrEmpty(type.Namespace))
                 {
@@ -242,6 +305,36 @@ public sealed class ProLangCompilation
         {
             // Some assemblies may throw on GetExportedTypes
         }
+    }
+
+    /// <summary>
+    /// Runs every phase up to code generation and reports the first that failed.
+    /// </summary>
+    /// <remarks>
+    /// The order matters and is why this is shared rather than repeated per backend: import
+    /// resolution runs before parsing is even meaningful, and binding diagnostics are worthless
+    /// if parsing already failed. Each backend calls this and emits only when it succeeds.
+    /// </remarks>
+    private CodeGen.PreparedProgram PrepareProgram()
+    {
+        if (_importDiagnostics.Any())
+        {
+            return CodeGen.PreparedProgram.Failed(_importDiagnostics);
+        }
+
+        var parseDiagnostics = SyntaxTrees.SelectMany(st => st.Diagnostics);
+        var diagnostics = parseDiagnostics.Concat(GlobalScope.Diagnostics).ToImmutableArray();
+
+        if (diagnostics.Any())
+        {
+            return CodeGen.PreparedProgram.Failed(diagnostics);
+        }
+
+        var program = GetProgram();
+
+        return program.Diagnostics.Any()
+            ? CodeGen.PreparedProgram.Failed(program.Diagnostics)
+            : CodeGen.PreparedProgram.Success(program);
     }
 
     private BoundProgram GetProgram()
@@ -326,28 +419,263 @@ public sealed class ProLangCompilation
         }
     }
 
-    public ImmutableArray<Diagnostic> Emit(string moduleName, string[] references, string outputPath)
+    public ImmutableArray<Diagnostic> EmitC(string moduleName, string outputDir)
     {
-        if (_importDiagnostics.Any())
-        {
-            return _importDiagnostics;
-        }
+        var prepared = PrepareProgram();
+        if (!prepared.IsReady) return prepared.Diagnostics;
+        var program = prepared.Program!;
 
-        var parseDiagnostics = SyntaxTrees.SelectMany(st => st.Diagnostics);
-        var diagnostics = parseDiagnostics.Concat(GlobalScope.Diagnostics).ToImmutableArray();
-        if (diagnostics.Any())
-        {
-            return diagnostics;
-        }
+        Directory.CreateDirectory(outputDir);
 
-        var program = GetProgram();
-        
-        if (program.Diagnostics.Any())
-        {
-            return program.Diagnostics;
-        }
+        var cFile = Path.Combine(outputDir, $"{moduleName}.c");
+        var emitDiagnostics = CEmitter.Emit(program, moduleName, cFile);
 
-        return Emitter.Emit(program, moduleName, references, outputPath);
+        // Copy runtime headers (base.h, prl_*.h, prolang_runtime.h)
+        CRuntimeHeader.WriteAll(outputDir);
+
+        // Build scripts — use plain string concatenation to avoid brace-escape issues
+        var n = moduleName;
+        var buildSh =
+            "#!/bin/sh\n" +
+            $"# Build {n} - generated by ProLang\n" +
+            "set -e\n" +
+            "cd \"$(dirname \"$0\")\"\n" +
+            "CC=${CC:-cc}\n" +
+            $"\"$CC\" -std=c99 -Wall -O2 -o {n} {n}.c -lm\n" +
+            $"echo \"Built: ./{n}\"\n";
+
+        var buildBat =
+            "@echo off\r\n" +
+            $"rem Build {n} - generated by ProLang\r\n" +
+            "cd /d \"%~dp0\"\r\n" +
+            "setlocal\r\n" +
+            "\r\n" +
+            "rem Try cl.exe already on PATH (Developer Command Prompt)\r\n" +
+            "where cl >nul 2>&1\r\n" +
+            "if %errorlevel% equ 0 goto :have_cl\r\n" +
+            "\r\n" +
+            "rem Auto-discover Visual Studio via vswhere\r\n" +
+            "set \"VSWHERE=%ProgramFiles(x86)%\\Microsoft Visual Studio\\Installer\\vswhere.exe\"\r\n" +
+            "if not exist \"%VSWHERE%\" set \"VSWHERE=%ProgramFiles%\\Microsoft Visual Studio\\Installer\\vswhere.exe\"\r\n" +
+            "if not exist \"%VSWHERE%\" goto :try_gcc\r\n" +
+            "\r\n" +
+            "for /f \"usebackq tokens=*\" %%i in (`\"%VSWHERE%\" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set \"VS_PATH=%%i\"\r\n" +
+            "if not defined VS_PATH goto :try_gcc\r\n" +
+            "set \"VCVARS=%VS_PATH%\\VC\\Auxiliary\\Build\\vcvarsall.bat\"\r\n" +
+            "if not exist \"%VCVARS%\" goto :try_gcc\r\n" +
+            "call \"%VCVARS%\" x64 >nul 2>&1\r\n" +
+            "\r\n" +
+            ":have_cl\r\n" +
+            $"cl /TC /std:c11 /O2 {n}.c /Fe:{n}.exe\r\n" +
+            "if errorlevel 1 (echo Build failed & endlocal & exit /b 1)\r\n" +
+            $"echo Built: {n}.exe\r\n" +
+            "endlocal\r\n" +
+            "exit /b 0\r\n" +
+            "\r\n" +
+            ":try_gcc\r\n" +
+            "where gcc >nul 2>&1\r\n" +
+            "if %errorlevel% equ 0 goto :have_gcc\r\n" +
+            "where clang >nul 2>&1\r\n" +
+            "if %errorlevel% equ 0 goto :have_clang\r\n" +
+            "echo ERROR: No C compiler found. Install Visual Studio, MinGW, or LLVM.\r\n" +
+            "endlocal\r\n" +
+            "exit /b 1\r\n" +
+            "\r\n" +
+            ":have_gcc\r\n" +
+            $"gcc -std=c99 -O2 -o {n}.exe {n}.c -lm\r\n" +
+            "if errorlevel 1 (echo Build failed & endlocal & exit /b 1)\r\n" +
+            $"echo Built: {n}.exe\r\n" +
+            "endlocal\r\n" +
+            "exit /b 0\r\n" +
+            "\r\n" +
+            ":have_clang\r\n" +
+            $"clang -std=c99 -O2 -o {n}.exe {n}.c -lm\r\n" +
+            "if errorlevel 1 (echo Build failed & endlocal & exit /b 1)\r\n" +
+            $"echo Built: {n}.exe\r\n" +
+            "endlocal\r\n" +
+            "exit /b 0\r\n";
+
+        var makefile =
+            "CC ?= cc\n" +
+            "CFLAGS = -std=c99 -Wall -O2\n\n" +
+            $"{n}: {n}.c prolang_runtime.h\n" +
+            $"\t$(CC) $(CFLAGS) -o $@ $< -lm\n\n" +
+            "clean:\n" +
+            $"\trm -f {n} {n}.exe\n\n" +
+            ".PHONY: clean\n";
+
+        var buildShPath = Path.Combine(outputDir, "build.sh");
+        File.WriteAllText(buildShPath, buildSh);
+        try
+        {
+#pragma warning disable CA1416
+            File.SetUnixFileMode(buildShPath,
+                UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute |
+                UnixFileMode.GroupRead | UnixFileMode.GroupExecute |
+                UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+#pragma warning restore CA1416
+        }
+        catch { /* not on POSIX */ }
+        File.WriteAllText(Path.Combine(outputDir, "build.bat"), buildBat, System.Text.Encoding.ASCII);
+        File.WriteAllText(Path.Combine(outputDir, "Makefile"), makefile);
+
+        return emitDiagnostics;
     }
 
+    public ImmutableArray<Diagnostic> EmitPsp(string moduleName, string outputDir)
+    {
+        // Bind + diagnose (mirror EmitC but without emitting its own main entry point)
+        var prepared = PrepareProgram();
+        if (!prepared.IsReady) return prepared.Diagnostics;
+        var program = prepared.Program!;
+
+        Directory.CreateDirectory(outputDir);
+
+        var cFile = Path.Combine(outputDir, $"{moduleName}.c");
+        var emitDiagnostics = CEmitter.Emit(program, moduleName, cFile, emitMainEntry: false);
+
+        // Copy runtime headers (base.h, prl_*.h, prolang_runtime.h)
+        CRuntimeHeader.WriteAll(outputDir);
+
+        // Step 2: write PSP wrapper (psp_main.c)
+        var pspMain = 
+            "/* PSP wrapper - generated by ProLang */\n" +
+            "#ifndef __PSP__\n" +
+            "#error This file must be compiled with -D__PSP__ using the pspdev toolchain\n" +
+            "#endif\n" +
+            "\n" +
+            "#include <pspkernel.h>\n" +
+            "#include <pspdebug.h>\n" +
+            "#include <pspdisplay.h>\n" +
+            "#include <pspctrl.h>\n" +
+            "\n" +
+            $"PSP_MODULE_INFO(\"{moduleName}\", PSP_MODULE_USER, 1, 0);\n" +
+            "PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER);\n" +
+            "PSP_HEAP_SIZE_KB(8192);\n" +
+            "\n" +
+            "static volatile int g_running = 1;\n" +
+            "\n" +
+            "static int exit_cb(int a, int b, void *c) { g_running = 0; return 0; }\n" +
+            "\n" +
+            "static int cb_thread(SceSize a, void *b) {\n" +
+            "    int id = sceKernelCreateCallback(\"Exit\", exit_cb, NULL);\n" +
+            "    sceKernelRegisterExitCallback(id);\n" +
+            "    sceKernelSleepThreadCB();\n" +
+            "    return 0;\n" +
+            "}\n" +
+            "\n" +
+            "// Forward declaration of ProLang entry function\n" +
+            $"extern void prl___UserMain(void);\n" +
+            "\n" +
+            "int main(int argc, char *argv[]) {\n" +
+            "    (void)argc; (void)argv;\n" +
+            "    int thid = sceKernelCreateThread(\"cb\", cb_thread, 0x11, 0xFA0, 0, 0);\n" +
+            "    if (thid >= 0) sceKernelStartThread(thid, 0, NULL);\n" +
+            "\n" +
+            "    sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);\n" +
+            "\n" +
+            "    prl___UserMain();\n" +
+            "\n" +
+            "    sceKernelExitGame();\n" +
+            "    return 0;\n" +
+            "}\n";
+
+        File.WriteAllText(Path.Combine(outputDir, "psp_main.c"), pspMain);
+
+        // Step 3: write PSP Makefile
+        var pspMakefile =
+            $"TARGET = {moduleName}\n" +
+            "OBJS = psp_main.o " + moduleName + ".o\n" +
+            "CFLAGS = -O2 -G0 -Wall -D__PSP__\n" +
+            "LIBS = -lpspdebug -lpspgu -lpspgum -lpspge -lpspdisplay -lpspctrl -lm -lpspuser -lc\n" +
+            "\n" +
+            "EXTRA_TARGETS = EBOOT.PBP\n" +
+            $"PSP_EBOOT_TITLE = {moduleName}\n" +
+            "\n" +
+            "PSPSDK = $(shell psp-config --pspsdk-path)\n" +
+            "include $(PSPSDK)/lib/build.mak\n";
+
+        File.WriteAllText(Path.Combine(outputDir, "Makefile.psp"), pspMakefile);
+
+        return emitDiagnostics;
+    }
+
+    public ImmutableArray<Diagnostic> Emit(string moduleName, string[] references, string outputPath)
+    {
+        var prepared = PrepareProgram();
+
+        if (!prepared.IsReady)
+        {
+            return prepared.Diagnostics;
+        }
+
+        var emitDiagnostics = Emitter.Emit(prepared.Program!, moduleName, references, outputPath);
+
+        // On success, copy any stdlib native assemblies (lib/ DLLs) next to the output
+        // so the compiled program can resolve them at runtime without a manual deploy step.
+        if (!emitDiagnostics.Any())
+        {
+            var outputDir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
+            if (outputDir != null)
+            {
+                DeployRuntimeLibrary(outputDir);
+
+                foreach (var libPath in _libAssemblyPaths)
+                {
+                    var dest = Path.Combine(outputDir, Path.GetFileName(libPath));
+                    try
+                    {
+                        File.Copy(libPath, dest, overwrite: true);
+                    }
+                    catch
+                    {
+                        // Non-fatal: the compiled program may still run if the DLL
+                        // is already present from a previous build.
+                    }
+                }
+            }
+        }
+
+        return emitDiagnostics;
+    }
+
+    /// <summary>
+    /// Copies <c>ProLang.Runtime.dll</c> next to a compiled program.
+    /// </summary>
+    /// <remarks>
+    /// Emitted programs call into the runtime library for <c>print()</c>, the console module, and
+    /// the string helpers, so it has to sit beside the output assembly for the program to start.
+    /// This mirrors how stdlib <c>lib/</c> assemblies are already deployed.
+    /// <para>
+    /// A copy failure is non-fatal: the file is often already there from a previous build and
+    /// locked only because the program is still running.
+    /// </para>
+    /// </remarks>
+    private static void DeployRuntimeLibrary(string outputDirectory)
+    {
+        var runtimePath = CodeGen.DotNet.RuntimeLibrary.FindAssemblyPath();
+
+        if (runtimePath == null)
+        {
+            return;
+        }
+
+        var destination = Path.Combine(outputDirectory, Path.GetFileName(runtimePath));
+
+        if (string.Equals(Path.GetFullPath(runtimePath), Path.GetFullPath(destination), StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        try
+        {
+            File.Copy(runtimePath, destination, overwrite: true);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
 }

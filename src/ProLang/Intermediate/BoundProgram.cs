@@ -12,7 +12,8 @@ public sealed class BoundProgram
         FunctionSymbol mainFunction,
         FunctionSymbol scriptFunction,
         ImmutableDictionary<FunctionSymbol, BoundBlockStatement> functions,
-        ImmutableArray<StructSymbol> structTypes)
+        ImmutableArray<StructSymbol> structTypes,
+        ImmutableArray<EnumSymbol> enumTypes = default)
     {
         Previous = previous;
         Diagnostics = diagnostics;
@@ -20,6 +21,7 @@ public sealed class BoundProgram
         ScriptFunction = scriptFunction;
         Functions = functions;
         StructTypes = structTypes;
+        EnumTypes = enumTypes.IsDefault ? ImmutableArray<EnumSymbol>.Empty : enumTypes;
     }
 
     public BoundProgram Previous { get; }
@@ -33,4 +35,6 @@ public sealed class BoundProgram
     public ImmutableDictionary<FunctionSymbol,BoundBlockStatement> Functions { get; }
 
     public ImmutableArray<StructSymbol> StructTypes { get; }
+
+    public ImmutableArray<EnumSymbol> EnumTypes { get; }
 }

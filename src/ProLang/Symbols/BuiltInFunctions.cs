@@ -22,8 +22,12 @@ internal static class BuiltInFunctions
         TypeSymbol.Int);
 
     public static readonly FunctionSymbol FileExists = new("fileExists", ImmutableArray.Create(new ParameterSymbol("path",TypeSymbol.String,0)),TypeSymbol.Bool);
-    
+
     public static readonly FunctionSymbol ReadFile = new("readFile", ImmutableArray.Create(new ParameterSymbol("path",TypeSymbol.String,0)),TypeSymbol.String);
+
+    public static readonly FunctionSymbol ReadFileBytes = new("readFileBytes",
+        ImmutableArray.Create(new ParameterSymbol("path", TypeSymbol.String, 0)),
+        TypeSymbol.Array.WithArgs(TypeSymbol.UInt8));
 
     public static readonly FunctionSymbol WriteFile = new("writeFile",
         [new ParameterSymbol("path", TypeSymbol.String,0), new ParameterSymbol("contents", TypeSymbol.String,0)],
@@ -88,6 +92,42 @@ internal static class BuiltInFunctions
 
     public static readonly FunctionSymbol ThreadSleep = new("thread_sleep",
         ImmutableArray.Create(new ParameterSymbol("ms", TypeSymbol.Int, 0)), TypeSymbol.Void);
+
+    // PSP graphics / input
+    public static readonly FunctionSymbol PspInit = new("psp_init",
+        ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Void);
+
+    public static readonly FunctionSymbol PspClear = new("psp_clear",
+        ImmutableArray.Create(new ParameterSymbol("color", TypeSymbol.Int, 0)), TypeSymbol.Void);
+
+    public static readonly FunctionSymbol PspFillRect = new("psp_fill_rect",
+        ImmutableArray.Create(
+            new ParameterSymbol("x", TypeSymbol.Int, 0),
+            new ParameterSymbol("y", TypeSymbol.Int, 1),
+            new ParameterSymbol("w", TypeSymbol.Int, 2),
+            new ParameterSymbol("h", TypeSymbol.Int, 3),
+            new ParameterSymbol("color", TypeSymbol.Int, 4)),
+        TypeSymbol.Void);
+
+    public static readonly FunctionSymbol PspDrawText = new("psp_draw_text",
+        ImmutableArray.Create(
+            new ParameterSymbol("x", TypeSymbol.Int, 0),
+            new ParameterSymbol("y", TypeSymbol.Int, 1),
+            new ParameterSymbol("text", TypeSymbol.String, 2),
+            new ParameterSymbol("color", TypeSymbol.Int, 3)),
+        TypeSymbol.Void);
+
+    public static readonly FunctionSymbol PspSwapBuffers = new("psp_swap_buffers",
+        ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Void);
+
+    public static readonly FunctionSymbol PspVsync = new("psp_vsync",
+        ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Void);
+
+    public static readonly FunctionSymbol PspButtonsHeld = new("psp_buttons_held",
+        ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Int);
+
+    public static readonly FunctionSymbol PspButtonPressed = new("psp_button_pressed",
+        ImmutableArray.Create(new ParameterSymbol("button", TypeSymbol.Int, 0)), TypeSymbol.Bool);
 
     internal static IEnumerable<FunctionSymbol> GetAll() => BuiltInModule.GetAllFunctions();
 }

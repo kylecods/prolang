@@ -2,6 +2,7 @@
 using ProLang.Parse;
 using ProLang.Symbols;
 
+
 namespace ProLang.Intermediate;
 
 public sealed class BoundGlobalScope
@@ -14,7 +15,8 @@ public sealed class BoundGlobalScope
             ImmutableArray<VariableSymbol> variables,
             ImmutableArray<BoundStatement> statements,
             ImmutableArray<StructSymbol> structTypes,
-            ImmutableHashSet<string>? importedModules = null)
+            ImmutableHashSet<string>? importedModules = null,
+            ImmutableArray<EnumSymbol> enumTypes = default)
     {
         Previous = previous;
         Diagnostics = diagnostics;
@@ -25,6 +27,7 @@ public sealed class BoundGlobalScope
         Statements = statements;
         StructTypes = structTypes;
         ImportedModules = importedModules;
+        EnumTypes = enumTypes.IsDefault ? ImmutableArray<EnumSymbol>.Empty : enumTypes;
     }
 
     public BoundGlobalScope? Previous { get; }
@@ -42,6 +45,8 @@ public sealed class BoundGlobalScope
     public ImmutableArray<BoundStatement> Statements { get; }
 
     public ImmutableArray<StructSymbol> StructTypes { get; }
+
+    public ImmutableArray<EnumSymbol> EnumTypes { get; }
 
     public ImmutableHashSet<string>? ImportedModules { get; }
 }

@@ -128,6 +128,11 @@ public sealed class Parser
             return ParseStructDeclaration();
         }
 
+        if (Current.Kind == SyntaxKind.EnumKeyword)
+        {
+            return ParseEnumDeclaration();
+        }
+
         return ParseGlobalStatement();
     }
 
@@ -202,6 +207,43 @@ public sealed class Parser
         var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
 
         return new StructDeclarationSyntax(_syntaxTree, structKeyword, identifier, lessThanToken, typeParameters, greaterThanToken, openCurlyToken, fields.ToImmutable(), closeCurlyToken);
+    }
+
+    private EnumDeclarationSyntax ParseEnumDeclaration()
+    {
+        var enumKeyword = Match(SyntaxKind.EnumKeyword);
+        var identifier = Match(SyntaxKind.IdentifierToken);
+        var openCurlyToken = Match(SyntaxKind.LeftCurlyToken);
+
+        var members = ImmutableArray.CreateBuilder<EnumMemberSyntax>();
+
+        while (Current.Kind != SyntaxKind.RightCurlyToken && Current.Kind != SyntaxKind.EofToken)
+        {
+            var startToken = Current;
+            var memberIdentifier = Match(SyntaxKind.IdentifierToken);
+
+            SyntaxToken? equalsToken = null;
+            ExpressionSyntax? initializer = null;
+
+            if (Current.Kind == SyntaxKind.EqualsToken)
+            {
+                equalsToken = Match(SyntaxKind.EqualsToken);
+                initializer = ParsePrimaryExpression();
+            }
+
+            // Accept commas or semicolons as member separators
+            if (Current.Kind == SyntaxKind.CommaToken || Current.Kind == SyntaxKind.SemiColonToken)
+                NextToken();
+
+            members.Add(new EnumMemberSyntax(_syntaxTree, memberIdentifier, equalsToken, initializer));
+
+            if (Current == startToken)
+                NextToken();
+        }
+
+        var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
+
+        return new EnumDeclarationSyntax(_syntaxTree, enumKeyword, identifier, openCurlyToken, members.ToImmutable(), closeCurlyToken);
     }
 
     private SeparatedSyntaxList<SyntaxToken> ParseTypeParameterList()
@@ -381,10 +423,88 @@ public sealed class Parser
         var condition = ParseExpression();
         var closeToken = Match(SyntaxKind.RightParenthesisToken);
         var statement = ParseProLangStatement();// later we ll support html too
-        var elIfClause = ParseElIfClause();
+
+        // Collect ALL elif clauses into a list, then build a nested tree.
+        var elifs = new List<(SyntaxToken kw, ExpressionSyntax cond, StatementSyntax body)>();
+        while (Current.Kind == SyntaxKind.ElIfKeyword)
+        {
+            var elifKw   = Match(SyntaxKind.ElIfKeyword);
+            var elifCond = ParseExpression();
+            var elifBody = ParseBlockStatement();
+            elifs.Add((elifKw, elifCond, elifBody));
+        }
+
         var elseClause = ParseElseClause();
 
-        return new IfStatementSyntax(_syntaxTree,ifKeyword, openToken, condition, closeToken, statement, elIfClause, elseClause);
+        // Convert the flat elif list into the nested AST structure expected by the
+        // binder: IfStatementSyntax allows exactly ONE optional ElseIfClauseSyntax
+        // plus ONE optional ElseClauseSyntax.  Chains are encoded as nested else-if.
+        ElseIfClauseSyntax? elIfClause  = null;
+        ElseClauseSyntax?   finalElse   = elseClause;
+
+        if (elifs.Count == 1)
+        {
+            elIfClause = new ElseIfClauseSyntax(_syntaxTree, elifs[0].kw, elifs[0].cond, elifs[0].body);
+        }
+        else if (elifs.Count > 1)
+        {
+            elIfClause = new ElseIfClauseSyntax(_syntaxTree, elifs[0].kw, elifs[0].cond, elifs[0].body);
+            var innerIf = BuildElifChain(elifs, 1, elseClause);
+            var syntheticElseKw  = new SyntaxToken(_syntaxTree, SyntaxKind.ElseKeyword,      0, "else", null);
+            var syntheticOpen    = new SyntaxToken(_syntaxTree, SyntaxKind.LeftCurlyToken,   0, "{",    null);
+            var syntheticClose   = new SyntaxToken(_syntaxTree, SyntaxKind.RightCurlyToken,  0, "}",    null);
+            var innerBlock = new BlockStatementSyntax(_syntaxTree, syntheticOpen, ImmutableArray.Create<StatementSyntax>(innerIf), syntheticClose);
+            finalElse = new ElseClauseSyntax(_syntaxTree, syntheticElseKw, innerBlock);
+        }
+
+        return new IfStatementSyntax(_syntaxTree, ifKeyword, openToken, condition, closeToken, statement, elIfClause, finalElse);
+    }
+
+    // Converts elifs[startIdx..] + elseClause into a right-recursive IfStatementSyntax tree.
+    private StatementSyntax BuildElifChain(
+        List<(SyntaxToken kw, ExpressionSyntax cond, StatementSyntax body)> elifs,
+        int startIdx,
+        ElseClauseSyntax? elseClause)
+    {
+        var (kw, cond, body) = elifs[startIdx];
+
+        // Synthetic tokens so the binder sees a valid IfStatementSyntax.
+        var syntheticIf    = new SyntaxToken(_syntaxTree, SyntaxKind.IfKeyword,             kw.Position, "if", null);
+        var syntheticLPar  = new SyntaxToken(_syntaxTree, SyntaxKind.LeftParenthesisToken,  kw.Position, "(",  null);
+        var syntheticRPar  = new SyntaxToken(_syntaxTree, SyntaxKind.RightParenthesisToken, kw.Position, ")",  null);
+
+        ElseIfClauseSyntax? nestedElif = null;
+        ElseClauseSyntax?   nestedElse = null;
+
+        if (startIdx + 1 < elifs.Count)
+        {
+            // There is at least one more elif after this one.
+            var next = elifs[startIdx + 1];
+            nestedElif = new ElseIfClauseSyntax(_syntaxTree, next.kw, next.cond, next.body);
+
+            if (startIdx + 2 < elifs.Count)
+            {
+                // Still more after that — recurse.
+                var deeper    = BuildElifChain(elifs, startIdx + 2, elseClause);
+                var elseKw    = new SyntaxToken(_syntaxTree, SyntaxKind.ElseKeyword,     0, "else", null);
+                var openBrace = new SyntaxToken(_syntaxTree, SyntaxKind.LeftCurlyToken,  0, "{",    null);
+                var closBrace = new SyntaxToken(_syntaxTree, SyntaxKind.RightCurlyToken, 0, "}",    null);
+                var blk       = new BlockStatementSyntax(_syntaxTree, openBrace, ImmutableArray.Create<StatementSyntax>(deeper), closBrace);
+                nestedElse    = new ElseClauseSyntax(_syntaxTree, elseKw, blk);
+            }
+            else
+            {
+                // No more elifs — terminal else.
+                nestedElse = elseClause;
+            }
+        }
+        else
+        {
+            // This is the last elif; the original else is its else.
+            nestedElse = elseClause;
+        }
+
+        return new IfStatementSyntax(_syntaxTree, syntheticIf, syntheticLPar, cond, syntheticRPar, body, nestedElif, nestedElse);
     }
 
     private ElseClauseSyntax? ParseElseClause()

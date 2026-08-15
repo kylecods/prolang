@@ -13,11 +13,61 @@
     <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
   </ItemGroup>
 
+  <!--
+    The compiler's types are almost all `internal`. The test project needs to drive
+    the emitter and its collaborators directly, not just through the CLI.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="ProLang.Tests" />
+    <InternalsVisibleTo Include="ProLang.Benchmarks" />
+  </ItemGroup>
+
   <ItemGroup>
     <Content Include="..\..\std\*.prl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>std\%(Filename)%(Extension)</Link>
     </Content>
   </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="..\..\native\*.h" LogicalName="ProLang.native.%(Filename)%(Extension)" />
+  </ItemGroup>
+
+  <!--
+    ProLang.Runtime is not linked into the compiler — the compiler only ever reads it with Cecil
+    to resolve references, and copies it next to each program it emits. ReferenceOutputAssembly
+    is false so it is not treated as a compile-time dependency; the ProjectReference exists purely
+    to order the builds. The output lands in runtime/ where RuntimeLibraryLocator looks for it.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\ProLang.Runtime\ProLang.Runtime.csproj"
+                      ReferenceOutputAssembly="false"
+                      Private="false" />
+  </ItemGroup>
+
+  <Target Name="CopyProLangRuntime" AfterTargets="Build" DependsOnTargets="ResolveProjectReferences">
+    <ItemGroup>
+      <_RuntimeFiles Include="$(MSBuildThisFileDirectory)..\ProLang.Runtime\bin\$(Configuration)\$(TargetFramework)\ProLang.Runtime.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_RuntimeFiles)"
+          DestinationFolder="$(OutDir)runtime"
+          SkipUnchangedFiles="true"
+          Condition="'@(_RuntimeFiles)' != ''" />
+  </Target>
+
+  <!--
+    On Windows, build WinFormsHelper after the main ProLang build and drop
+    WinFormsHelper.dll into the compiler output's lib/ subdirectory.
+    This lets prolang source files use  import "winforms"  or  import "WinFormsHelper"
+    without specifying an explicit DLL path.
+  -->
+  <Target Name="BuildWinFormsHelper" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+    <PropertyGroup>
+      <_WFHProj>$(MSBuildThisFileDirectory)..\..\std\WinFormsHelper\WinFormsHelper.csproj</_WFHProj>
+      <_WFHLibDir>$(OutDir)lib</_WFHLibDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(_WFHLibDir)" />
+    <Exec Command="dotnet build &quot;$(_WFHProj)&quot; -c $(Configuration) -o &quot;$(_WFHLibDir)&quot; --nologo -v q" />
+  </Target>
 
 </Project>

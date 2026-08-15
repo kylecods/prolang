@@ -1,0 +1,71 @@
+/*
+ * Example 13-05: Color panel demo
+ *
+ * Demonstrates Color ↔ int one-to-one mapping via SetBackColorRGB:
+ *   - Each RGB channel is a prolang int (0-255), maps directly to .NET int
+ *   - Color.FromArgb(r, g, b) receives the values unmodified — one-to-one
+ *   - SetBackColor(id, argb) also shown: passes a 32-bit ARGB int directly
+ *     to Color.FromArgb(int) — same bit pattern, one-to-one
+ *
+ * RGB values used:
+ *   Blue:  r=66,  g=135, b=245
+ *   Green: r=80,  g=200, b=120
+ *   Red:   r=220, g=50,  b=47
+ */
+
+import "winforms"
+
+func main()
+{
+    let form: int  = WinFormsHelper.CreateForm("Color Demo", 320, 220)
+    let panel: int = WinFormsHelper.CreatePanel(60, 30, 200, 80)
+    let lbl: int   = WinFormsHelper.CreateLabel("Pick a color", 90, 125, 140, 20)
+    let bBlue: int  = WinFormsHelper.CreateButton("Blue",   20, 160, 80, 30)
+    let bGreen: int = WinFormsHelper.CreateButton("Green", 120, 160, 80, 30)
+    let bRed: int   = WinFormsHelper.CreateButton("Red",   220, 160, 80, 30)
+
+    WinFormsHelper.AddControl(form, panel)
+    WinFormsHelper.AddControl(form, lbl)
+    WinFormsHelper.AddControl(form, bBlue)
+    WinFormsHelper.AddControl(form, bGreen)
+    WinFormsHelper.AddControl(form, bRed)
+
+    WinFormsHelper.RegisterClickTag(bBlue,  1)
+    WinFormsHelper.RegisterClickTag(bGreen, 2)
+    WinFormsHelper.RegisterClickTag(bRed,   3)
+
+    WinFormsHelper.Show(form)
+
+    let running: bool = true
+    while (running)
+    {
+        let tag: int = WinFormsHelper.WaitForClick(form)
+
+        if (tag == 1)
+        {
+            // prolang int r=66, g=135, b=245 → Color.FromArgb(66,135,245) one-to-one
+            WinFormsHelper.SetBackColorRGB(panel, 66, 135, 245)
+            WinFormsHelper.SetText(lbl, "Blue  (r=66, g=135, b=245)")
+        }
+        else
+        {
+            if (tag == 2)
+            {
+                WinFormsHelper.SetBackColorRGB(panel, 80, 200, 120)
+                WinFormsHelper.SetText(lbl, "Green (r=80, g=200, b=120)")
+            }
+            else
+            {
+                if (tag == 3)
+                {
+                    WinFormsHelper.SetBackColorRGB(panel, 220, 50, 47)
+                    WinFormsHelper.SetText(lbl, "Red   (r=220, g=50, b=47)")
+                }
+                else
+                {
+                    running = false
+                }
+            }
+        }
+    }
+}

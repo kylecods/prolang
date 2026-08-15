@@ -89,17 +89,24 @@ Source Code (.prl)
 ```
 prolang/
 ├── src/ProLang/                   # Compiler source code
-│   ├── Parse/                     # Lexer, Parser, Syntax tree
-│   ├── Compiler/                  # Binder, Symbol resolution
-│   ├── Lowering/                  # Intermediate code generation
-│   ├── Intermediate/              # IR definitions
-│   ├── Symbols/                   # Symbol table and definitions
+│   ├── Parse/                     # Lexer, Parser, diagnostics
 │   ├── Syntax/                    # AST node definitions
+│   ├── Intermediate/              # Binder, bound tree, control flow graph
+│   ├── Lowering/                  # Rewrites structured control flow to goto + label
+│   ├── Compiler/                  # Pipeline orchestration, MSIL emitter, C transpiler
+│   ├── CodeGen/DotNet/            # Metadata resolution, builtin registry, interop
+│   ├── Symbols/                   # Symbol table and builtin modules
 │   ├── Text/                      # Source text management
-│   ├── Interop/                   # .NET interop support
-│   ├── Cli/                       # CLI utilities
+│   ├── Interop/                   # .NET reflection-based symbol discovery
+│   ├── Cli/                       # REPL
 │   ├── Program.cs                 # Entry point
 │   └── ProLang.csproj             # Project file
+│
+├── src/ProLang.Runtime/           # Managed runtime shipped with compiled programs
+├── src/ProLang.Tests/             # xUnit suite: IL snapshots, execution, IL validity
+├── src/ProLang.Benchmarks/        # BenchmarkDotNet suite
+├── native/                        # C runtime headers for the C99/PSP backends
+├── docs/                          # Architecture, contributing, performance
 │
 ├── examples/                      # ProLang example programs
 │   ├── 01-syntax-types/           # Type system examples
@@ -168,6 +175,11 @@ dotnet run --project src/ProLang/ProLang.csproj -- [OPTIONS] <SOURCE-FILES>
 | `-o PATH` | Output assembly path | `-o output.dll` |
 | `-m NAME` | Module name | `-m MyModule` |
 | `-r PATH` | Reference assembly | `-r System.Core.dll` |
+| `-d, --disassemble` | Print the lowered IR | `-d` |
+| `--msil=PATH` | Print an MSIL listing for a compiled assembly | `--msil=out.dll` |
+| `--emit-c` | Transpile to C99 | `--emit-c` |
+| `--emit-psp` | Transpile to C99 for the PSP | `--emit-psp` |
+| `--c-output=PATH` | Override the transpiler output directory | `--c-output=./gen` |
 | `-h, --help` | Show help | `-h` |
 
 ### Examples
@@ -768,18 +780,124 @@ Output: [result]
 
 ### Documentation
 
-- `IMPLEMENTATION_SUMMARY.md` - Feature completeness
-- `CROSS_PLATFORM_TESTING.md` - Platform-specific setup
-- `JSON_PARSER_PERFORMANCE_ANALYSIS.md` - Performance metrics
-- `examples/JSON_PARSER_SUMMARY.md` - JSON parser details
+- `README.md` - Overview, CLI reference, repository layout
+- `docs/architecture/dotnet-backend.md` - How source becomes a .NET assembly
+- `docs/contributing/adding-a-builtin.md` - Worked example of adding a builtin function
+- `docs/perf/baseline-2026-08-15.md` - Compiler performance baseline and methodology
 
 ### Key Files for Understanding
 
-- `src/ProLang/Program.cs` - Compiler entry point
+- `src/ProLang/Program.cs` - Compiler entry point (CLI)
+- `src/ProLang/Compiler/ProLangCompilation.cs` - Pipeline orchestration, import resolution
 - `src/ProLang/Parse/Lexer.cs` - Tokenization
 - `src/ProLang/Parse/Parser.cs` - Parsing to AST
-- `src/ProLang/Compiler/Binder.cs` - Symbol binding
+- `src/ProLang/Intermediate/Binder.cs` - Symbol binding and generic monomorphisation
+- `src/ProLang/Lowering/Lowerer.cs` - Rewrites if/while/for into goto + label form
 - `src/ProLang/Compiler/Emitter.cs` - MSIL emission
+- `src/ProLang/CodeGen/DotNet/` - Metadata resolution, builtins, interop
+- `src/ProLang.Runtime/` - Managed runtime shipped with compiled programs
+- `src/ProLang/Compiler/CEmitter.cs` - C99 and PSP transpiler
+
+---
+
+## PSP Support (Compile to PlayStation Portable)
+
+ProLang can target the **PSP** by transpiling to C99 and cross-compiling with the `pspdev`
+toolchain (installed in WSL). This produces a native MIPS `EBOOT.PBP` — no .NET runtime
+is needed on the PSP.
+
+### Pipeline
+
+```
+foo.prl  →  prolang --emit-psp  →  .c + prolang_runtime.h + psp_main.c + Makefile.psp
+                                              ↓  (WSL) make -f Makefile.psp
+                                          EBOOT.PBP  →  PPSSPP / PSP memory stick
+```
+
+### Building (WSL2 Ubuntu)
+
+```bash
+# Toolchain: extract pspdev release into $PSPDEV, then:
+export PSPDEV=$HOME/pspdev-tmp/pspdev
+export PATH=$PATH:$PSPDEV/bin
+```
+
+```bash
+# 1. On Windows, transpile (outputs to examples/xxx/.prolang/psp/):
+dotnet run --project src/ProLang/ProLang.csproj -- foo.prl --emit-psp
+
+# 2. In WSL, build (psp_main.c provides PSP_MODULE_INFO, exit callback, GU-less bootstrap):
+make -f Makefile.psp
+# Produces EBOOT.PBP
+```
+
+Run in PPSSPP by placing `EBOOT.PBP` in `PSP/GAME/YourGame/EBOOT.PBP`, or copy to a
+PSP memory stick (`ms0:/PSP/GAME/YourGame/`) on custom firmware (e.g. 6.61 Infinity).
+
+### The `psp` module
+
+Programs can `import "psp"` to access GU graphics + controller input. The built-ins
+map to `prl_psp_*` functions defined in the `__PSP__` branch of `prolang_runtime.h`:
+
+| Function | Description |
+|---|---|
+| `psp_init()` | Initialise GU, double-buffered 480×272, set analog sampling |
+| `psp_clear(color)` | Clear screen |
+| `psp_fill_rect(x, y, w, h, color)` | Draw filled rectangle (GU 2D) |
+| `psp_draw_text(x, y, text, color)` | Draw text with an 8×8 bitmap font |
+| `psp_swap_buffers()` | Finish frame, wait vblank, swap display |
+| `psp_vsync()` | Wait for vblank |
+| `psp_buttons_held()` | Return controller button bitmask (see `pspctrl.h`) |
+| `psp_button_pressed(button)` | True if a button bit is held |
+
+**Colours** are `0xRRGGBB` — the usual hex-colour ordering, so `16711680` / `0xFF0000`
+is red. The runtime swaps red and blue into the GE's native `0xAABBGGRR` and forces
+alpha opaque (`prl_psp_color`); callers never deal with the hardware order.
+
+Other `prl_*` runtime functions (print, sleep, console) also get PSP implementations.
+`prl_print` / `prl_console_write` route through the **same GU 8×8 font renderer** (not
+`pspDebugScreenPrintf`) and `prl_thread_sleep` → `sceKernelDelayThread`.
+
+> **Important (rendering):** GU must be the *single* owner of VRAM. Do **not** call
+> `pspDebugScreenInit()` alongside GU — both grab the same VRAM base and corrupt each
+> other. `psp_main.c` deliberately omits it, and all text/`print()` output goes through
+> the GU font so there is one framebuffer. `prl_psp_start_frame()` guards against calling
+> `sceGuStart` twice per frame; always end a frame with `psp_swap_buffers()`.
+
+> **Rendering invariants in `prl_psp.h`** (each of these was previously violated and
+> produced flickering multicolour noise instead of the intended image):
+> 1. **Framebuffer parameters are VRAM-relative offsets, not absolute addresses.**
+>    `sceGuSwapBuffers` adds `sceGeEdramGetAddr()` (`0x04000000`) itself, so passing a
+>    `0x44000000`-based pointer to `sceGuDrawBuffer`/`sceGuDispBuffer` makes
+>    `sceDisplaySetFrameBuf` latch an out-of-range address and the display keeps showing
+>    raw VRAM. `prl_psp_vram_alloc()` therefore returns plain offsets.
+> 2. **Vertex data must live in display-list memory (`sceGuGetMemory`), never on the
+>    stack.** `GU_DIRECT` only records the *pointer*; the GE dereferences it later, when
+>    the list executes at `sceGuFinish`/`sceGuSync`. Stack locals are dead by then and
+>    were never flushed out of the CPU data cache, so the GE reads garbage coordinates
+>    and colours. `prl_psp_valloc()` sub-allocates from one pool taken per frame.
+> 3. **The font byte layout is MSB-left** (`bits & (0x80 >> col)`); scanning it LSB-first
+>    mirrors every glyph horizontally.
+> 4. **`print()` must not swap buffers after drawing only the new text** — consecutive
+>    prints then land in alternating buffers and the display flickers between two
+>    half-written frames. The PSP console keeps a character/colour grid and repaints all
+>    of it before each present.
+
+### Examples
+
+- `examples/15-psp-demo/psp_demo.prl` — moving rectangles + text + controller exit
+- `examples/15-psp-demo/psp_chip8.prl` — a CHIP-8 emulator rendered via GU with
+  controller-mapped hex keypad (D-pad + face buttons), Start exits
+
+### Notes / limitations
+
+- `--emit-psp` also emits the desktop C files/build scripts; only `Makefile.psp`,
+  `.c`, `prolang_runtime.h`, and `psp_main.c` are used for PSP.
+- `.NET interop` (`System.*`, WinForms, assembly loading) is unavailable on PSP —
+  use the C transpiler path which has no managed runtime.
+- Integer-heavy code requires explicit casts for narrowing (e.g. `uint8(x & 0xFF)`)
+  — the conversion classifier treats widening as implicit, narrowing as explicit.
+- Memory: generated C uses `malloc`/structs (no GC), friendly to the PSP's 32 MB.
 
 ---
 

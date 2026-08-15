@@ -1,0 +1,69 @@
+/*
+ * Example 13-04: Interactive click counter
+ *
+ * Demonstrates the event-polling pattern:
+ *   - Show(formId) displays the form non-blocking
+ *   - RegisterClickTag(controlId, tag) wires a C# click handler that stores an int tag
+ *   - WaitForClick(formId) pumps DoEvents until a click is registered, returns the tag
+ *   - SetText(controlId, text) updates the label dynamically
+ *
+ * Button tags (prolang int ↔ .NET int, one-to-one):
+ *   1 = Count button
+ *   2 = Reset button
+ *   3 = Quit button
+ *
+ * String + int concatenation is built in — no helper needed.
+ */
+
+import "winforms"
+
+func main()
+{
+    let form: int   = WinFormsHelper.CreateForm("Click Counter", 320, 180)
+    let lbl: int    = WinFormsHelper.CreateLabel("Count: 0", 100, 30, 120, 30)
+    let bCount: int = WinFormsHelper.CreateButton("Count",  20, 100, 80, 30)
+    let bReset: int = WinFormsHelper.CreateButton("Reset", 120, 100, 80, 30)
+    let bQuit: int  = WinFormsHelper.CreateButton("Quit",  220, 100, 80, 30)
+
+    WinFormsHelper.AddControl(form, lbl)
+    WinFormsHelper.AddControl(form, bCount)
+    WinFormsHelper.AddControl(form, bReset)
+    WinFormsHelper.AddControl(form, bQuit)
+
+    // Tag 1 = Count, 2 = Reset, 3 = Quit
+    WinFormsHelper.RegisterClickTag(bCount, 1)
+    WinFormsHelper.RegisterClickTag(bReset, 2)
+    WinFormsHelper.RegisterClickTag(bQuit,  3)
+
+    // Show non-blocking, then drive the event loop from prolang
+    WinFormsHelper.Show(form)
+
+    let count: int = 0
+    let running: bool = true
+
+    while (running)
+    {
+        let tag: int = WinFormsHelper.WaitForClick(form)
+
+        if (tag == 1)
+        {
+            count = count + 1
+            // prolang int ↔ string concatenation — one-to-one (int formats as decimal)
+            WinFormsHelper.SetText(lbl, "Count: " + count)
+        }
+        else
+        {
+            if (tag == 2)
+            {
+                count = 0
+                WinFormsHelper.SetText(lbl, "Count: 0")
+            }
+            else
+            {
+                running = false
+            }
+        }
+    }
+
+    WinFormsHelper.CloseForm(form)
+}

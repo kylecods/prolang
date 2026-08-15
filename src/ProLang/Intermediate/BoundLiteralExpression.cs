@@ -20,6 +20,8 @@ internal sealed class BoundLiteralExpression : BoundExpression
             long => TypeSymbol.Int64,
             ulong => TypeSymbol.UInt64,
             string => TypeSymbol.String,
+            float  => TypeSymbol.Float32,
+            double => TypeSymbol.Float64,
             _ => throw new Exception($"Unexpected literal '{value}' of type {value.GetType()}"),
         };
     }

@@ -1,0 +1,27 @@
+/*
+ * Example 13-02: MessageBox dialogs
+ *
+ * Demonstrates:
+ *   - MessageBoxShow: simple info dialog (no return value)
+ *   - MessageBoxYesNo: returns 1 (Yes) or 0 (No) — prolang int ↔ .NET DialogResult
+ *     This is a one-to-one mapping: the C# enum value collapses to a plain int.
+ *   - prolang string ↔ .NET string — one-to-one for all text parameters
+ */
+
+import "winforms"
+
+func main()
+{
+    WinFormsHelper.MessageBoxShow("Welcome to ProLang WinForms!", "Hello")
+
+    let answer: int = WinFormsHelper.MessageBoxYesNo("Do you like ProLang?", "Question")
+
+    if (answer == 1)
+    {
+        WinFormsHelper.MessageBoxShow("Great! Keep exploring.", "Thanks")
+    }
+    else
+    {
+        WinFormsHelper.MessageBoxShow("That's okay, we'll win you over.", "No worries")
+    }
+}
