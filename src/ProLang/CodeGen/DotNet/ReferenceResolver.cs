@@ -299,6 +299,9 @@ internal sealed class ReferenceResolver
     /// <inheritdoc cref="Import(TypeReference)"/>
     public MethodReference Import(MethodReference method) => _targetModule.ImportReference(method);
 
+    /// <inheritdoc cref="Import(TypeReference)"/>
+    public FieldReference Import(FieldReference field) => _targetModule.ImportReference(field);
+
     /// <summary>
     /// Collects every loaded definition of <paramref name="metadataName"/>, so that an ambiguous
     /// type can be reported as such rather than silently resolved to whichever loaded first.

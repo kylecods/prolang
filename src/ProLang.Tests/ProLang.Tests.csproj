@@ -33,11 +33,21 @@
   <Target Name="CopyCompilerLibDirectory" AfterTargets="Build">
     <ItemGroup>
       <_CompilerLibFiles Include="$(MSBuildThisFileDirectory)..\ProLang\bin\$(Configuration)\$(TargetFramework)\lib\**\*" />
+      <_CompilerRuntimeFiles Include="$(MSBuildThisFileDirectory)..\ProLang\bin\$(Configuration)\$(TargetFramework)\runtime\**\*" />
     </ItemGroup>
     <Copy SourceFiles="@(_CompilerLibFiles)"
           DestinationFolder="$(OutDir)lib\%(RecursiveDir)"
           SkipUnchangedFiles="true"
           Condition="'@(_CompilerLibFiles)' != ''" />
+    <!--
+      ProLang.Runtime supplies the builtins that emitted programs call. RuntimeLibrary probes
+      AppContext.BaseDirectory, which under `dotnet test` is this output directory rather than
+      the compiler's, so it has to be mirrored here too.
+    -->
+    <Copy SourceFiles="@(_CompilerRuntimeFiles)"
+          DestinationFolder="$(OutDir)runtime\%(RecursiveDir)"
+          SkipUnchangedFiles="true"
+          Condition="'@(_CompilerRuntimeFiles)' != ''" />
   </Target>
 
   <!--

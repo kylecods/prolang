@@ -23,21 +23,17 @@ namespace ProLang.Compiler
         /// <summary>Resolves BCL and referenced-assembly members into the emitted module.</summary>
         private readonly ReferenceResolver _references;
 
-        private readonly MethodReference _consoleReadLineReference;
-        private readonly MethodReference _consoleWriteLineReference;
-        private readonly MethodReference _stringConcatReference;
-        private readonly MethodReference _minReference;
-        private readonly MethodReference _maxReference;
+        /// <summary>Emits calls into .NET assemblies the program imported.</summary>
+        private readonly InteropEmitter _interop;
 
-        // Output infrastructure for centralized output collection
+        private readonly MethodReference _stringConcatReference;
+
+        // Entry points into ProLang.Runtime.Output, which buffers print() and flushes at exit.
         private MethodReference? _outputInitMethod;
         private MethodReference? _outputAppendMethod;
         private MethodReference? _outputFlushMethod;
-        private FieldDefinition? _outputField;
         private bool _outputInfrastructureGenerated = false;
 
-
-        private readonly TypeReference _listType;
         private readonly TypeReference _dictionaryType;
 
         private readonly AssemblyDefinition _assemblyDefinition;
@@ -61,23 +57,27 @@ namespace ProLang.Compiler
             _assemblyDefinition = AssemblyDefinition.CreateAssembly(assemblyName, moduleName, ModuleKind.Dll);
 
             _references = new ReferenceResolver(_assemblyDefinition.MainModule, _diagnostics);
+            _interop = new InteropEmitter(_references);
 
             // Runtime assemblies go in first so that resolution, which takes the first match in
             // load order, finds real definitions rather than forwarding facades.
             _references.AddAssemblies(ReferenceAssemblyLocator.LoadRuntimeAssemblies());
+
+            // ProLang.Runtime supplies the builtins. It goes in after the BCL so that a program
+            // referencing an assembly of the same name cannot shadow it.
+            var runtimeLibrary = RuntimeLibrary.TryLoad();
+
+            if (runtimeLibrary != null)
+            {
+                _references.AddAssembly(runtimeLibrary);
+            }
 
             foreach (var reference in references)
             {
                 _references.AddReferenceFile(reference);
             }
 
-            _consoleWriteLineReference = ResolveMethod("System.Console", "WriteLine", stringArray)!;
-            _consoleReadLineReference = ResolveMethod("System.Console", "ReadLine", Array.Empty<string>())!;
-            _stringConcatReference = ResolveMethod("System.String", "Concat", new[] { "System.Object", "System.Object" })!;
-            _minReference = ResolveMethod("System.Math", "Min", new[] { "System.Int32", "System.Int32" })!;
-            _maxReference = ResolveMethod("System.Math", "Max", new[] { "System.Int32", "System.Int32" })!;
-
-            _listType = ResolveType("System.Collections.Generic.List`1")!;
+            _stringConcatReference = ResolveMethod("System.String", "Concat", ["System.Object", "System.Object"])!;
             _dictionaryType = ResolveType("System.Collections.Generic.Dictionary`2")!;
         }
 
@@ -276,7 +276,7 @@ namespace ProLang.Compiler
 
             // Emit output collection infrastructure for all assemblies
             // (libraries may have functions that use print())
-            EmitOutputHelpers();
+            ResolveOutputHelpers();
 
             foreach (var structType in program.StructTypes)
             {
@@ -340,80 +340,29 @@ namespace ProLang.Compiler
             File.WriteAllText(runtimeConfigPath, runtimeConfig);
         }
 
-        private void EmitOutputHelpers()
+        /// <summary>
+        /// Resolves the output-buffering entry points in <c>ProLang.Runtime</c>.
+        /// </summary>
+        /// <remarks>
+        /// These were three methods and a <c>StringBuilder</c> field synthesised into every
+        /// compiled assembly as hand-written IL. They are now ordinary C# in
+        /// <see cref="RuntimeLibrary.Output"/>, and all this has to do is find them.
+        /// <para>
+        /// A failure to resolve reports a diagnostic through <see cref="ReferenceResolver"/>,
+        /// which stops the assembly being written — a program whose <c>print()</c> calls emit
+        /// nothing would otherwise silently produce no output.
+        /// </para>
+        /// </remarks>
+        private void ResolveOutputHelpers()
         {
             if (_outputInfrastructureGenerated)
+            {
                 return;
+            }
 
-            // Create the static StringBuilder field to hold accumulated output
-            var stringBuilderType = ResolveType("System.Text.StringBuilder");
-            _outputField = new FieldDefinition("__output",
-                FieldAttributes.Static | FieldAttributes.Private,
-                stringBuilderType);
-            _typeDefinition.Fields.Add(_outputField);
-
-            // Resolve necessary types and methods
-            var voidType = GetTypeReference(TypeSymbol.Void);
-            var stringType = GetTypeReference(TypeSymbol.String);
-
-            // Create __InitializeOutput() method
-            var initMethod = new MethodDefinition("__InitializeOutput",
-                CecilMethodAttributes.Static | CecilMethodAttributes.Private,
-                voidType);
-            var initIL = initMethod.Body.GetILProcessor();
-
-            // IL: __output = new StringBuilder();
-            var sbConstructor = ResolveMethod("System.Text.StringBuilder", ".ctor", Array.Empty<string>());
-            initIL.Emit(OpCodes.Newobj, sbConstructor);
-            initIL.Emit(OpCodes.Stsfld, _outputField);
-            initIL.Emit(OpCodes.Ret);
-
-            initMethod.Body.OptimizeMacros();
-            _typeDefinition.Methods.Add(initMethod);
-            _outputInitMethod = initMethod;
-
-            // Create __AppendToOutput(object value) method
-            var objectType = GetTypeReference(TypeSymbol.Any);  // System.Object
-            var appendMethod = new MethodDefinition("__AppendToOutput",
-                CecilMethodAttributes.Static | CecilMethodAttributes.Private,
-                voidType);
-            appendMethod.Parameters.Add(new ParameterDefinition("value",
-                CecilParameterAttributes.None,
-                objectType));
-
-            var appendIL = appendMethod.Body.GetILProcessor();
-
-            // IL: __output.AppendLine(Convert.ToString(value));
-            var convertToString = ResolveMethod("System.Convert", "ToString", new[] { "System.Object" });
-            var sbAppendLineMethod = ResolveMethod("System.Text.StringBuilder", "AppendLine", new[] { "System.String" });
-            appendIL.Emit(OpCodes.Ldsfld, _outputField);
-            appendIL.Emit(OpCodes.Ldarg_0);  // Load the object value
-            appendIL.Emit(OpCodes.Call, convertToString);  // Convert.ToString(obj) → string
-            appendIL.Emit(OpCodes.Callvirt, sbAppendLineMethod);
-            appendIL.Emit(OpCodes.Pop);  // Pop the StringBuilder return value
-            appendIL.Emit(OpCodes.Ret);
-
-            appendMethod.Body.OptimizeMacros();
-            _typeDefinition.Methods.Add(appendMethod);
-            _outputAppendMethod = appendMethod;
-
-            // Create __FlushOutput() method
-            var flushMethod = new MethodDefinition("__FlushOutput",
-                CecilMethodAttributes.Static | CecilMethodAttributes.Private,
-                voidType);
-
-            var flushIL = flushMethod.Body.GetILProcessor();
-
-            // IL: Console.WriteLine(__output.ToString());
-            var toStringMethod = ResolveMethod("System.Text.StringBuilder", "ToString", Array.Empty<string>());
-            flushIL.Emit(OpCodes.Ldsfld, _outputField);
-            flushIL.Emit(OpCodes.Callvirt, toStringMethod);
-            flushIL.Emit(OpCodes.Call, _consoleWriteLineReference);
-            flushIL.Emit(OpCodes.Ret);
-
-            flushMethod.Body.OptimizeMacros();
-            _typeDefinition.Methods.Add(flushMethod);
-            _outputFlushMethod = flushMethod;
+            _outputInitMethod = ResolveMethod(RuntimeLibrary.Output, "Initialize", []);
+            _outputAppendMethod = ResolveMethod(RuntimeLibrary.Output, "Write", ["System.Object"]);
+            _outputFlushMethod = ResolveMethod(RuntimeLibrary.Output, "Flush", []);
 
             _outputInfrastructureGenerated = true;
         }
@@ -971,7 +920,7 @@ namespace ProLang.Compiler
                     return;
 
                 case DotNetFunctionSymbol dotNetFunction:
-                    EmitDotNetCallExpression(ilProcessor, dotNetFunction);
+                    _interop.EmitCall(ilProcessor, dotNetFunction);
                     return;
 
                 default:
@@ -980,248 +929,48 @@ namespace ProLang.Compiler
             }
         }
 
+
         /// <summary>
-        /// Emits a .NET method call instruction.
+        /// Boxes the value just emitted if <c>String.Concat(object, object)</c> would otherwise
+        /// receive an unboxed value type.
         /// </summary>
-        private void EmitDotNetCallExpression(ILProcessor ilProcessor, DotNetFunctionSymbol dotNetFunc)
+        /// <remarks>
+        /// The test is on the emitted Cecil type rather than an enumerated list of ProLang types.
+        /// The previous version listed only <c>any</c>, <c>int</c>, and <c>bool</c>, so
+        /// <c>"x" + someInt64</c> — and equally <c>float64</c>, <c>uint8</c>, or any struct —
+        /// passed a raw value where a reference was required, producing IL that fails
+        /// verification. Strings are already references and must not be boxed.
+        /// </remarks>
+        private void BoxForStringConcat(ILProcessor ilProcessor, TypeSymbol operandType)
         {
-            if (dotNetFunc.ConstructorInfo != null)
+            if (operandType == TypeSymbol.String)
             {
-                // Resolve and emit constructor call
-                var typeRef = ResolveDotNetType(dotNetFunc.DeclaringType);
-                var methodRef = ResolveDotNetConstructor(dotNetFunc.ConstructorInfo, typeRef);
-                ilProcessor.Emit(OpCodes.Newobj, methodRef);
-                
-                // Box value types if the return type is Any (object)
-                if (dotNetFunc.Type == TypeSymbol.Any && dotNetFunc.DeclaringType.IsValueType)
-                {
-                    ilProcessor.Emit(OpCodes.Box, typeRef);
-                }
                 return;
             }
 
-            if (dotNetFunc.MethodInfo != null)
-            {
-                var typeRef = ResolveDotNetType(dotNetFunc.DeclaringType);
-                var methodRef = ResolveDotNetMethod(dotNetFunc.MethodInfo, typeRef);
+            var typeReference = GetTypeReference(operandType);
 
-                if (dotNetFunc.IsStatic)
-                {
-                    ilProcessor.Emit(OpCodes.Call, methodRef);
-                }
-                else
-                {
-                    ilProcessor.Emit(OpCodes.Callvirt, methodRef);
-                }
-                
-                // Box value types if the return type is Any (object)
-                if (dotNetFunc.Type == TypeSymbol.Any && dotNetFunc.MethodInfo.ReturnType.IsValueType)
-                {
-                    var returnTypeRef = ResolveDotNetType(dotNetFunc.MethodInfo.ReturnType);
-                    ilProcessor.Emit(OpCodes.Box, returnTypeRef);
-                }
-                return;
+            if (typeReference.IsValueType)
+            {
+                ilProcessor.Emit(OpCodes.Box, typeReference);
             }
-
-            // Extract actual member name from qualified name (e.g., "Math.PI" -> "PI")
-            var memberName = dotNetFunc.Name.Contains('.')
-                ? dotNetFunc.Name.Substring(dotNetFunc.Name.LastIndexOf('.') + 1)
-                : dotNetFunc.Name;
-
-            // Static field/property access
-            var field = dotNetFunc.DeclaringType.GetField(memberName);
-            if (field != null)
-            {
-                var typeRef = ResolveDotNetType(dotNetFunc.DeclaringType);
-                var fieldRef = new FieldReference(field.Name, ResolveDotNetTypeAsTypeRef(field.FieldType), typeRef);
-                ilProcessor.Emit(OpCodes.Ldsfld, _assemblyDefinition.MainModule.ImportReference(fieldRef));
-                
-                // Box value types if the return type is Any (object)
-                if (dotNetFunc.Type == TypeSymbol.Any && field.FieldType.IsValueType)
-                {
-                    var fieldTypeRef = ResolveDotNetType(field.FieldType);
-                    ilProcessor.Emit(OpCodes.Box, fieldTypeRef);
-                }
-                return;
-            }
-
-            var property = dotNetFunc.DeclaringType.GetProperty(memberName);
-            if (property?.GetMethod != null)
-            {
-                var typeRef = ResolveDotNetType(dotNetFunc.DeclaringType);
-                var methodRef = ResolveDotNetMethod(property.GetMethod, typeRef);
-                ilProcessor.Emit(OpCodes.Call, methodRef);
-                
-                // Box value types if the return type is Any (object)
-                if (dotNetFunc.Type == TypeSymbol.Any && property.PropertyType.IsValueType)
-                {
-                    var propTypeRef = ResolveDotNetType(property.PropertyType);
-                    ilProcessor.Emit(OpCodes.Box, propTypeRef);
-                }
-                return;
-            }
-
-            throw new NotSupportedException($"Cannot emit .NET member '{dotNetFunc.Name}' (member: '{memberName}')");
-        }
-
-        /// <summary>
-        /// Resolves a .NET type to a Mono.Cecil TypeReference.
-        /// </summary>
-        private TypeReference ResolveDotNetType(Type type)
-        {
-            // Try to find in loaded assemblies
-            TypeReference? typeRef = _references.FindTypeDefinition(type.FullName!);
-
-            if (typeRef != null)
-            {
-                return _references.Import(typeRef);
-            }
-
-            // Try to resolve from runtime
-            try
-            {
-                var assemblyLocation = type.Assembly.Location;
-                if (!string.IsNullOrEmpty(assemblyLocation) && File.Exists(assemblyLocation))
-                {
-                    var runtimeAssembly = AssemblyDefinition.ReadAssembly(assemblyLocation);
-                    _references.AddAssembly(runtimeAssembly);
-
-                    typeRef = runtimeAssembly.MainModule.Types.FirstOrDefault(t => t.FullName == type.FullName);
-                    if (typeRef != null)
-                    {
-                        return _references.Import(typeRef);
-                    }
-                }
-            }
-            catch
-            {
-                // Ignore
-            }
-
-            throw new TypeLoadException($"Cannot resolve .NET type '{type.FullName}' in loaded assemblies");
-        }
-
-        /// <summary>
-        /// Resolves a .NET method to a Mono.Cecil MethodReference.
-        /// </summary>
-        private MethodReference ResolveDotNetMethod(System.Reflection.MethodInfo method, TypeReference typeRef)
-        {
-            // Find the TypeDefinition from loaded assemblies (avoid using typeRef.Resolve() which uses Cecil's resolver)
-            TypeDefinition? typeDef = _references.FindTypeDefinition(typeRef.FullName);
-
-            if (typeDef == null)
-            {
-                throw new TypeLoadException($"Cannot resolve type '{typeRef.FullName}' in loaded assemblies");
-            }
-
-            // Search for the method on the type and its base types
-            var currentTypeDef = typeDef;
-            while (currentTypeDef != null)
-            {
-                var methodDef = currentTypeDef.Methods.FirstOrDefault(m =>
-                    m.Name == method.Name &&
-                    m.Parameters.Count == method.GetParameters().Length);
-
-                if (methodDef != null)
-                {
-                    // Create a proper method reference
-                    var methodRef = _assemblyDefinition.MainModule.ImportReference(methodDef);
-                    
-                    // If the type is a generic instance, we need to make the method reference generic too
-                    if (typeRef is GenericInstanceType genericType)
-                    {
-                        var specializedMethod = new MethodReference(methodDef.Name, methodDef.ReturnType, genericType);
-                        specializedMethod.HasThis = methodDef.HasThis;
-                        specializedMethod.ExplicitThis = methodDef.ExplicitThis;
-                        specializedMethod.CallingConvention = methodDef.CallingConvention;
-                        
-                        foreach (var param in methodDef.Parameters)
-                        {
-                            specializedMethod.Parameters.Add(new ParameterDefinition(param.Name, param.Attributes, param.ParameterType));
-                        }
-                        
-                        return _assemblyDefinition.MainModule.ImportReference(specializedMethod);
-                    }
-                    
-                    return methodRef;
-                }
-
-                // Check base type - search in loaded assemblies
-                if (currentTypeDef.BaseType != null)
-                {
-                    currentTypeDef = _references.FindTypeDefinition(currentTypeDef.BaseType.FullName);
-                }
-                else
-                {
-                    break;
-                }
-            }
-
-            throw new MissingMethodException($"Cannot resolve method '{method.Name}' on type '{typeRef.FullName}'");
-        }
-
-        /// <summary>
-        /// Resolves a .NET constructor to a Mono.Cecil MethodReference.
-        /// </summary>
-        private MethodReference ResolveDotNetConstructor(System.Reflection.ConstructorInfo constructor, TypeReference typeRef)
-        {
-            var typeDef = typeRef.Resolve();
-            var ctorDef = typeDef.Methods.FirstOrDefault(m =>
-                m.IsConstructor &&
-                m.Parameters.Count == constructor.GetParameters().Length);
-
-            if (ctorDef != null)
-            {
-                return _assemblyDefinition.MainModule.ImportReference(ctorDef);
-            }
-
-            throw new MissingMethodException($"Cannot resolve constructor on type '{typeRef.FullName}'");
-        }
-
-        /// <summary>
-        /// Resolves a .NET type to a TypeReference for field type resolution.
-        /// </summary>
-        private TypeReference ResolveDotNetTypeAsTypeRef(Type type)
-        {
-            return type.FullName switch
-            {
-                "System.Void" => ResolveType("System.Void")!,
-                "System.Boolean" => ResolveType("System.Boolean")!,
-                "System.Int32" => ResolveType("System.Int32")!,
-                "System.String" => ResolveType("System.String")!,
-                "System.Object" => ResolveType("System.Object")!,
-                _ => ResolveDotNetType(type)
-            };
         }
 
         private void EmitBinaryExpression(ILProcessor ilProcessor, BoundBinaryExpression node)
         {
+            var isStringConcatenation =
+                node.Op.Kind == BoundBinaryOperatorKind.Addition && node.Op.Type == TypeSymbol.String;
+
             EmitExpression(ilProcessor, node.Left);
-            if (node.Op.Kind == BoundBinaryOperatorKind.Addition && node.Op.Type == TypeSymbol.String)
+            if (isStringConcatenation)
             {
-                // Box non-string types for String.Concat(object, object)
-                // For Any type (which could be a value type like DateTime), we need to box too
-                if (node.Left.Type != TypeSymbol.String)
-                {
-                    if (node.Left.Type == TypeSymbol.Any || node.Left.Type == TypeSymbol.Int || node.Left.Type == TypeSymbol.Bool)
-                    {
-                        ilProcessor.Emit(OpCodes.Box, GetTypeReference(node.Left.Type));
-                    }
-                }
+                BoxForStringConcat(ilProcessor, node.Left.Type);
             }
 
             EmitExpression(ilProcessor, node.Right);
-            if (node.Op.Kind == BoundBinaryOperatorKind.Addition && node.Op.Type == TypeSymbol.String)
+            if (isStringConcatenation)
             {
-                // Box non-string types for String.Concat(object, object)
-                // For Any type (which could be a value type like DateTime), we need to box too
-                if (node.Right.Type != TypeSymbol.String)
-                {
-                    if (node.Right.Type == TypeSymbol.Any || node.Right.Type == TypeSymbol.Int || node.Right.Type == TypeSymbol.Bool)
-                    {
-                        ilProcessor.Emit(OpCodes.Box, GetTypeReference(node.Right.Type));
-                    }
-                }
+                BoxForStringConcat(ilProcessor, node.Right.Type);
             }
 
             if (node.Op.Kind == BoundBinaryOperatorKind.Addition)
@@ -1461,12 +1210,18 @@ namespace ProLang.Compiler
                 ilProcessor.Emit(OpCodes.Ldloca, localVar);
 
                 var fieldIndex = structSymbol.Fields.IndexOf(field);
-                EmitExpression(ilProcessor, node.FieldValues[fieldIndex]);
+                var fieldValue = node.FieldValues[fieldIndex];
+                EmitExpression(ilProcessor, fieldValue);
 
                 var fieldType = GetTypeReference(field.Type);
-                if (field.Type != TypeSymbol.Any && !fieldType.IsValueType)
+
+                // Box only when storing a value type into an `any` field, which is
+                // System.Object at the IL level. The condition here used to be inverted —
+                // `field.Type != any && !fieldType.IsValueType` — which boxed *reference* types
+                // into non-`any` fields, emitting `box string` and `box Object[]`.
+                if (field.Type == TypeSymbol.Any && GetTypeReference(fieldValue.Type).IsValueType)
                 {
-                    ilProcessor.Emit(OpCodes.Box, fieldType);
+                    ilProcessor.Emit(OpCodes.Box, GetTypeReference(fieldValue.Type));
                 }
 
                 var fieldRef = new FieldReference(field.Name, fieldType);

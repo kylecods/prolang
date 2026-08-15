@@ -89,17 +89,24 @@ Source Code (.prl)
 ```
 prolang/
 ├── src/ProLang/                   # Compiler source code
-│   ├── Parse/                     # Lexer, Parser, Syntax tree
-│   ├── Compiler/                  # Binder, Symbol resolution
-│   ├── Lowering/                  # Intermediate code generation
-│   ├── Intermediate/              # IR definitions
-│   ├── Symbols/                   # Symbol table and definitions
+│   ├── Parse/                     # Lexer, Parser, diagnostics
 │   ├── Syntax/                    # AST node definitions
+│   ├── Intermediate/              # Binder, bound tree, control flow graph
+│   ├── Lowering/                  # Rewrites structured control flow to goto + label
+│   ├── Compiler/                  # Pipeline orchestration, MSIL emitter, C transpiler
+│   ├── CodeGen/DotNet/            # Metadata resolution, builtin registry, interop
+│   ├── Symbols/                   # Symbol table and builtin modules
 │   ├── Text/                      # Source text management
-│   ├── Interop/                   # .NET interop support
-│   ├── Cli/                       # CLI utilities
+│   ├── Interop/                   # .NET reflection-based symbol discovery
+│   ├── Cli/                       # REPL
 │   ├── Program.cs                 # Entry point
 │   └── ProLang.csproj             # Project file
+│
+├── src/ProLang.Runtime/           # Managed runtime shipped with compiled programs
+├── src/ProLang.Tests/             # xUnit suite: IL snapshots, execution, IL validity
+├── src/ProLang.Benchmarks/        # BenchmarkDotNet suite
+├── native/                        # C runtime headers for the C99/PSP backends
+├── docs/                          # Architecture, contributing, performance
 │
 ├── examples/                      # ProLang example programs
 │   ├── 01-syntax-types/           # Type system examples
@@ -168,6 +175,11 @@ dotnet run --project src/ProLang/ProLang.csproj -- [OPTIONS] <SOURCE-FILES>
 | `-o PATH` | Output assembly path | `-o output.dll` |
 | `-m NAME` | Module name | `-m MyModule` |
 | `-r PATH` | Reference assembly | `-r System.Core.dll` |
+| `-d, --disassemble` | Print the lowered IR | `-d` |
+| `--msil=PATH` | Print an MSIL listing for a compiled assembly | `--msil=out.dll` |
+| `--emit-c` | Transpile to C99 | `--emit-c` |
+| `--emit-psp` | Transpile to C99 for the PSP | `--emit-psp` |
+| `--c-output=PATH` | Override the transpiler output directory | `--c-output=./gen` |
 | `-h, --help` | Show help | `-h` |
 
 ### Examples
@@ -768,18 +780,23 @@ Output: [result]
 
 ### Documentation
 
-- `IMPLEMENTATION_SUMMARY.md` - Feature completeness
-- `CROSS_PLATFORM_TESTING.md` - Platform-specific setup
-- `JSON_PARSER_PERFORMANCE_ANALYSIS.md` - Performance metrics
-- `examples/JSON_PARSER_SUMMARY.md` - JSON parser details
+- `README.md` - Overview, CLI reference, repository layout
+- `docs/architecture/dotnet-backend.md` - How source becomes a .NET assembly
+- `docs/contributing/adding-a-builtin.md` - Worked example of adding a builtin function
+- `docs/perf/baseline-2026-08-15.md` - Compiler performance baseline and methodology
 
 ### Key Files for Understanding
 
-- `src/ProLang/Program.cs` - Compiler entry point
+- `src/ProLang/Program.cs` - Compiler entry point (CLI)
+- `src/ProLang/Compiler/ProLangCompilation.cs` - Pipeline orchestration, import resolution
 - `src/ProLang/Parse/Lexer.cs` - Tokenization
 - `src/ProLang/Parse/Parser.cs` - Parsing to AST
-- `src/ProLang/Compiler/Binder.cs` - Symbol binding
+- `src/ProLang/Intermediate/Binder.cs` - Symbol binding and generic monomorphisation
+- `src/ProLang/Lowering/Lowerer.cs` - Rewrites if/while/for into goto + label form
 - `src/ProLang/Compiler/Emitter.cs` - MSIL emission
+- `src/ProLang/CodeGen/DotNet/` - Metadata resolution, builtins, interop
+- `src/ProLang.Runtime/` - Managed runtime shipped with compiled programs
+- `src/ProLang/Compiler/CEmitter.cs` - C99 and PSP transpiler
 
 ---
 

@@ -307,6 +307,36 @@ public sealed class ProLangCompilation
         }
     }
 
+    /// <summary>
+    /// Runs every phase up to code generation and reports the first that failed.
+    /// </summary>
+    /// <remarks>
+    /// The order matters and is why this is shared rather than repeated per backend: import
+    /// resolution runs before parsing is even meaningful, and binding diagnostics are worthless
+    /// if parsing already failed. Each backend calls this and emits only when it succeeds.
+    /// </remarks>
+    private CodeGen.PreparedProgram PrepareProgram()
+    {
+        if (_importDiagnostics.Any())
+        {
+            return CodeGen.PreparedProgram.Failed(_importDiagnostics);
+        }
+
+        var parseDiagnostics = SyntaxTrees.SelectMany(st => st.Diagnostics);
+        var diagnostics = parseDiagnostics.Concat(GlobalScope.Diagnostics).ToImmutableArray();
+
+        if (diagnostics.Any())
+        {
+            return CodeGen.PreparedProgram.Failed(diagnostics);
+        }
+
+        var program = GetProgram();
+
+        return program.Diagnostics.Any()
+            ? CodeGen.PreparedProgram.Failed(program.Diagnostics)
+            : CodeGen.PreparedProgram.Success(program);
+    }
+
     private BoundProgram GetProgram()
     {
         var previous = Previous == null ? null : Previous.GetProgram();
@@ -391,14 +421,9 @@ public sealed class ProLangCompilation
 
     public ImmutableArray<Diagnostic> EmitC(string moduleName, string outputDir)
     {
-        if (_importDiagnostics.Any()) return _importDiagnostics;
-
-        var parseDiagnostics = SyntaxTrees.SelectMany(st => st.Diagnostics);
-        var diagnostics = parseDiagnostics.Concat(GlobalScope.Diagnostics).ToImmutableArray();
-        if (diagnostics.Any()) return diagnostics;
-
-        var program = GetProgram();
-        if (program.Diagnostics.Any()) return program.Diagnostics;
+        var prepared = PrepareProgram();
+        if (!prepared.IsReady) return prepared.Diagnostics;
+        var program = prepared.Program!;
 
         Directory.CreateDirectory(outputDir);
 
@@ -500,14 +525,9 @@ public sealed class ProLangCompilation
     public ImmutableArray<Diagnostic> EmitPsp(string moduleName, string outputDir)
     {
         // Bind + diagnose (mirror EmitC but without emitting its own main entry point)
-        if (_importDiagnostics.Any()) return _importDiagnostics;
-
-        var parseDiagnostics = SyntaxTrees.SelectMany(st => st.Diagnostics);
-        var diagnostics = parseDiagnostics.Concat(GlobalScope.Diagnostics).ToImmutableArray();
-        if (diagnostics.Any()) return diagnostics;
-
-        var program = GetProgram();
-        if (program.Diagnostics.Any()) return program.Diagnostics;
+        var prepared = PrepareProgram();
+        if (!prepared.IsReady) return prepared.Diagnostics;
+        var program = prepared.Program!;
 
         Directory.CreateDirectory(outputDir);
 
@@ -582,26 +602,14 @@ public sealed class ProLangCompilation
 
     public ImmutableArray<Diagnostic> Emit(string moduleName, string[] references, string outputPath)
     {
-        if (_importDiagnostics.Any())
+        var prepared = PrepareProgram();
+
+        if (!prepared.IsReady)
         {
-            return _importDiagnostics;
+            return prepared.Diagnostics;
         }
 
-        var parseDiagnostics = SyntaxTrees.SelectMany(st => st.Diagnostics);
-        var diagnostics = parseDiagnostics.Concat(GlobalScope.Diagnostics).ToImmutableArray();
-        if (diagnostics.Any())
-        {
-            return diagnostics;
-        }
-
-        var program = GetProgram();
-
-        if (program.Diagnostics.Any())
-        {
-            return program.Diagnostics;
-        }
-
-        var emitDiagnostics = Emitter.Emit(program, moduleName, references, outputPath);
+        var emitDiagnostics = Emitter.Emit(prepared.Program!, moduleName, references, outputPath);
 
         // On success, copy any stdlib native assemblies (lib/ DLLs) next to the output
         // so the compiled program can resolve them at runtime without a manual deploy step.
@@ -610,6 +618,8 @@ public sealed class ProLangCompilation
             var outputDir = Path.GetDirectoryName(Path.GetFullPath(outputPath));
             if (outputDir != null)
             {
+                DeployRuntimeLibrary(outputDir);
+
                 foreach (var libPath in _libAssemblyPaths)
                 {
                     var dest = Path.Combine(outputDir, Path.GetFileName(libPath));
@@ -629,4 +639,43 @@ public sealed class ProLangCompilation
         return emitDiagnostics;
     }
 
+    /// <summary>
+    /// Copies <c>ProLang.Runtime.dll</c> next to a compiled program.
+    /// </summary>
+    /// <remarks>
+    /// Emitted programs call into the runtime library for <c>print()</c>, the console module, and
+    /// the string helpers, so it has to sit beside the output assembly for the program to start.
+    /// This mirrors how stdlib <c>lib/</c> assemblies are already deployed.
+    /// <para>
+    /// A copy failure is non-fatal: the file is often already there from a previous build and
+    /// locked only because the program is still running.
+    /// </para>
+    /// </remarks>
+    private static void DeployRuntimeLibrary(string outputDirectory)
+    {
+        var runtimePath = CodeGen.DotNet.RuntimeLibrary.FindAssemblyPath();
+
+        if (runtimePath == null)
+        {
+            return;
+        }
+
+        var destination = Path.Combine(outputDirectory, Path.GetFileName(runtimePath));
+
+        if (string.Equals(Path.GetFullPath(runtimePath), Path.GetFullPath(destination), StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        try
+        {
+            File.Copy(runtimePath, destination, overwrite: true);
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+    }
 }

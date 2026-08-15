@@ -19,7 +19,11 @@ vscode-extension/bun.lock
 # pattern pointed at a directory that is never created, which is how stale results for benchmarks
 # that no longer exist ended up committed.
 **/BenchmarkDotNet.Artifacts/
-**/.prolang/artifacts/
+# Transpiler output. `--emit-c` writes .prolang/artifacts/ and `--emit-psp` writes .prolang/psp/,
+# both containing generated C, copies of the native/ runtime headers, and build scripts — all
+# reproducible from the .prl source. The rule previously named artifacts/ only, so the PSP output
+# was committed and then churned on every --emit-psp run.
+**/.prolang/
 *.obj
 *.runtimeconfig.json
 *.deps.json

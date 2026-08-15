@@ -34,6 +34,28 @@
   </ItemGroup>
 
   <!--
+    ProLang.Runtime is not linked into the compiler — the compiler only ever reads it with Cecil
+    to resolve references, and copies it next to each program it emits. ReferenceOutputAssembly
+    is false so it is not treated as a compile-time dependency; the ProjectReference exists purely
+    to order the builds. The output lands in runtime/ where RuntimeLibraryLocator looks for it.
+  -->
+  <ItemGroup>
+    <ProjectReference Include="..\ProLang.Runtime\ProLang.Runtime.csproj"
+                      ReferenceOutputAssembly="false"
+                      Private="false" />
+  </ItemGroup>
+
+  <Target Name="CopyProLangRuntime" AfterTargets="Build" DependsOnTargets="ResolveProjectReferences">
+    <ItemGroup>
+      <_RuntimeFiles Include="$(MSBuildThisFileDirectory)..\ProLang.Runtime\bin\$(Configuration)\$(TargetFramework)\ProLang.Runtime.dll" />
+    </ItemGroup>
+    <Copy SourceFiles="@(_RuntimeFiles)"
+          DestinationFolder="$(OutDir)runtime"
+          SkipUnchangedFiles="true"
+          Condition="'@(_RuntimeFiles)' != ''" />
+  </Target>
+
+  <!--
     On Windows, build WinFormsHelper after the main ProLang build and drop
     WinFormsHelper.dll into the compiler output's lib/ subdirectory.
     This lets prolang source files use  import "winforms"  or  import "WinFormsHelper"
