@@ -14,11 +14,35 @@ run_errors.txt
 .opencode/
 .claude/
 vscode-extension/bun.lock
-src/ProLang.Benchmarks/BenchmarkDotNet.Artifacts/**
+# BenchmarkDotNet writes to <cwd>/BenchmarkDotNet.Artifacts, and the documented way to run the
+# suite is from src/, so artifacts land in src/ — not next to the benchmark project. The old
+# pattern pointed at a directory that is never created, which is how stale results for benchmarks
+# that no longer exist ended up committed.
+**/BenchmarkDotNet.Artifacts/
 **/.prolang/artifacts/
 *.obj
 *.runtimeconfig.json
+*.deps.json
 build/
+
+# Compiled output from running the compiler over examples/ and tests/. The .prl files are the
+# sources; the assemblies beside them are throwaway. Several of these were committed before the
+# *.dll and *.runtimeconfig.json rules existed, so they stayed tracked — a .gitignore entry has
+# no effect on a file git is already following.
+examples/**/bin/
+tests/**/output_folder/
+*.decompiled.cs
+
+# Scratch directories created by ProLang.Tests. Tests write build output under the system temp
+# folder, never into the source tree, but pin this in case TMP is ever pointed at the repo.
+prolang-tests/
+
+# Generated baselines for ProLang.Tests: disassembled IL listings and captured program stdout.
+# Regenerate with:  PROLANG_UPDATE_SNAPSHOTS=1 dotnet test src/ProLang.Tests/ProLang.Tests.csproj
+# Note these are the comparison targets for IlSnapshotTests and ExecutionTests, so on a fresh
+# clone both report "No snapshot at ..." until they have been regenerated locally.
+src/ProLang.Tests/Snapshots/
+src/ProLang.Tests/Expected/
 **/CMakeFiles
 *.a
 native/CMakeCache.txt

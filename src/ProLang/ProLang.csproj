@@ -13,6 +13,15 @@
     <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
   </ItemGroup>
 
+  <!--
+    The compiler's types are almost all `internal`. The test project needs to drive
+    the emitter and its collaborators directly, not just through the CLI.
+  -->
+  <ItemGroup>
+    <InternalsVisibleTo Include="ProLang.Tests" />
+    <InternalsVisibleTo Include="ProLang.Benchmarks" />
+  </ItemGroup>
+
   <ItemGroup>
     <Content Include="..\..\std\*.prl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>

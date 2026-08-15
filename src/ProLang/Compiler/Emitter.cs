@@ -1,6 +1,8 @@
 using Mono.Cecil;
 using Mono.Cecil.Cil;
 using Mono.Cecil.Rocks;
+using ProLang.CodeGen.DotNet;
+using ProLang.CodeGen.DotNet.Intrinsics;
 using ProLang.Intermediate;
 using ProLang.Interop;
 using ProLang.Parse;
@@ -17,9 +19,9 @@ namespace ProLang.Compiler
         private DiagnosticBag _diagnostics = new();
 
         private readonly Dictionary<TypeSymbol, TypeReference> _knownTypes = new();
-        private readonly Dictionary<string, TypeReference> _typeCache = new();
-        private readonly Dictionary<(TypeReference typeRef, string methodName, int paramCount), MethodReference> _methodCache = new();
-        private readonly List<AssemblyDefinition> _assemblies = new();
+
+        /// <summary>Resolves BCL and referenced-assembly members into the emitted module.</summary>
+        private readonly ReferenceResolver _references;
 
         private readonly MethodReference _consoleReadLineReference;
         private readonly MethodReference _consoleWriteLineReference;
@@ -55,28 +57,19 @@ namespace ProLang.Compiler
 
         private Emitter(string moduleName, string[] references)
         {
-            // Always load runtime assemblies first to ensure core types are available
-            LoadRuntimeAssemblies();
-
-            // Load provided references
-            foreach (var reference in references)
-            {
-                try
-                {
-                    var assembly = AssemblyDefinition.ReadAssembly(reference);
-                    if (!_assemblies.Any(a => a.Name.Name == assembly.Name.Name))
-                    {
-                        _assemblies.Add(assembly);
-                    }
-                }
-                catch (BadImageFormatException)
-                {
-                    _diagnostics.ReportInvalidReference(reference);
-                }
-            }
-
             var assemblyName = new AssemblyNameDefinition(moduleName, new Version(1, 0));
             _assemblyDefinition = AssemblyDefinition.CreateAssembly(assemblyName, moduleName, ModuleKind.Dll);
+
+            _references = new ReferenceResolver(_assemblyDefinition.MainModule, _diagnostics);
+
+            // Runtime assemblies go in first so that resolution, which takes the first match in
+            // load order, finds real definitions rather than forwarding facades.
+            _references.AddAssemblies(ReferenceAssemblyLocator.LoadRuntimeAssemblies());
+
+            foreach (var reference in references)
+            {
+                _references.AddReferenceFile(reference);
+            }
 
             _consoleWriteLineReference = ResolveMethod("System.Console", "WriteLine", stringArray)!;
             _consoleReadLineReference = ResolveMethod("System.Console", "ReadLine", Array.Empty<string>())!;
@@ -88,252 +81,19 @@ namespace ProLang.Compiler
             _dictionaryType = ResolveType("System.Collections.Generic.Dictionary`2")!;
         }
 
-        private void LoadRuntimeAssemblies()
-        {
-            string? assemblyLoadPath = null;
+        /// <inheritdoc cref="ReferenceResolver.ResolveType"/>
+        private TypeReference? ResolveType(string metaDataName) => _references.ResolveType(metaDataName);
 
-            // First, try to find the runtime assemblies in Program Files\dotnet\shared
-            var programFilesRoot = Path.Combine(
-                Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                "dotnet", "shared", "Microsoft.NETCore.App");
+        /// <inheritdoc cref="ReferenceResolver.ResolveMethod"/>
+        private MethodReference? ResolveMethod(string typeName, string methodName, string[] parameterTypeNames) =>
+            _references.ResolveMethod(typeName, methodName, parameterTypeNames);
 
-            if (Directory.Exists(programFilesRoot))
-            {
-                // Find the latest version of the runtime
-                var latestVersion = Directory.GetDirectories(programFilesRoot)
-                    .OrderByDescending(d => d)
-                    .FirstOrDefault();
-                if (latestVersion != null)
-                {
-                    assemblyLoadPath = latestVersion;
-                }
-            }
+        /// <inheritdoc cref="ReferenceResolver.GetRequiredType"/>
+        private TypeReference GetCachedType(string metaDataName) => _references.GetRequiredType(metaDataName);
 
-            // Second, try SDK packs
-            if (assemblyLoadPath == null || !Directory.Exists(assemblyLoadPath))
-            {
-                var sdkRoot = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles),
-                    "dotnet", "packs", "Microsoft.NETCore.App.Ref");
-
-                if (Directory.Exists(sdkRoot))
-                {
-                    // Find the latest version
-                    var latestVersion = Directory.GetDirectories(sdkRoot)
-                        .OrderByDescending(d => d)
-                        .FirstOrDefault();
-                    if (latestVersion != null)
-                    {
-                        var refDir = Path.Combine(latestVersion, "ref");
-                        var framework = Directory.GetDirectories(refDir)
-                            .OrderByDescending(d => d)
-                            .FirstOrDefault();
-                        if (framework != null)
-                        {
-                            assemblyLoadPath = framework;
-                        }
-                    }
-                }
-            }
-
-            // Third, fallback to user profile
-            if (assemblyLoadPath == null || !Directory.Exists(assemblyLoadPath))
-            {
-                var userRoot = Path.Combine(
-                    Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-                    ".dotnet", "packs", "Microsoft.NETCore.App.Ref");
-
-                if (Directory.Exists(userRoot))
-                {
-                    var latestVersion = Directory.GetDirectories(userRoot)
-                        .OrderByDescending(d => d)
-                        .FirstOrDefault();
-                    if (latestVersion != null)
-                    {
-                        var refDir = Path.Combine(latestVersion, "ref");
-                        var framework = Directory.GetDirectories(refDir)
-                            .OrderByDescending(d => d)
-                            .FirstOrDefault();
-                        if (framework != null)
-                        {
-                            assemblyLoadPath = framework;
-                        }
-                    }
-                }
-            }
-
-            // Fourth, fallback to runtime directory
-            if (assemblyLoadPath == null || !Directory.Exists(assemblyLoadPath))
-            {
-                assemblyLoadPath = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
-            }
-
-            // Load essential .NET assemblies for interop
-            // Note: System.Private.CoreLib must be loaded first as it contains the core types
-            var requiredAssemblies = new[]
-            {
-                "System.Private.CoreLib.dll",  // Contains the actual type definitions
-                "System.Runtime.dll",
-                "System.Console.dll",
-                "System.Collections.dll",
-                "System.Collections.Concurrent.dll",
-                "System.Linq.dll",
-                "System.Text.RegularExpressions.dll",
-                "System.IO.FileSystem.dll",
-                "System.Threading.dll",
-                "System.Net.Primitives.dll",
-                "System.Text.Json.dll",
-                "Microsoft.CSharp.dll"
-            };
-
-            var loadedAssemblyNames = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-
-            if (Directory.Exists(assemblyLoadPath))
-            {
-                foreach (var assemblyName in requiredAssemblies)
-                {
-                    var assemblyPath = Path.Combine(assemblyLoadPath, assemblyName);
-                    if (File.Exists(assemblyPath))
-                    {
-                        try
-                        {
-                            var assembly = AssemblyDefinition.ReadAssembly(assemblyPath, new ReaderParameters { ReadSymbols = false });
-                            var simpleName = assembly.Name.Name;
-                            if (!loadedAssemblyNames.Contains(simpleName))
-                            {
-                                _assemblies.Add(assembly);
-                                loadedAssemblyNames.Add(simpleName);
-                            }
-                        }
-                        catch (Exception)
-                        {
-                            // Ignore if we can't load the assembly
-                        }
-                    }
-                }
-            }
-        }
-
-        private TypeReference? ResolveType(string metaDataName)
-        {
-            // Check cache first
-            if (_typeCache.TryGetValue(metaDataName, out var cached))
-                return cached;
-
-            TypeReference? result = null;
-            TypeDefinition? foundType = null;
-            var allFoundList = new List<TypeDefinition>();
-
-            // Early termination: stop after finding first match
-            foreach (var assembly in _assemblies)
-            {
-                foreach (var module in assembly.Modules)
-                {
-                    var typeInModule = module.Types.FirstOrDefault(t => t.FullName == metaDataName);
-                    if (typeInModule != null)
-                    {
-                        if (foundType == null)
-                        {
-                            foundType = typeInModule;
-                        }
-                        else
-                        {
-                            // Collect multiple matches for error reporting
-                            allFoundList.Add(typeInModule);
-                        }
-                    }
-                }
-            }
-
-            if (foundType != null && allFoundList.Count == 0)
-            {
-                result = _assemblyDefinition.MainModule.ImportReference(foundType);
-                _typeCache[metaDataName] = result;
-            }
-            else if (foundType == null)
-            {
-                _diagnostics.ReportRequiredTypeNotFound(null, metaDataName);
-            }
-            else
-            {
-                // Report ambiguous matches (foundType + items in allFoundList)
-                var allTypes = new TypeDefinition[allFoundList.Count + 1];
-                allTypes[0] = foundType;
-                allFoundList.CopyTo(allTypes, 1);
-                _diagnostics.ReportRequiredTypeAmbiguous(null, metaDataName, allTypes);
-            }
-
-            return result;
-        }
-
-        private MethodReference? ResolveMethod(string typeName, string methodName, string[] parameterTypeNames)
-        {
-            TypeDefinition? foundType = null;
-            var allFoundTypesList = new List<TypeDefinition>();
-
-            // Early termination: find type, stop at first match
-            foreach (var assembly in _assemblies)
-            {
-                foreach (var module in assembly.Modules)
-                {
-                    var typeInModule = module.Types.FirstOrDefault(t => t.FullName == typeName);
-                    if (typeInModule != null)
-                    {
-                        if (foundType == null)
-                        {
-                            foundType = typeInModule;
-                        }
-                        else
-                        {
-                            // Track multiple matches for error reporting
-                            allFoundTypesList.Add(typeInModule);
-                        }
-                    }
-                }
-            }
-
-            if (foundType != null && allFoundTypesList.Count == 0)
-            {
-                // Find matching method - avoid Where() allocation, use direct iteration
-                foreach (var method in foundType.Methods)
-                {
-                    if (method.Name != methodName || method.Parameters.Count != parameterTypeNames.Length)
-                        continue;
-
-                    var allParametersMatch = true;
-                    for (int i = 0; i < parameterTypeNames.Length; i++)
-                    {
-                        if (method.Parameters[i].ParameterType.FullName != parameterTypeNames[i])
-                        {
-                            allParametersMatch = false;
-                            break;
-                        }
-                    }
-
-                    if (!allParametersMatch)
-                        continue;
-
-                    return _assemblyDefinition.MainModule.ImportReference(method);
-                }
-
-                _diagnostics.ReportRequiredMethodNotFound(typeName, methodName, parameterTypeNames);
-                return null;
-            }
-            else if (foundType == null)
-            {
-                _diagnostics.ReportRequiredTypeNotFound(null, typeName);
-            }
-            else
-            {
-                // Report ambiguous matches
-                var allTypes = new TypeDefinition[allFoundTypesList.Count + 1];
-                allTypes[0] = foundType;
-                allFoundTypesList.CopyTo(allTypes, 1);
-                _diagnostics.ReportRequiredTypeAmbiguous(null, typeName, allTypes);
-            }
-
-            return null;
-        }
+        /// <inheritdoc cref="ReferenceResolver.GetGenericMethod"/>
+        private MethodReference GetGenericMethod(TypeReference type, string methodName, int parameterCount) =>
+            _references.GetGenericMethod(type, methodName, parameterCount);
 
         private TypeReference GetTypeReference(TypeSymbol type)
         {
@@ -408,23 +168,6 @@ namespace ProLang.Compiler
             return resolved;
         }
 
-        private TypeReference GetCachedType(string metaDataName)
-        {
-            if (_typeCache.TryGetValue(metaDataName, out var cached))
-            {
-                return cached;
-            }
-
-            var resolved = ResolveType(metaDataName);
-
-            if (resolved == null)
-            {
-                throw new Exception($"Could not resolve required type {metaDataName}");
-            }
-
-            return resolved;
-        }
-
         private void EmitStructType(StructSymbol structSymbol)
         {
             var typeDef = new TypeDefinition(
@@ -461,6 +204,23 @@ namespace ProLang.Compiler
             return emitter.Emit(program, outputPath);
         }
 
+        /// <summary>
+        /// Emits the assembly to a stream instead of a file. Used by tests and benchmarks so that
+        /// disk I/O does not sit inside the measured region and temp files are not required.
+        /// No <c>.runtimeconfig.json</c> is produced — there is no path to derive it from.
+        /// </summary>
+        public static ImmutableArray<Diagnostic> Emit(BoundProgram program, string moduleName, string[] references, Stream outputStream)
+        {
+            if (program.Diagnostics.Any())
+            {
+                return program.Diagnostics;
+            }
+
+            var emitter = new Emitter(moduleName, references);
+
+            return emitter.Emit(program, outputStream, runtimeConfigPath: null);
+        }
+
         public ImmutableArray<Diagnostic> Emit(BoundProgram program, string outputPath)
         {
             if (_diagnostics.Any())
@@ -468,6 +228,45 @@ namespace ProLang.Compiler
                 return [.. _diagnostics];
             }
 
+            BuildAssembly(program);
+
+            if (_diagnostics.Any())
+            {
+                return _diagnostics.ToImmutableArray();
+            }
+
+            _assemblyDefinition.Write(outputPath);
+            WriteRuntimeConfig(Path.ChangeExtension(outputPath, ".runtimeconfig.json"));
+
+            return _diagnostics.ToImmutableArray();
+        }
+
+        private ImmutableArray<Diagnostic> Emit(BoundProgram program, Stream outputStream, string? runtimeConfigPath)
+        {
+            if (_diagnostics.Any())
+            {
+                return [.. _diagnostics];
+            }
+
+            BuildAssembly(program);
+
+            if (_diagnostics.Any())
+            {
+                return _diagnostics.ToImmutableArray();
+            }
+
+            _assemblyDefinition.Write(outputStream);
+            WriteRuntimeConfig(runtimeConfigPath);
+
+            return _diagnostics.ToImmutableArray();
+        }
+
+        /// <summary>
+        /// Builds the in-memory assembly for <paramref name="program"/>. Shared by every
+        /// <c>Emit</c> overload; the caller decides where the result is written.
+        /// </summary>
+        private void BuildAssembly(BoundProgram program)
+        {
             var objectType = GetTypeReference(TypeSymbol.Any);
 
             //main class or running class
@@ -514,28 +313,31 @@ namespace ProLang.Compiler
             {
                 _assemblyDefinition.EntryPoint = _methods[program.MainFunction];
             }
+        }
 
-            _assemblyDefinition.Write(outputPath);
-
-            // Generate .runtimeconfig.json for running with dotnet
-            var runtimeConfigPath = Path.ChangeExtension(outputPath, ".runtimeconfig.json");
-            if (runtimeConfigPath != null)
+        /// <summary>
+        /// Writes the <c>.runtimeconfig.json</c> that lets <c>dotnet &lt;output&gt;.dll</c> resolve a
+        /// shared framework. A null path means the caller does not want one (stream emit).
+        /// </summary>
+        private static void WriteRuntimeConfig(string? runtimeConfigPath)
+        {
+            if (runtimeConfigPath == null)
             {
-                var runtimeConfig = """
-                    {
-                      "runtimeOptions": {
-                        "tfm": "net10.0",
-                        "framework": {
-                          "name": "Microsoft.NETCore.App",
-                          "version": "10.0.0"
-                        }
-                      }
-                    }
-                    """;
-                File.WriteAllText(runtimeConfigPath, runtimeConfig);
+                return;
             }
 
-            return _diagnostics.ToImmutableArray();
+            var runtimeConfig = """
+                {
+                  "runtimeOptions": {
+                    "tfm": "net10.0",
+                    "framework": {
+                      "name": "Microsoft.NETCore.App",
+                      "version": "10.0.0"
+                    }
+                  }
+                }
+                """;
+            File.WriteAllText(runtimeConfigPath, runtimeConfig);
         }
 
         private void EmitOutputHelpers()
@@ -562,9 +364,9 @@ namespace ProLang.Compiler
 
             // IL: __output = new StringBuilder();
             var sbConstructor = ResolveMethod("System.Text.StringBuilder", ".ctor", Array.Empty<string>());
-            EmitInstruction(initIL, OpCodes.Newobj, sbConstructor);
-            EmitInstruction(initIL, OpCodes.Stsfld, _outputField);
-            EmitInstruction(initIL, OpCodes.Ret);
+            initIL.Emit(OpCodes.Newobj, sbConstructor);
+            initIL.Emit(OpCodes.Stsfld, _outputField);
+            initIL.Emit(OpCodes.Ret);
 
             initMethod.Body.OptimizeMacros();
             _typeDefinition.Methods.Add(initMethod);
@@ -584,12 +386,12 @@ namespace ProLang.Compiler
             // IL: __output.AppendLine(Convert.ToString(value));
             var convertToString = ResolveMethod("System.Convert", "ToString", new[] { "System.Object" });
             var sbAppendLineMethod = ResolveMethod("System.Text.StringBuilder", "AppendLine", new[] { "System.String" });
-            EmitInstruction(appendIL, OpCodes.Ldsfld, _outputField);
-            EmitInstruction(appendIL, OpCodes.Ldarg_0);  // Load the object value
-            EmitInstruction(appendIL, OpCodes.Call, convertToString);  // Convert.ToString(obj) → string
-            EmitInstruction(appendIL, OpCodes.Callvirt, sbAppendLineMethod);
-            EmitInstruction(appendIL, OpCodes.Pop);  // Pop the StringBuilder return value
-            EmitInstruction(appendIL, OpCodes.Ret);
+            appendIL.Emit(OpCodes.Ldsfld, _outputField);
+            appendIL.Emit(OpCodes.Ldarg_0);  // Load the object value
+            appendIL.Emit(OpCodes.Call, convertToString);  // Convert.ToString(obj) → string
+            appendIL.Emit(OpCodes.Callvirt, sbAppendLineMethod);
+            appendIL.Emit(OpCodes.Pop);  // Pop the StringBuilder return value
+            appendIL.Emit(OpCodes.Ret);
 
             appendMethod.Body.OptimizeMacros();
             _typeDefinition.Methods.Add(appendMethod);
@@ -604,10 +406,10 @@ namespace ProLang.Compiler
 
             // IL: Console.WriteLine(__output.ToString());
             var toStringMethod = ResolveMethod("System.Text.StringBuilder", "ToString", Array.Empty<string>());
-            EmitInstruction(flushIL, OpCodes.Ldsfld, _outputField);
-            EmitInstruction(flushIL, OpCodes.Callvirt, toStringMethod);
-            EmitInstruction(flushIL, OpCodes.Call, _consoleWriteLineReference);
-            EmitInstruction(flushIL, OpCodes.Ret);
+            flushIL.Emit(OpCodes.Ldsfld, _outputField);
+            flushIL.Emit(OpCodes.Callvirt, toStringMethod);
+            flushIL.Emit(OpCodes.Call, _consoleWriteLineReference);
+            flushIL.Emit(OpCodes.Ret);
 
             flushMethod.Body.OptimizeMacros();
             _typeDefinition.Methods.Add(flushMethod);
@@ -640,7 +442,7 @@ namespace ProLang.Compiler
             var ilProcessor = mainMethod.Body.GetILProcessor();
 
             // 1. Call __InitializeOutput()
-            EmitInstruction(ilProcessor, OpCodes.Call, _outputInitMethod);
+            ilProcessor.Emit(OpCodes.Call, _outputInitMethod);
 
             // 2. Prepare to call __UserMain
             // If __UserMain expects args, pass the string[] directly
@@ -650,20 +452,20 @@ namespace ProLang.Compiler
             {
                 // __UserMain expects array<string> parameter - pass args directly
                 // (string[] from CLR maps directly to array<string> in ProLang IL)
-                EmitInstruction(ilProcessor, OpCodes.Ldarg_0);  // Load args parameter
-                EmitInstruction(ilProcessor, OpCodes.Call, _methods[userMainFunction]);
+                ilProcessor.Emit(OpCodes.Ldarg_0);  // Load args parameter
+                ilProcessor.Emit(OpCodes.Call, _methods[userMainFunction]);
             }
             else
             {
                 // __UserMain takes no parameters - just call it
-                EmitInstruction(ilProcessor, OpCodes.Call, _methods[userMainFunction]);
+                ilProcessor.Emit(OpCodes.Call, _methods[userMainFunction]);
             }
 
             // 3. Call __FlushOutput() to print accumulated output
-            EmitInstruction(ilProcessor, OpCodes.Call, _outputFlushMethod);
+            ilProcessor.Emit(OpCodes.Call, _outputFlushMethod);
 
             // 4. Return void
-            EmitInstruction(ilProcessor, OpCodes.Ret);
+            ilProcessor.Emit(OpCodes.Ret);
 
             mainMethod.Body.OptimizeMacros();
             _typeDefinition.Methods.Add(mainMethod);
@@ -710,12 +512,12 @@ namespace ProLang.Compiler
 
             if (method.ReturnType.FullName == "System.Void")
             {
-                EmitInstruction(ilProcessor, OpCodes.Ret);
+                ilProcessor.Emit(OpCodes.Ret);
             }
             else if (function.Type == TypeSymbol.Any && method.ReturnType.IsValueType)
             {
-                EmitInstruction(ilProcessor, OpCodes.Box, method.ReturnType);
-                EmitInstruction(ilProcessor, OpCodes.Ret);
+                ilProcessor.Emit(OpCodes.Box, method.ReturnType);
+                ilProcessor.Emit(OpCodes.Ret);
             }
 
             // Fixup goto instructions
@@ -729,40 +531,6 @@ namespace ProLang.Compiler
             }
 
             method.Body.OptimizeMacros();
-        }
-
-        private MethodReference GetGenericMethod(TypeReference type, string methodName, int parameterCount)
-        {
-            // Check cache first
-            var cacheKey = (type, methodName, parameterCount);
-            if (_methodCache.TryGetValue(cacheKey, out var cached))
-                return cached;
-
-            var typeDefinition = type.Resolve();
-            var methodDefinition = typeDefinition.Methods.First(m => m.Name == methodName && m.Parameters.Count == parameterCount);
-
-            var methodReference = _assemblyDefinition.MainModule.ImportReference(methodDefinition);
-
-            if (type is GenericInstanceType genericType)
-            {
-                var specializedMethod = new MethodReference(methodReference.Name, methodReference.ReturnType, genericType)
-                {
-                    HasThis = methodReference.HasThis,
-                    ExplicitThis = methodReference.ExplicitThis,
-                    CallingConvention = methodReference.CallingConvention
-                };
-
-                foreach (var parameter in methodReference.Parameters)
-                {
-                    specializedMethod.Parameters.Add(new ParameterDefinition(parameter.ParameterType));
-                }
-
-                _methodCache[cacheKey] = specializedMethod;
-                return specializedMethod;
-            }
-
-            _methodCache[cacheKey] = methodReference;
-            return methodReference;
         }
 
         private void EmitStatement(ILProcessor ilProcessor, BoundStatement node)
@@ -798,7 +566,7 @@ namespace ProLang.Compiler
 
             if (node.Expression.Type != TypeSymbol.Void)
             {
-                EmitInstruction(ilProcessor, OpCodes.Pop);
+                ilProcessor.Emit(OpCodes.Pop);
             }
         }
 
@@ -809,7 +577,7 @@ namespace ProLang.Compiler
                 EmitExpression(ilProcessor, node.Expression);
             }
 
-            EmitInstruction(ilProcessor, OpCodes.Ret);
+            ilProcessor.Emit(OpCodes.Ret);
         }
 
         private void EmitConditionalGotoStatement(ILProcessor ilProcessor, BoundConditionalGotoStatement node)
@@ -850,18 +618,18 @@ namespace ProLang.Compiler
 
             if (node.Variable.Type is StructSymbol)
             {
-                EmitInstruction(ilProcessor, OpCodes.Ldloca, variableDefinition);
-                EmitInstruction(ilProcessor, OpCodes.Initobj, typeReference);
+                ilProcessor.Emit(OpCodes.Ldloca, variableDefinition);
+                ilProcessor.Emit(OpCodes.Initobj, typeReference);
             }
 
             EmitExpression(ilProcessor, node.Initializer);
 
             if (node.Variable.Type == TypeSymbol.Any && typeReference.IsValueType)
             {
-                EmitInstruction(ilProcessor, OpCodes.Box, typeReference);
+                ilProcessor.Emit(OpCodes.Box, typeReference);
             }
 
-            EmitInstruction(ilProcessor, OpCodes.Stloc, variableDefinition);
+            ilProcessor.Emit(OpCodes.Stloc, variableDefinition);
         }
 
 
@@ -918,7 +686,7 @@ namespace ProLang.Compiler
                     EmitArrayNewExpression(ilProcessor, (BoundArrayNewExpression)node);
                     break;
                 case BoundNodeKind.BoundEnumMemberExpression:
-                    EmitInstruction(ilProcessor, OpCodes.Ldc_I4, ((BoundEnumMemberExpression)node).Member.Value);
+                    ilProcessor.Emit(OpCodes.Ldc_I4, ((BoundEnumMemberExpression)node).Member.Value);
                     break;
                 default:
                     throw new NotSupportedException($"Unexpected node kind {node.Kind}");
@@ -937,7 +705,7 @@ namespace ProLang.Compiler
                 EmitExpression(ilProcessor, node.RHS);
                 EmitStelemForType(ilProcessor, elementTypeRef);
                 // stelem is void; push null as dummy return value
-                EmitInstruction(ilProcessor, OpCodes.Ldnull);
+                ilProcessor.Emit(OpCodes.Ldnull);
             }
             else
             {
@@ -946,8 +714,8 @@ namespace ProLang.Compiler
                 EmitExpression(ilProcessor, node.RHS);
                 var collectionType = GetTypeReference(node.LHS.Type);
                 var setMethod = GetGenericMethod(collectionType, "set_Item", 2);
-                EmitInstruction(ilProcessor, OpCodes.Callvirt, setMethod);
-                EmitInstruction(ilProcessor, OpCodes.Ldnull);
+                ilProcessor.Emit(OpCodes.Callvirt, setMethod);
+                ilProcessor.Emit(OpCodes.Ldnull);
             }
         }
 
@@ -967,7 +735,7 @@ namespace ProLang.Compiler
             {
                 var collectionType = GetTypeReference(node.Expression.Type);
                 var getMethod = GetGenericMethod(collectionType, "get_Item", 1);
-                EmitInstruction(ilProcessor, OpCodes.Callvirt, getMethod);
+                ilProcessor.Emit(OpCodes.Callvirt, getMethod);
             }
         }
 
@@ -977,95 +745,14 @@ namespace ProLang.Compiler
             var constructor = GetGenericMethod(mapType, ".ctor", 0);
             var addMethod = GetGenericMethod(mapType, "Add", 2);
 
-            EmitInstruction(ilProcessor, OpCodes.Newobj, constructor);
+            ilProcessor.Emit(OpCodes.Newobj, constructor);
             foreach (var entry in node.Entries)
             {
-                EmitInstruction(ilProcessor, OpCodes.Dup);
+                ilProcessor.Emit(OpCodes.Dup);
                 EmitExpression(ilProcessor, entry.Key);
                 EmitExpression(ilProcessor, entry.Value);
-                EmitInstruction(ilProcessor, OpCodes.Callvirt, addMethod);
+                ilProcessor.Emit(OpCodes.Callvirt, addMethod);
             }
-        }
-
-        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode)
-        {
-            ilProcessor.Emit(opCode);
-        }
-
-        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, MethodReference method)
-        {
-            ilProcessor.Emit(opCode, method);
-        }
-
-        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, TypeReference type)
-        {
-            ilProcessor.Emit(opCode, type);
-        }
-
-        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, VariableDefinition variable)
-        {
-            ilProcessor.Emit(opCode, variable);
-        }
-
-        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, ParameterDefinition parameter)
-        {
-            ilProcessor.Emit(opCode, parameter);
-        }
-
-        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, int value)
-        {
-            ilProcessor.Emit(opCode, value);
-        }
-
-        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, uint value)
-        {
-            ilProcessor.Emit(opCode, value);
-        }
-
-        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, short value)
-        {
-            ilProcessor.Emit(opCode, value);
-        }
-
-        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, ushort value)
-        {
-            ilProcessor.Emit(opCode, value);
-        }
-
-        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, byte value)
-        {
-            ilProcessor.Emit(opCode, value);
-        }
-
-        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, sbyte value)
-        {
-            ilProcessor.Emit(opCode, value);
-        }
-
-        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, long value)
-        {
-            ilProcessor.Emit(opCode, value);
-        }
-
-        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, string value)
-        {
-            ilProcessor.Emit(opCode, value);
-        }
-
-
-        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, float value)
-        {
-            ilProcessor.Emit(opCode, value);
-        }
-
-        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, double value)
-        {
-            ilProcessor.Emit(opCode, value);
-        }
-
-        private void EmitInstruction(ILProcessor ilProcessor, OpCode opCode, FieldReference field)
-        {
-            ilProcessor.Emit(opCode, field);
         }
 
         private void EmitArrayExpression(ILProcessor ilProcessor, BoundArrayExpression node)
@@ -1074,13 +761,13 @@ namespace ProLang.Compiler
                 ? GetTypeReference(node.Type.TypeArguments[0])
                 : GetCachedType("System.Object");
 
-            EmitInstruction(ilProcessor, OpCodes.Ldc_I4, node.Elements.Length);
-            EmitInstruction(ilProcessor, OpCodes.Newarr, elementTypeRef);
+            ilProcessor.Emit(OpCodes.Ldc_I4, node.Elements.Length);
+            ilProcessor.Emit(OpCodes.Newarr, elementTypeRef);
 
             for (int i = 0; i < node.Elements.Length; i++)
             {
-                EmitInstruction(ilProcessor, OpCodes.Dup);
-                EmitInstruction(ilProcessor, OpCodes.Ldc_I4, i);
+                ilProcessor.Emit(OpCodes.Dup);
+                ilProcessor.Emit(OpCodes.Ldc_I4, i);
                 EmitExpression(ilProcessor, node.Elements[i]);
                 EmitStelemForType(ilProcessor, elementTypeRef);
             }
@@ -1090,7 +777,7 @@ namespace ProLang.Compiler
         {
             var elementTypeRef = GetTypeReference(node.ElementType);
             EmitExpression(ilProcessor, node.SizeExpression);
-            EmitInstruction(ilProcessor, OpCodes.Newarr, elementTypeRef);
+            ilProcessor.Emit(OpCodes.Newarr, elementTypeRef);
         }
 
         private void EmitStelemForType(ILProcessor ilProcessor, TypeReference elementType)
@@ -1160,24 +847,24 @@ namespace ProLang.Compiler
             {
                 // Box value types before calling ToString()
                 if (IsValueType(fromType))
-                    EmitInstruction(ilProcessor, OpCodes.Box, GetTypeReference(fromType));
+                    ilProcessor.Emit(OpCodes.Box, GetTypeReference(fromType));
 
                 if (fromType != TypeSymbol.String)
                 {
                     var toStringMethod = GetTypeReference(TypeSymbol.Any).Resolve().Methods.First(m => m.Name == "ToString" && m.Parameters.Count == 0);
-                    EmitInstruction(ilProcessor, OpCodes.Callvirt, _assemblyDefinition.MainModule.ImportReference(toStringMethod));
+                    ilProcessor.Emit(OpCodes.Callvirt, _assemblyDefinition.MainModule.ImportReference(toStringMethod));
                 }
             }
             else if (fromType == TypeSymbol.Any || toType == TypeSymbol.Any)
             {
                 if (toType == TypeSymbol.Any && IsValueType(fromType))
-                    EmitInstruction(ilProcessor, OpCodes.Box, GetTypeReference(fromType));
+                    ilProcessor.Emit(OpCodes.Box, GetTypeReference(fromType));
                 else if (fromType == TypeSymbol.Any && IsValueType(toType))
-                    EmitInstruction(ilProcessor, OpCodes.Unbox_Any, GetTypeReference(toType));
+                    ilProcessor.Emit(OpCodes.Unbox_Any, GetTypeReference(toType));
             }
             else if (IsNumericType(fromType) && IsNumericType(toType))
             {
-                EmitInstruction(ilProcessor, NumericConvOpCode(toType));
+                ilProcessor.Emit(NumericConvOpCode(toType));
             }
         }
 
@@ -1220,25 +907,34 @@ namespace ProLang.Compiler
             if (targetType == TypeSymbol.Int || targetType == TypeSymbol.Bool)
             {
                 // Unbox from object to value type - throws InvalidCastException if type mismatch
-                EmitInstruction(ilProcessor, OpCodes.Unbox_Any, GetTypeReference(targetType));
+                ilProcessor.Emit(OpCodes.Unbox_Any, GetTypeReference(targetType));
             }
             else if (targetType == TypeSymbol.String)
             {
                 // Cast to string - value is already object
-                EmitInstruction(ilProcessor, OpCodes.Isinst, GetTypeReference(targetType));
+                ilProcessor.Emit(OpCodes.Isinst, GetTypeReference(targetType));
             }
             else if (targetType.Name == "array" || targetType.Name == "map")
             {
                 // For collection types, just cast with isinst (reference types)
-                EmitInstruction(ilProcessor, OpCodes.Isinst, GetTypeReference(targetType));
+                ilProcessor.Emit(OpCodes.Isinst, GetTypeReference(targetType));
             }
             else
             {
                 // For other types (structs, etc.), use isinst
-                EmitInstruction(ilProcessor, OpCodes.Isinst, GetTypeReference(targetType));
+                ilProcessor.Emit(OpCodes.Isinst, GetTypeReference(targetType));
             }
         }
 
+        /// <summary>
+        /// Emits a call: arguments first, then dispatch on what kind of function is being called.
+        /// </summary>
+        /// <remarks>
+        /// Three kinds of callee, checked in order of specificity:
+        /// a builtin with a dedicated IL sequence (see <see cref="IntrinsicRegistry"/>), an
+        /// interop symbol backed by reflection, or an ordinary user function emitted into this
+        /// same assembly.
+        /// </remarks>
         private void EmitCallExpression(ILProcessor ilProcessor, BoundCallExpression node)
         {
             foreach (var argument in node.Arguments)
@@ -1246,302 +942,41 @@ namespace ProLang.Compiler
                 EmitExpression(ilProcessor, argument);
             }
 
-            if (node.Function == BuiltInFunctions.ReadInput)
+            // print() is the one builtin that cannot live in the registry: it routes through
+            // output-collection infrastructure that is synthesised into the assembly being
+            // emitted, so its target does not exist until EmitOutputHelpers has run.
+            if (node.Function == BuiltInFunctions.Print)
             {
-                EmitInstruction(ilProcessor, OpCodes.Call, _consoleReadLineReference);
-            }
-            else if (node.Function == BuiltInFunctions.Print)
-            {
-                // Route print() through output collection infrastructure
-                EmitInstruction(ilProcessor, OpCodes.Call, _outputAppendMethod);
-            }
-            else if (node.Function == BuiltInFunctions.Min)
-            {
-                EmitInstruction(ilProcessor, OpCodes.Call, _minReference);
-            }
-            else if (node.Function == BuiltInFunctions.Max)
-            {
-                EmitInstruction(ilProcessor, OpCodes.Call, _maxReference);
-            }
-            else if (node.Function == BuiltInFunctions.ArrayLength)
-            {
-                // arr is already on stack (first argument); emit ldlen + conv.i4
-                EmitInstruction(ilProcessor, OpCodes.Ldlen);
-                ilProcessor.Emit(OpCodes.Conv_I4);
-            }
-            else if (node.Function == BuiltInFunctions.StringLength)
-            {
-                var lengthMethod = ResolveMethod("System.String", "get_Length", Array.Empty<string>());
-                if (lengthMethod != null)
+                if (_outputAppendMethod == null)
                 {
-                    EmitInstruction(ilProcessor, OpCodes.Callvirt, lengthMethod);
+                    throw new InvalidOperationException(
+                        "Output infrastructure must be emitted before any call to print().");
                 }
-            }
-            else if (node.Function == BuiltInFunctions.StringCharAt)
-            {
-                var charAtMethod = ResolveMethod("System.String", "get_Chars", new[] { "System.Int32" });
-                if (charAtMethod != null)
-                {
-                    EmitInstruction(ilProcessor, OpCodes.Callvirt, charAtMethod);
 
-                    // Convert char to string
-                    // We need to call string.Create or use a static method to convert char to string
-                    // For now, use char.ToString() which should work
-                    var charType = ResolveType("System.Char");
-                    if (charType != null)
-                    {
-                        // Call the ToString method on the char value (non-virtual call for value types)
-                        var toStringMethod = ResolveMethod("System.Char", "ToString", Array.Empty<string>());
-                        if (toStringMethod != null)
-                        {
-                            // For value types, we need to use Call, not Callvirt
-                            // But first we need to use the proper overload or convert differently
-                            // Use string.Create or string.Concat approach
-                            // Actually, let's use System.Convert.ToString(object)
-                            var convertMethod = ResolveMethod("System.Convert", "ToString", new[] { "System.Object" });
-                            if (convertMethod != null)
-                            {
-                                // Box the char first
-                                EmitInstruction(ilProcessor, OpCodes.Box, charType);
-                                EmitInstruction(ilProcessor, OpCodes.Call, convertMethod);
-                            }
-                            else
-                            {
-                                // Fallback: just call ToString on the char
-                                EmitInstruction(ilProcessor, OpCodes.Call, toStringMethod);
-                            }
-                        }
-                    }
-                }
+                ilProcessor.Emit(OpCodes.Call, _outputAppendMethod);
+                return;
             }
-            else if (node.Function == BuiltInFunctions.StringSubstring)
-            {
-                var substringMethod = ResolveMethod("System.String", "Substring", new[] { "System.Int32", "System.Int32" });
-                if (substringMethod != null)
-                {
-                    // Stack: [string, start, end]  (ProLang uses end-exclusive index)
-                    // .NET Substring(start, length) needs length = end - start
-                    var intType = GetTypeReference(TypeSymbol.Int);
-                    var tempEnd = new VariableDefinition(intType);
-                    var tempStart = new VariableDefinition(intType);
-                    ilProcessor.Body.Variables.Add(tempEnd);
-                    ilProcessor.Body.Variables.Add(tempStart);
-                    EmitInstruction(ilProcessor, OpCodes.Stloc, tempEnd);
-                    EmitInstruction(ilProcessor, OpCodes.Stloc, tempStart);
-                    EmitInstruction(ilProcessor, OpCodes.Ldloc, tempStart);
-                    EmitInstruction(ilProcessor, OpCodes.Ldloc, tempEnd);
-                    EmitInstruction(ilProcessor, OpCodes.Ldloc, tempStart);
-                    EmitInstruction(ilProcessor, OpCodes.Sub);
-                    EmitInstruction(ilProcessor, OpCodes.Callvirt, substringMethod);
-                }
-            }
-            else if (node.Function == BuiltInFunctions.StringIndexOf)
-            {
-                var indexOfMethod = ResolveMethod("System.String", "IndexOf", new[] { "System.String" });
-                if (indexOfMethod != null)
-                {
-                    EmitInstruction(ilProcessor, OpCodes.Callvirt, indexOfMethod);
-                }
-            }
-            else if (node.Function == BuiltInFunctions.FileExists)
-            {
-                var method = ResolveMethod("System.IO.File", "Exists", new[] { "System.String" });
-                if (method != null)
-                    EmitInstruction(ilProcessor, OpCodes.Call, method);
-            }
-            else if (node.Function == BuiltInFunctions.ReadFile)
-            {
-                var method = ResolveMethod("System.IO.File", "ReadAllText", new[] { "System.String" });
-                if (method != null)
-                    EmitInstruction(ilProcessor, OpCodes.Call, method);
-            }
-            else if (node.Function == BuiltInFunctions.ReadFileBytes)
-            {
-                // File.ReadAllBytes(path) returns byte[] which is array<uint8> at the IL level.
-                var method = ResolveMethod("System.IO.File", "ReadAllBytes", new[] { "System.String" });
-                if (method != null)
-                    EmitInstruction(ilProcessor, OpCodes.Call, method);
-            }
-            else if (node.Function == BuiltInFunctions.WriteFile)
-            {
-                var method = ResolveMethod("System.IO.File", "WriteAllText", new[] { "System.String", "System.String" });
-                if (method != null)
-                    EmitInstruction(ilProcessor, OpCodes.Call, method);
-            }
-            else if (node.Function == BuiltInFunctions.ConsoleWrite)
-            {
-                // Stack: [text]  — pop and skip when stdout is redirected.
-                var isOutRedir  = ResolveMethod("System.Console", "get_IsOutputRedirected", Array.Empty<string>());
-                var writeMethod = ResolveMethod("System.Console", "Write", new[] { "System.String" });
-                if (isOutRedir != null && writeMethod != null)
-                {
-                    var doWrite = ilProcessor.Create(OpCodes.Nop);
-                    var done    = ilProcessor.Create(OpCodes.Nop);
-                    EmitInstruction(ilProcessor, OpCodes.Call, isOutRedir);
-                    ilProcessor.Emit(OpCodes.Brfalse, doWrite);
-                    ilProcessor.Emit(OpCodes.Pop);                          // discard text arg
-                    ilProcessor.Emit(OpCodes.Br, done);
-                    ilProcessor.Append(doWrite);
-                    EmitInstruction(ilProcessor, OpCodes.Call, writeMethod);
-                    ilProcessor.Append(done);
-                }
-                else if (writeMethod != null)
-                {
-                    EmitInstruction(ilProcessor, OpCodes.Call, writeMethod);
-                }
-            }
-            else if (node.Function == BuiltInFunctions.ConsoleSetCursor)
-            {
-                // Stack: [left, top]  — pop both and skip when stdout is redirected.
-                var isOutRedir   = ResolveMethod("System.Console", "get_IsOutputRedirected", Array.Empty<string>());
-                var setCursorPos = ResolveMethod("System.Console", "SetCursorPosition", new[] { "System.Int32", "System.Int32" });
-                if (isOutRedir != null && setCursorPos != null)
-                {
-                    var doSet = ilProcessor.Create(OpCodes.Nop);
-                    var done  = ilProcessor.Create(OpCodes.Nop);
-                    EmitInstruction(ilProcessor, OpCodes.Call, isOutRedir);
-                    ilProcessor.Emit(OpCodes.Brfalse, doSet);
-                    ilProcessor.Emit(OpCodes.Pop);                          // discard top
-                    ilProcessor.Emit(OpCodes.Pop);                          // discard left
-                    ilProcessor.Emit(OpCodes.Br, done);
-                    ilProcessor.Append(doSet);
-                    EmitInstruction(ilProcessor, OpCodes.Call, setCursorPos);
-                    ilProcessor.Append(done);
-                }
-                else if (setCursorPos != null)
-                {
-                    EmitInstruction(ilProcessor, OpCodes.Call, setCursorPos);
-                }
-            }
-            else if (node.Function == BuiltInFunctions.ConsoleHideCursor)
-            {
-                // No args — just guard with IsOutputRedirected.
-                var isOutRedir      = ResolveMethod("System.Console", "get_IsOutputRedirected", Array.Empty<string>());
-                var setCursorVisble = ResolveMethod("System.Console", "set_CursorVisible", new[] { "System.Boolean" });
-                if (isOutRedir != null && setCursorVisble != null)
-                {
-                    var skip = ilProcessor.Create(OpCodes.Nop);
-                    EmitInstruction(ilProcessor, OpCodes.Call, isOutRedir);
-                    ilProcessor.Emit(OpCodes.Brtrue, skip);
-                    EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
-                    EmitInstruction(ilProcessor, OpCodes.Call, setCursorVisble);
-                    ilProcessor.Append(skip);
-                }
-            }
-            else if (node.Function == BuiltInFunctions.ConsoleSetColor)
-            {
-                // Stack: [color] — pop and skip when stdout is redirected.
-                var isOutRedir   = ResolveMethod("System.Console", "get_IsOutputRedirected", Array.Empty<string>());
-                var setFgColor   = ResolveMethod("System.Console", "set_ForegroundColor", new[] { "System.ConsoleColor" });
-                if (isOutRedir != null && setFgColor != null)
-                {
-                    var doSet = ilProcessor.Create(OpCodes.Nop);
-                    var done  = ilProcessor.Create(OpCodes.Nop);
-                    EmitInstruction(ilProcessor, OpCodes.Call, isOutRedir);
-                    ilProcessor.Emit(OpCodes.Brfalse, doSet);
-                    ilProcessor.Emit(OpCodes.Pop);
-                    ilProcessor.Emit(OpCodes.Br, done);
-                    ilProcessor.Append(doSet);
-                    EmitInstruction(ilProcessor, OpCodes.Call, setFgColor);
-                    ilProcessor.Append(done);
-                }
-                else if (setFgColor != null)
-                {
-                    EmitInstruction(ilProcessor, OpCodes.Call, setFgColor);
-                }
-            }
-            else if (node.Function == BuiltInFunctions.ConsoleResetColor)
-            {
-                // No args — guard with IsOutputRedirected.
-                var isOutRedir    = ResolveMethod("System.Console", "get_IsOutputRedirected", Array.Empty<string>());
-                var resetColorMth = ResolveMethod("System.Console", "ResetColor", Array.Empty<string>());
-                if (isOutRedir != null && resetColorMth != null)
-                {
-                    var skip = ilProcessor.Create(OpCodes.Nop);
-                    EmitInstruction(ilProcessor, OpCodes.Call, isOutRedir);
-                    ilProcessor.Emit(OpCodes.Brtrue, skip);
-                    EmitInstruction(ilProcessor, OpCodes.Call, resetColorMth);
-                    ilProcessor.Append(skip);
-                }
-                else if (resetColorMth != null)
-                {
-                    EmitInstruction(ilProcessor, OpCodes.Call, resetColorMth);
-                }
-            }
-            else if (node.Function == BuiltInFunctions.ConsoleKeyAvailable)
-            {
-                // Return false when stdin is redirected (non-interactive context).
-                // if (Console.IsInputRedirected) push false; else push Console.KeyAvailable
-                var isInputRedirected = ResolveMethod("System.Console", "get_IsInputRedirected", Array.Empty<string>());
-                var keyAvailableMethod = ResolveMethod("System.Console", "get_KeyAvailable", Array.Empty<string>());
-                if (isInputRedirected != null && keyAvailableMethod != null)
-                {
-                    var callReal = ilProcessor.Create(OpCodes.Nop);
-                    var done     = ilProcessor.Create(OpCodes.Nop);
-                    EmitInstruction(ilProcessor, OpCodes.Call, isInputRedirected);
-                    ilProcessor.Emit(OpCodes.Brfalse, callReal);
-                    EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);  // redirected → false
-                    ilProcessor.Emit(OpCodes.Br, done);
-                    ilProcessor.Append(callReal);
-                    EmitInstruction(ilProcessor, OpCodes.Call, keyAvailableMethod);
-                    ilProcessor.Append(done);
-                }
-                else if (keyAvailableMethod != null)
-                {
-                    EmitInstruction(ilProcessor, OpCodes.Call, keyAvailableMethod);
-                }
-            }
-            else if (node.Function == BuiltInFunctions.ConsoleReadKey)
-            {
-                // Console.ReadKey(true) returns ConsoleKeyInfo (value type); must use ldloca to call instance method
-                var keyInfoType = ResolveType("System.ConsoleKeyInfo");
-                var tempVar = new VariableDefinition(keyInfoType);
-                ilProcessor.Body.Variables.Add(tempVar);
 
-                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_1); // intercept = true
-                var readKeyMethod = ResolveMethod("System.Console", "ReadKey", new[] { "System.Boolean" });
-                if (readKeyMethod != null) EmitInstruction(ilProcessor, OpCodes.Call, readKeyMethod);
+            if (IntrinsicRegistry.TryGetEmitter(node.Function, out var intrinsic))
+            {
+                intrinsic(new IntrinsicContext(ilProcessor, _references, _diagnostics, GetTypeReference));
+                return;
+            }
 
-                EmitInstruction(ilProcessor, OpCodes.Stloc, tempVar);
-                EmitInstruction(ilProcessor, OpCodes.Ldloca, tempVar);
+            switch (node.Function)
+            {
+                // An enum member is a compile-time constant; there is nothing to call.
+                case DotNetEnumConstantSymbol enumConstant:
+                    ilProcessor.Emit(OpCodes.Ldc_I4, enumConstant.Value);
+                    return;
 
-                var getKeyMethod = ResolveMethod("System.ConsoleKeyInfo", "get_Key", Array.Empty<string>());
-                if (getKeyMethod != null) EmitInstruction(ilProcessor, OpCodes.Call, getKeyMethod);
-                ilProcessor.Emit(OpCodes.Conv_I4);
-            }
-            else if (node.Function == BuiltInFunctions.Random)
-            {
-                // Stack: [maxValue]
-                // Emit: Random.Shared.Next(maxValue)
-                // Need to save maxValue, load Random.Shared instance, reload maxValue, then call.
-                var int32Type = ResolveType("System.Int32");
-                var tempMax = new VariableDefinition(int32Type!);
-                ilProcessor.Body.Variables.Add(tempMax);
-                EmitInstruction(ilProcessor, OpCodes.Stloc, tempMax);
-                var getShared = ResolveMethod("System.Random", "get_Shared", Array.Empty<string>());
-                if (getShared != null) EmitInstruction(ilProcessor, OpCodes.Call, getShared);
-                EmitInstruction(ilProcessor, OpCodes.Ldloc, tempMax);
-                var nextMethod = ResolveMethod("System.Random", "Next", new[] { "System.Int32" });
-                if (nextMethod != null) EmitInstruction(ilProcessor, OpCodes.Callvirt, nextMethod);
-            }
-            else if (node.Function == BuiltInFunctions.ThreadSleep)
-            {
-                var method = ResolveMethod("System.Threading.Thread", "Sleep", new[] { "System.Int32" });
-                if (method != null) EmitInstruction(ilProcessor, OpCodes.Call, method);
-            }
-            else if (node.Function is DotNetEnumConstantSymbol enumConst)
-            {
-                EmitInstruction(ilProcessor, OpCodes.Ldc_I4, enumConst.Value);
-            }
-            else if (node.Function is DotNetFunctionSymbol dotNetFunc)
-            {
-                EmitDotNetCallExpression(ilProcessor, dotNetFunc);
-            }
-            else
-            {
-                var methodDefinition = _methods[node.Function];
+                case DotNetFunctionSymbol dotNetFunction:
+                    EmitDotNetCallExpression(ilProcessor, dotNetFunction);
+                    return;
 
-                EmitInstruction(ilProcessor, OpCodes.Call, methodDefinition);
+                default:
+                    ilProcessor.Emit(OpCodes.Call, _methods[node.Function]);
+                    return;
             }
         }
 
@@ -1555,12 +990,12 @@ namespace ProLang.Compiler
                 // Resolve and emit constructor call
                 var typeRef = ResolveDotNetType(dotNetFunc.DeclaringType);
                 var methodRef = ResolveDotNetConstructor(dotNetFunc.ConstructorInfo, typeRef);
-                EmitInstruction(ilProcessor, OpCodes.Newobj, methodRef);
+                ilProcessor.Emit(OpCodes.Newobj, methodRef);
                 
                 // Box value types if the return type is Any (object)
                 if (dotNetFunc.Type == TypeSymbol.Any && dotNetFunc.DeclaringType.IsValueType)
                 {
-                    EmitInstruction(ilProcessor, OpCodes.Box, typeRef);
+                    ilProcessor.Emit(OpCodes.Box, typeRef);
                 }
                 return;
             }
@@ -1572,18 +1007,18 @@ namespace ProLang.Compiler
 
                 if (dotNetFunc.IsStatic)
                 {
-                    EmitInstruction(ilProcessor, OpCodes.Call, methodRef);
+                    ilProcessor.Emit(OpCodes.Call, methodRef);
                 }
                 else
                 {
-                    EmitInstruction(ilProcessor, OpCodes.Callvirt, methodRef);
+                    ilProcessor.Emit(OpCodes.Callvirt, methodRef);
                 }
                 
                 // Box value types if the return type is Any (object)
                 if (dotNetFunc.Type == TypeSymbol.Any && dotNetFunc.MethodInfo.ReturnType.IsValueType)
                 {
                     var returnTypeRef = ResolveDotNetType(dotNetFunc.MethodInfo.ReturnType);
-                    EmitInstruction(ilProcessor, OpCodes.Box, returnTypeRef);
+                    ilProcessor.Emit(OpCodes.Box, returnTypeRef);
                 }
                 return;
             }
@@ -1599,13 +1034,13 @@ namespace ProLang.Compiler
             {
                 var typeRef = ResolveDotNetType(dotNetFunc.DeclaringType);
                 var fieldRef = new FieldReference(field.Name, ResolveDotNetTypeAsTypeRef(field.FieldType), typeRef);
-                EmitInstruction(ilProcessor, OpCodes.Ldsfld, _assemblyDefinition.MainModule.ImportReference(fieldRef));
+                ilProcessor.Emit(OpCodes.Ldsfld, _assemblyDefinition.MainModule.ImportReference(fieldRef));
                 
                 // Box value types if the return type is Any (object)
                 if (dotNetFunc.Type == TypeSymbol.Any && field.FieldType.IsValueType)
                 {
                     var fieldTypeRef = ResolveDotNetType(field.FieldType);
-                    EmitInstruction(ilProcessor, OpCodes.Box, fieldTypeRef);
+                    ilProcessor.Emit(OpCodes.Box, fieldTypeRef);
                 }
                 return;
             }
@@ -1615,13 +1050,13 @@ namespace ProLang.Compiler
             {
                 var typeRef = ResolveDotNetType(dotNetFunc.DeclaringType);
                 var methodRef = ResolveDotNetMethod(property.GetMethod, typeRef);
-                EmitInstruction(ilProcessor, OpCodes.Call, methodRef);
+                ilProcessor.Emit(OpCodes.Call, methodRef);
                 
                 // Box value types if the return type is Any (object)
                 if (dotNetFunc.Type == TypeSymbol.Any && property.PropertyType.IsValueType)
                 {
                     var propTypeRef = ResolveDotNetType(property.PropertyType);
-                    EmitInstruction(ilProcessor, OpCodes.Box, propTypeRef);
+                    ilProcessor.Emit(OpCodes.Box, propTypeRef);
                 }
                 return;
             }
@@ -1635,14 +1070,11 @@ namespace ProLang.Compiler
         private TypeReference ResolveDotNetType(Type type)
         {
             // Try to find in loaded assemblies
-            var typeRef = _assemblies
-                .SelectMany(a => a.Modules)
-                .SelectMany(m => m.Types)
-                .FirstOrDefault(t => t.FullName == type.FullName);
+            TypeReference? typeRef = _references.FindTypeDefinition(type.FullName!);
 
             if (typeRef != null)
             {
-                return _assemblyDefinition.MainModule.ImportReference(typeRef);
+                return _references.Import(typeRef);
             }
 
             // Try to resolve from runtime
@@ -1652,12 +1084,12 @@ namespace ProLang.Compiler
                 if (!string.IsNullOrEmpty(assemblyLocation) && File.Exists(assemblyLocation))
                 {
                     var runtimeAssembly = AssemblyDefinition.ReadAssembly(assemblyLocation);
-                    _assemblies.Add(runtimeAssembly);
-                    
+                    _references.AddAssembly(runtimeAssembly);
+
                     typeRef = runtimeAssembly.MainModule.Types.FirstOrDefault(t => t.FullName == type.FullName);
                     if (typeRef != null)
                     {
-                        return _assemblyDefinition.MainModule.ImportReference(typeRef);
+                        return _references.Import(typeRef);
                     }
                 }
             }
@@ -1675,10 +1107,7 @@ namespace ProLang.Compiler
         private MethodReference ResolveDotNetMethod(System.Reflection.MethodInfo method, TypeReference typeRef)
         {
             // Find the TypeDefinition from loaded assemblies (avoid using typeRef.Resolve() which uses Cecil's resolver)
-            TypeDefinition? typeDef = _assemblies
-                .SelectMany(a => a.Modules)
-                .SelectMany(m => m.Types)
-                .FirstOrDefault(t => t.FullName == typeRef.FullName);
+            TypeDefinition? typeDef = _references.FindTypeDefinition(typeRef.FullName);
 
             if (typeDef == null)
             {
@@ -1720,10 +1149,7 @@ namespace ProLang.Compiler
                 // Check base type - search in loaded assemblies
                 if (currentTypeDef.BaseType != null)
                 {
-                    currentTypeDef = _assemblies
-                        .SelectMany(a => a.Modules)
-                        .SelectMany(m => m.Types)
-                        .FirstOrDefault(t => t.FullName == currentTypeDef.BaseType.FullName);
+                    currentTypeDef = _references.FindTypeDefinition(currentTypeDef.BaseType.FullName);
                 }
                 else
                 {
@@ -1779,7 +1205,7 @@ namespace ProLang.Compiler
                 {
                     if (node.Left.Type == TypeSymbol.Any || node.Left.Type == TypeSymbol.Int || node.Left.Type == TypeSymbol.Bool)
                     {
-                        EmitInstruction(ilProcessor, OpCodes.Box, GetTypeReference(node.Left.Type));
+                        ilProcessor.Emit(OpCodes.Box, GetTypeReference(node.Left.Type));
                     }
                 }
             }
@@ -1793,7 +1219,7 @@ namespace ProLang.Compiler
                 {
                     if (node.Right.Type == TypeSymbol.Any || node.Right.Type == TypeSymbol.Int || node.Right.Type == TypeSymbol.Bool)
                     {
-                        EmitInstruction(ilProcessor, OpCodes.Box, GetTypeReference(node.Right.Type));
+                        ilProcessor.Emit(OpCodes.Box, GetTypeReference(node.Right.Type));
                     }
                 }
             }
@@ -1802,32 +1228,32 @@ namespace ProLang.Compiler
             {
                 if (node.Op.Type == TypeSymbol.String)
                 {
-                    EmitInstruction(ilProcessor, OpCodes.Call, _stringConcatReference);
+                    ilProcessor.Emit(OpCodes.Call, _stringConcatReference);
                 }
                 else
                 {
-                    EmitInstruction(ilProcessor, OpCodes.Add);
+                    ilProcessor.Emit(OpCodes.Add);
                 }
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.Subtraction)
             {
-                EmitInstruction(ilProcessor, OpCodes.Sub);
+                ilProcessor.Emit(OpCodes.Sub);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.Multiplication)
             {
-                EmitInstruction(ilProcessor, OpCodes.Mul);
+                ilProcessor.Emit(OpCodes.Mul);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.Division)
             {
-                EmitInstruction(ilProcessor, OpCodes.Div);
+                ilProcessor.Emit(OpCodes.Div);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.LogicalAnd)
             {
-                EmitInstruction(ilProcessor, OpCodes.And);
+                ilProcessor.Emit(OpCodes.And);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.LogicalOr)
             {
-                EmitInstruction(ilProcessor, OpCodes.Or);
+                ilProcessor.Emit(OpCodes.Or);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.Equals)
             {
@@ -1835,13 +1261,13 @@ namespace ProLang.Compiler
                 {
                     var eqMethod = ResolveMethod("System.String", "op_Equality", new[] { "System.String", "System.String" });
                     if (eqMethod != null)
-                        EmitInstruction(ilProcessor, OpCodes.Call, eqMethod);
+                        ilProcessor.Emit(OpCodes.Call, eqMethod);
                     else
-                        EmitInstruction(ilProcessor, OpCodes.Ceq);
+                        ilProcessor.Emit(OpCodes.Ceq);
                 }
                 else
                 {
-                    EmitInstruction(ilProcessor, OpCodes.Ceq);
+                    ilProcessor.Emit(OpCodes.Ceq);
                 }
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.NotEquals)
@@ -1850,64 +1276,64 @@ namespace ProLang.Compiler
                 {
                     var neqMethod = ResolveMethod("System.String", "op_Inequality", new[] { "System.String", "System.String" });
                     if (neqMethod != null)
-                        EmitInstruction(ilProcessor, OpCodes.Call, neqMethod);
+                        ilProcessor.Emit(OpCodes.Call, neqMethod);
                     else
                     {
-                        EmitInstruction(ilProcessor, OpCodes.Ceq);
-                        EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
-                        EmitInstruction(ilProcessor, OpCodes.Ceq);
+                        ilProcessor.Emit(OpCodes.Ceq);
+                        ilProcessor.Emit(OpCodes.Ldc_I4_0);
+                        ilProcessor.Emit(OpCodes.Ceq);
                     }
                 }
                 else
                 {
-                    EmitInstruction(ilProcessor, OpCodes.Ceq);
-                    EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
-                    EmitInstruction(ilProcessor, OpCodes.Ceq);
+                    ilProcessor.Emit(OpCodes.Ceq);
+                    ilProcessor.Emit(OpCodes.Ldc_I4_0);
+                    ilProcessor.Emit(OpCodes.Ceq);
                 }
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.LessThan)
             {
-                EmitInstruction(ilProcessor, OpCodes.Clt);
+                ilProcessor.Emit(OpCodes.Clt);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.LessEqual)
             {
-                EmitInstruction(ilProcessor, OpCodes.Cgt);
-                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
-                EmitInstruction(ilProcessor, OpCodes.Ceq);
+                ilProcessor.Emit(OpCodes.Cgt);
+                ilProcessor.Emit(OpCodes.Ldc_I4_0);
+                ilProcessor.Emit(OpCodes.Ceq);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.GreaterThan)
             {
-                EmitInstruction(ilProcessor, OpCodes.Cgt);
+                ilProcessor.Emit(OpCodes.Cgt);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.GreaterEqual)
             {
-                EmitInstruction(ilProcessor, OpCodes.Clt);
-                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
-                EmitInstruction(ilProcessor, OpCodes.Ceq);
+                ilProcessor.Emit(OpCodes.Clt);
+                ilProcessor.Emit(OpCodes.Ldc_I4_0);
+                ilProcessor.Emit(OpCodes.Ceq);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.Modulo)
             {
-                EmitInstruction(ilProcessor, OpCodes.Rem);
+                ilProcessor.Emit(OpCodes.Rem);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.BitwiseAnd)
             {
-                EmitInstruction(ilProcessor, OpCodes.And);
+                ilProcessor.Emit(OpCodes.And);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.BitwiseOr)
             {
-                EmitInstruction(ilProcessor, OpCodes.Or);
+                ilProcessor.Emit(OpCodes.Or);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.BitwiseXor)
             {
-                EmitInstruction(ilProcessor, OpCodes.Xor);
+                ilProcessor.Emit(OpCodes.Xor);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.BitwiseLeftShift)
             {
-                EmitInstruction(ilProcessor, OpCodes.Shl);
+                ilProcessor.Emit(OpCodes.Shl);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.BitwiseRightShift)
             {
-                EmitInstruction(ilProcessor, OpCodes.Shr_Un);
+                ilProcessor.Emit(OpCodes.Shr_Un);
             }
             else
             {
@@ -1925,12 +1351,12 @@ namespace ProLang.Compiler
             }
             else if (node.Op.Kind == BoundUnaryOperatorKind.Negation)
             {
-                EmitInstruction(ilProcessor, OpCodes.Neg);
+                ilProcessor.Emit(OpCodes.Neg);
             }
             else if (node.Op.Kind == BoundUnaryOperatorKind.LogicalNegation)
             {
-                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_0);
-                EmitInstruction(ilProcessor, OpCodes.Ceq);
+                ilProcessor.Emit(OpCodes.Ldc_I4_0);
+                ilProcessor.Emit(OpCodes.Ceq);
             }
             else
             {
@@ -1941,16 +1367,16 @@ namespace ProLang.Compiler
         private void EmitAssignmentExpression(ILProcessor ilProcessor, BoundAssignmentExpression node)
         {
             EmitExpression(ilProcessor, node.Expression);
-            EmitInstruction(ilProcessor, OpCodes.Dup);
+            ilProcessor.Emit(OpCodes.Dup);
 
             if (node.Variable is ParameterSymbol parameter)
             {
-                EmitInstruction(ilProcessor, OpCodes.Starg, ilProcessor.Body.Method.Parameters[parameter.Ordinal]);
+                ilProcessor.Emit(OpCodes.Starg, ilProcessor.Body.Method.Parameters[parameter.Ordinal]);
             }
             else
             {
                 var variableDefinition = _locals[node.Variable];
-                EmitInstruction(ilProcessor, OpCodes.Stloc, variableDefinition);
+                ilProcessor.Emit(OpCodes.Stloc, variableDefinition);
             }
         }
 
@@ -1958,13 +1384,13 @@ namespace ProLang.Compiler
         {
             if (node.Variable is ParameterSymbol parameter)
             {
-                EmitInstruction(ilProcessor, OpCodes.Ldarg, ilProcessor.Body.Method.Parameters[parameter.Ordinal]);
+                ilProcessor.Emit(OpCodes.Ldarg, ilProcessor.Body.Method.Parameters[parameter.Ordinal]);
             }
             else
             {
                 var variableDefinition = _locals[node.Variable];
 
-                EmitInstruction(ilProcessor, OpCodes.Ldloc, variableDefinition);
+                ilProcessor.Emit(OpCodes.Ldloc, variableDefinition);
             }
         }
 
@@ -1976,7 +1402,7 @@ namespace ProLang.Compiler
 
                 var instruction = value ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0;
 
-                EmitInstruction(ilProcessor, instruction);
+                ilProcessor.Emit(instruction);
             }
             else if (node.Type == TypeSymbol.Int
             || node.Type == TypeSymbol.UInt32
@@ -1986,34 +1412,34 @@ namespace ProLang.Compiler
             {
                 var value = Convert.ToInt32(node.Value);
 
-                EmitInstruction(ilProcessor, OpCodes.Ldc_I4, value);
+                ilProcessor.Emit(OpCodes.Ldc_I4, value);
             }
             else if (node.Type == TypeSymbol.Int8)//Chosen the more efficient instruction
             {
                 var value = (sbyte)node.Value;
 
-                EmitInstruction(ilProcessor, OpCodes.Ldc_I4_S, value);
+                ilProcessor.Emit(OpCodes.Ldc_I4_S, value);
             }
             else if (node.Type == TypeSymbol.Int64
             || node.Type == TypeSymbol.UInt64)
             {
                 var value = (long)node.Value;
 
-                EmitInstruction(ilProcessor, OpCodes.Ldc_I8, value);
+                ilProcessor.Emit(OpCodes.Ldc_I8, value);
             }
             else if (node.Type == TypeSymbol.Float32)
             {
-                EmitInstruction(ilProcessor, OpCodes.Ldc_R4, (float)node.Value);
+                ilProcessor.Emit(OpCodes.Ldc_R4, (float)node.Value);
             }
             else if (node.Type == TypeSymbol.Float64 || node.Type == TypeSymbol.Float)
             {
-                EmitInstruction(ilProcessor, OpCodes.Ldc_R8, (double)node.Value);
+                ilProcessor.Emit(OpCodes.Ldc_R8, (double)node.Value);
             }
             else if (node.Type == TypeSymbol.String)
             {
                 var value = (string)node.Value;
 
-                EmitInstruction(ilProcessor, OpCodes.Ldstr, value);
+                ilProcessor.Emit(OpCodes.Ldstr, value);
             }
             else
             {
@@ -2032,7 +1458,7 @@ namespace ProLang.Compiler
 
             foreach (var field in structSymbol.Fields)
             {
-                EmitInstruction(ilProcessor, OpCodes.Ldloca, localVar);
+                ilProcessor.Emit(OpCodes.Ldloca, localVar);
 
                 var fieldIndex = structSymbol.Fields.IndexOf(field);
                 EmitExpression(ilProcessor, node.FieldValues[fieldIndex]);
@@ -2040,15 +1466,15 @@ namespace ProLang.Compiler
                 var fieldType = GetTypeReference(field.Type);
                 if (field.Type != TypeSymbol.Any && !fieldType.IsValueType)
                 {
-                    EmitInstruction(ilProcessor, OpCodes.Box, fieldType);
+                    ilProcessor.Emit(OpCodes.Box, fieldType);
                 }
 
                 var fieldRef = new FieldReference(field.Name, fieldType);
                 fieldRef.DeclaringType = typeRef;
-                EmitInstruction(ilProcessor, OpCodes.Stfld, fieldRef);
+                ilProcessor.Emit(OpCodes.Stfld, fieldRef);
             }
 
-            EmitInstruction(ilProcessor, OpCodes.Ldloc, localVar);
+            ilProcessor.Emit(OpCodes.Ldloc, localVar);
         }
 
         private void EmitFieldAccessExpression(ILProcessor ilProcessor, BoundFieldAccessExpression node)
@@ -2062,11 +1488,11 @@ namespace ProLang.Compiler
             var fieldRef = new FieldReference(node.FieldName, fieldType);
             fieldRef.DeclaringType = typeRef;
 
-            EmitInstruction(ilProcessor, OpCodes.Ldfld, fieldRef);
+            ilProcessor.Emit(OpCodes.Ldfld, fieldRef);
 
             if (node.Type == TypeSymbol.Any && fieldType.IsValueType)
             {
-                EmitInstruction(ilProcessor, OpCodes.Box, fieldType);
+                ilProcessor.Emit(OpCodes.Box, fieldType);
             }
         }
 
@@ -2084,31 +1510,31 @@ namespace ProLang.Compiler
                 VariableDefinition? varDef = null;
                 if (varExpr.Variable is ParameterSymbol paramSym)
                 {
-                    EmitInstruction(ilProcessor, OpCodes.Ldarga, ilProcessor.Body.Method.Parameters[paramSym.Ordinal]);
+                    ilProcessor.Emit(OpCodes.Ldarga, ilProcessor.Body.Method.Parameters[paramSym.Ordinal]);
                 }
                 else
                 {
                     varDef = _locals[varExpr.Variable];
-                    EmitInstruction(ilProcessor, OpCodes.Ldloca, varDef);
+                    ilProcessor.Emit(OpCodes.Ldloca, varDef);
                 }
 
                 EmitExpression(ilProcessor, node.Value);
-                EmitInstruction(ilProcessor, OpCodes.Dup);
+                ilProcessor.Emit(OpCodes.Dup);
 
                 var tempVar = new VariableDefinition(fieldType);
                 ilProcessor.Body.Variables.Add(tempVar);
-                EmitInstruction(ilProcessor, OpCodes.Stloc, tempVar);
+                ilProcessor.Emit(OpCodes.Stloc, tempVar);
 
-                EmitInstruction(ilProcessor, OpCodes.Stfld, fieldRef);
+                ilProcessor.Emit(OpCodes.Stfld, fieldRef);
 
-                EmitInstruction(ilProcessor, OpCodes.Ldloc, tempVar);
+                ilProcessor.Emit(OpCodes.Ldloc, tempVar);
             }
             else
             {
                 EmitExpression(ilProcessor, node.Expression);
-                EmitInstruction(ilProcessor, OpCodes.Dup);
+                ilProcessor.Emit(OpCodes.Dup);
                 EmitExpression(ilProcessor, node.Value);
-                EmitInstruction(ilProcessor, OpCodes.Stfld, fieldRef);
+                ilProcessor.Emit(OpCodes.Stfld, fieldRef);
             }
         }
     }
