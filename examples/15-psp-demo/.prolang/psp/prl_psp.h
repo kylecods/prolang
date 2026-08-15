@@ -8,28 +8,74 @@
 #include "prl_types.h"
 #include "prl_string.h"
 
+#include <pspkernel.h>
+#include <pspdisplay.h>
+#include <pspctrl.h>
+#include <pspge.h>
 #include <pspgu.h>
-#include <pspgum.h>
 
 #define PRL_PSP_SCR_W 480
 #define PRL_PSP_SCR_H 272
 #define PRL_PSP_BUF_W 512
 
+/* Text console geometry (8x8 font on a 10px line pitch). */
+#define PRL_PSP_TEXT_COLS (PRL_PSP_SCR_W / 8)   /* 60 */
+#define PRL_PSP_TEXT_ROWS (PRL_PSP_SCR_H / 10)  /* 27 */
+
+/* Per-frame vertex scratch reserved out of the display list (see prl_psp_valloc). */
+#define PRL_PSP_VPOOL_VERTS 8192
+
+/* GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_2D.
+   Field order must follow the GE's vertex layout: colour before position. */
+typedef struct { UINT32 color; float x, y, z; } PrlPspVertex;
+#define PRL_PSP_VTYPE (GU_COLOR_8888 | GU_VERTEX_32BITF | GU_TRANSFORM_2D)
+
 static unsigned int __attribute__((aligned(16))) prl_psp_dlist[262144];
 static unsigned int prl_psp_vram_offset = 0;
 static int prl_psp_gu_ready = 0;
 static int prl_psp_frame_active = 0;
-static unsigned int prl_psp_text_x = 0;        /* pixel cursor for print() */
-static unsigned int prl_psp_text_y = 0;
-static unsigned int prl_psp_text_color = 0xFFFFFFFF;
 
+static PrlPspVertex *prl_psp_vpool = 0; /* per-frame vertex pool (display-list memory) */
+static int prl_psp_vpool_used = 0;      /* vertices consumed from the pool */
+
+/* GU framebuffer/depthbuffer parameters are offsets *relative to the start of VRAM*
+   (sceGuSwapBuffers adds sceGeEdramGetAddr() itself). Returning an absolute
+   0x44000000-based pointer here makes sceDisplaySetFrameBuf latch a bogus address,
+   which is displayed as random VRAM garbage. */
 static void *prl_psp_vram_alloc(int size) {
-    void *p = (void *)(0x44000000u + prl_psp_vram_offset);
-    prl_psp_vram_offset = (prl_psp_vram_offset + size + 15u) & ~15u;
+    void *p = (void *)(unsigned int)prl_psp_vram_offset;
+    prl_psp_vram_offset = (prl_psp_vram_offset + (unsigned int)size + 15u) & ~15u;
     return p;
 }
 
-/* 8x8 bitmap font (ASCII 32..126), each glyph 8 bytes, top row = LSB. */
+/* Vertex data handed to the GE must stay alive until the display list actually
+   executes (at sceGuFinish/sceGuSync) and must be visible to the GE's DMA - stack
+   locals are neither, they are dead and still sitting in the CPU data cache. All
+   geometry therefore comes out of display-list memory via sceGuGetMemory.
+   One pool allocation per frame keeps the per-primitive stall-address updates
+   (a kernel call each) down to one instead of one per rectangle. */
+static PrlPspVertex *prl_psp_valloc(int nverts) {
+    if (prl_psp_vpool && prl_psp_vpool_used + nverts <= PRL_PSP_VPOOL_VERTS) {
+        PrlPspVertex *p = prl_psp_vpool + prl_psp_vpool_used;
+        prl_psp_vpool_used += nverts;
+        return p;
+    }
+    return (PrlPspVertex *)sceGuGetMemory(nverts * (int)sizeof(PrlPspVertex));
+}
+
+/* The psp_* built-ins take colours as 0xRRGGBB (the usual hex-colour ordering); the GE
+   wants 0xAABBGGRR, so swap the red and blue channels. Alpha is forced opaque so nothing
+   depends on the caller supplying one. */
+static inline UINT32 prl_psp_color(INT32 color) {
+    UINT32 c = (UINT32)color;
+    return 0xFF000000u
+         | ((c & 0x000000FFu) << 16)   /* B -> high byte */
+         |  (c & 0x0000FF00u)          /* G stays */
+         | ((c & 0x00FF0000u) >> 16);  /* R -> low byte */
+}
+
+/* 8x8 bitmap font (ASCII 32..126), each glyph 8 bytes, one byte per row,
+   leftmost pixel = most significant bit. */
 static const unsigned char prl_psp_font[95][8] = {
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}, /*   */
     {0x18,0x18,0x18,0x18,0x18,0x00,0x18,0x00}, /* ! */
@@ -128,23 +174,15 @@ static const unsigned char prl_psp_font[95][8] = {
     {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00}  /* ~ */
 };
 
-static void prl_psp_draw_glyph(INT32 x, INT32 y, unsigned char c, UINT32 color) {
-    if (c < 32 || c > 126) c = '?';
-    const unsigned char *g = prl_psp_font[c - 32];
-    int row, col;
-    for (row = 0; row < 8; row++) {
-        unsigned char bits = g[row];
-        for (col = 0; col < 8; col++) {
-            if (bits & (1u << col)) {
-                float v[3];
-                v[0] = (float)(x + col);
-                v[1] = (float)(y + row);
-                v[2] = 0.0f;
-                sceGuColor(color);
-                sceGumDrawArray(GU_POINTS, GU_VERTEX_32BITF | GU_TRANSFORM_2D, 1, NULL, v);
-            }
-        }
-    }
+static void prl_psp_init(void);
+
+static void prl_psp_start_frame(void) {
+    if (!prl_psp_gu_ready) prl_psp_init();
+    if (prl_psp_frame_active) return;
+    sceGuStart(GU_DIRECT, prl_psp_dlist);
+    prl_psp_vpool = (PrlPspVertex *)sceGuGetMemory(PRL_PSP_VPOOL_VERTS * (int)sizeof(PrlPspVertex));
+    prl_psp_vpool_used = 0;
+    prl_psp_frame_active = 1;
 }
 
 static void prl_psp_init(void) {
@@ -166,6 +204,9 @@ static void prl_psp_init(void) {
     sceGuShadeModel(GU_FLAT);
     sceGuDisable(GU_DEPTH_TEST);
     sceGuDisable(GU_CULL_FACE);
+    sceGuDisable(GU_TEXTURE_2D);
+    sceGuDisable(GU_BLEND);
+    sceGuDisable(GU_LIGHTING);
     sceGuFinish();
     sceGuSync(GU_SYNC_FINISH, GU_SYNC_WHAT_DONE);
     sceDisplayWaitVblankStart();
@@ -173,60 +214,113 @@ static void prl_psp_init(void) {
 
     sceCtrlSetSamplingMode(PSP_CTRL_MODE_ANALOG);
 
+    prl_psp_gu_ready = 1;
+
     /* Pre-clear BOTH framebuffers so every sceGuSwapBuffers alternates between two
        clean buffers instead of showing uninitialized VRAM garbage. */
     int pre;
     for (pre = 0; pre < 2; pre++) {
         sceGuStart(GU_DIRECT, prl_psp_dlist);
-        sceGuClearColor(0);
+        sceGuClearColor(0xFF000000u);
         sceGuClear(GU_COLOR_BUFFER_BIT);
         sceGuFinish();
         sceGuSync(GU_SYNC_FINISH, GU_SYNC_WHAT_DONE);
         sceDisplayWaitVblankStart();
         sceGuSwapBuffers();
     }
-
-    prl_psp_gu_ready = 1;
-}
-
-static void prl_psp_start_frame(void) {
-    if (!prl_psp_gu_ready) prl_psp_init();
-    if (prl_psp_frame_active) return;
-    sceGuStart(GU_DIRECT, prl_psp_dlist);
-    prl_psp_frame_active = 1;
 }
 
 static void prl_psp_clear(INT32 color) {
     prl_psp_start_frame();
-    sceGuClearColor((UINT32)color);
+    sceGuClearColor(prl_psp_color(color));
     sceGuClear(GU_COLOR_BUFFER_BIT);
 }
 
 static void prl_psp_fill_rect(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color) {
+    if (w <= 0 || h <= 0) return;
     prl_psp_start_frame();
-    float verts[8];
-    verts[0]=(float)x;       verts[1]=(float)y;
-    verts[2]=(float)(x+w-1); verts[3]=(float)y;
-    verts[4]=(float)(x+w-1); verts[5]=(float)(y+h-1);
-    verts[6]=(float)x;       verts[7]=(float)(y+h-1);
-    sceGuColor((UINT32)color);
-    sceGumDrawArray(GU_TRIANGLE_FAN, GU_VERTEX_32BITF | GU_TRANSFORM_2D, 4, NULL, verts);
+    /* GU_SPRITES: two vertices (top-left, bottom-right exclusive) per rectangle. */
+    UINT32 c = prl_psp_color(color);
+    PrlPspVertex *v = prl_psp_valloc(2);
+    v[0].color = c; v[0].x = (float)x;       v[0].y = (float)y;       v[0].z = 0.0f;
+    v[1].color = c; v[1].x = (float)(x + w); v[1].y = (float)(y + h); v[1].z = 0.0f;
+    sceGuDrawArray(GU_SPRITES, PRL_PSP_VTYPE, 2, NULL, v);
+}
+
+/* Number of horizontal runs of set pixels in one glyph row (max 4). */
+static int prl_psp_row_spans(unsigned char bits) {
+    int n = 0, col = 0;
+    while (col < 8) {
+        if (bits & (0x80u >> col)) {
+            while (col < 8 && (bits & (0x80u >> col))) col++;
+            n++;
+        } else {
+            col++;
+        }
+    }
+    return n;
+}
+
+/* Draw a run of characters as a single batched GU_SPRITES call: each glyph row is
+   emitted as horizontal spans rather than one draw call per lit pixel. */
+static void prl_psp_draw_chars(INT32 x, INT32 y, const char *data, INT32 len, UINT32 color) {
+    if (len <= 0) return;
+    prl_psp_start_frame();
+
+    int i, row, col, spans = 0;
+    for (i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)data[i];
+        if (c < 32 || c > 126) c = '?';
+        const unsigned char *g = prl_psp_font[c - 32];
+        for (row = 0; row < 8; row++) spans += prl_psp_row_spans(g[row]);
+    }
+    if (spans == 0) return;
+
+    PrlPspVertex *v = prl_psp_valloc(spans * 2);
+    int n = 0;
+    for (i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)data[i];
+        if (c < 32 || c > 126) c = '?';
+        const unsigned char *g = prl_psp_font[c - 32];
+        int gx = x + i * 8;
+        for (row = 0; row < 8; row++) {
+            unsigned char bits = g[row];
+            col = 0;
+            while (col < 8) {
+                if (bits & (0x80u >> col)) {
+                    int start = col;
+                    while (col < 8 && (bits & (0x80u >> col))) col++;
+                    v[n].color = color; v[n].x = (float)(gx + start); v[n].y = (float)(y + row);     v[n].z = 0.0f; n++;
+                    v[n].color = color; v[n].x = (float)(gx + col);   v[n].y = (float)(y + row + 1); v[n].z = 0.0f; n++;
+                } else {
+                    col++;
+                }
+            }
+        }
+    }
+    sceGuDrawArray(GU_SPRITES, PRL_PSP_VTYPE, spans * 2, NULL, v);
 }
 
 static void prl_psp_draw_text(INT32 x, INT32 y, PrlString s, INT32 color) {
-    prl_psp_start_frame();
-    int i;
-    for (i = 0; i < s.len; i++)
-        prl_psp_draw_glyph(x + i*8, y, (unsigned char)s.data[i], (UINT32)color);
+    prl_psp_draw_chars(x, y, s.data, s.len, prl_psp_color(color));
 }
 
-static void prl_psp_swap_buffers(void) {
+/* Present the current frame. wait_vblank pauses for the retrace first (frame pacing
+   for game loops); the console path skips it since sceDisplaySetFrameBuf latches on
+   the next vblank anyway. */
+static void prl_psp_present(int wait_vblank) {
     if (!prl_psp_frame_active) return;
     sceGuFinish();
     sceGuSync(GU_SYNC_FINISH, GU_SYNC_WHAT_DONE);
-    sceDisplayWaitVblankStart();
+    if (wait_vblank) sceDisplayWaitVblankStart();
     sceGuSwapBuffers();
     prl_psp_frame_active = 0;
+    prl_psp_vpool = 0;
+    prl_psp_vpool_used = 0;
+}
+
+static void prl_psp_swap_buffers(void) {
+    prl_psp_present(1);
 }
 
 static void prl_psp_vsync(void) {
@@ -245,18 +339,95 @@ static bool prl_psp_button_pressed(INT32 button) {
     return (pad.Buttons & (unsigned int)button) != 0;
 }
 
-/* ── Console text helpers (used by prl_console.h on PSP) ── */
+/* ── Console text helpers (used by prl_console.h on PSP) ──
+   The console keeps a character/colour grid and repaints all of it on every flush.
+   Drawing only the new text and swapping would alternate between two half-written
+   buffers, which is what made console output flicker. */
+static char   prl_psp_text_ch[PRL_PSP_TEXT_ROWS][PRL_PSP_TEXT_COLS];
+static UINT32 prl_psp_text_fg[PRL_PSP_TEXT_ROWS][PRL_PSP_TEXT_COLS];
+static int    prl_psp_text_init_done = 0;
+static int    prl_psp_cur_row = 0;
+static int    prl_psp_cur_col = 0;
+static UINT32 prl_psp_text_color = 0xFFFFFFFF;
+
+static void prl_psp_text_reset(void) {
+    int r, c;
+    for (r = 0; r < PRL_PSP_TEXT_ROWS; r++)
+        for (c = 0; c < PRL_PSP_TEXT_COLS; c++) {
+            prl_psp_text_ch[r][c] = ' ';
+            prl_psp_text_fg[r][c] = 0xFFFFFFFF;
+        }
+    prl_psp_text_init_done = 1;
+}
+
+static void prl_psp_text_scroll(void) {
+    int r, c;
+    for (r = 0; r < PRL_PSP_TEXT_ROWS - 1; r++)
+        for (c = 0; c < PRL_PSP_TEXT_COLS; c++) {
+            prl_psp_text_ch[r][c] = prl_psp_text_ch[r + 1][c];
+            prl_psp_text_fg[r][c] = prl_psp_text_fg[r + 1][c];
+        }
+    for (c = 0; c < PRL_PSP_TEXT_COLS; c++) {
+        prl_psp_text_ch[PRL_PSP_TEXT_ROWS - 1][c] = ' ';
+        prl_psp_text_fg[PRL_PSP_TEXT_ROWS - 1][c] = 0xFFFFFFFF;
+    }
+}
+
+static void prl_psp_text_newline(void) {
+    prl_psp_cur_col = 0;
+    if (++prl_psp_cur_row >= PRL_PSP_TEXT_ROWS) {
+        prl_psp_text_scroll();
+        prl_psp_cur_row = PRL_PSP_TEXT_ROWS - 1;
+    }
+}
+
+static void prl_psp_text_put(PrlString s) {
+    if (!prl_psp_text_init_done) prl_psp_text_reset();
+    int i;
+    for (i = 0; i < s.len; i++) {
+        char c = s.data[i];
+        if (c == '\r') { prl_psp_cur_col = 0; continue; }
+        if (c == '\n') { prl_psp_text_newline(); continue; }
+        if (prl_psp_cur_col >= PRL_PSP_TEXT_COLS) prl_psp_text_newline();
+        prl_psp_text_ch[prl_psp_cur_row][prl_psp_cur_col] = c;
+        prl_psp_text_fg[prl_psp_cur_row][prl_psp_cur_col] = prl_psp_text_color;
+        prl_psp_cur_col++;
+    }
+}
+
+static void prl_psp_text_flush(void) {
+    if (!prl_psp_text_init_done) prl_psp_text_reset();
+    prl_psp_start_frame();
+    sceGuClearColor(0xFF000000u);
+    sceGuClear(GU_COLOR_BUFFER_BIT);
+
+    int r, c;
+    for (r = 0; r < PRL_PSP_TEXT_ROWS; r++) {
+        c = 0;
+        while (c < PRL_PSP_TEXT_COLS) {
+            /* Batch the longest run sharing one colour into a single draw call. */
+            UINT32 fg = prl_psp_text_fg[r][c];
+            int start = c;
+            while (c < PRL_PSP_TEXT_COLS && prl_psp_text_fg[r][c] == fg) c++;
+            prl_psp_draw_chars(start * 8, r * 10, &prl_psp_text_ch[r][start], c - start, fg);
+        }
+    }
+    prl_psp_present(0);
+}
+
 static inline void prl_psp_set_text_cursor(INT32 x, INT32 y) {
-    prl_psp_text_x = x * 8;
-    prl_psp_text_y = y * 10;
+    if (x < 0) x = 0;
+    if (y < 0) y = 0;
+    prl_psp_cur_col = (x < PRL_PSP_TEXT_COLS) ? (int)x : PRL_PSP_TEXT_COLS - 1;
+    prl_psp_cur_row = (y < PRL_PSP_TEXT_ROWS) ? (int)y : PRL_PSP_TEXT_ROWS - 1;
 }
 static inline void prl_psp_set_text_color(INT32 color) {
-    /* PSP: 0x00BBGGRR. Map a 0-15 console index to a plain colour. */
+    /* PSP: 0xAABBGGRR. Map a 0-15 console index to a plain colour. */
     static const UINT32 palette[16] = {
-        0x00000000,0x00000080,0x00008000,0x00008080,
-        0x00800000,0x00800080,0x00808000,0x00C0C0C0,
-        0x00808080,0x000000FF,0x0000FF00,0x0000FFFF,
-        0x00FF0000,0x00FF00FF,0x00FFFF00,0x00FFFFFF
+        0xFF000000,0xFF800000,0xFF008000,0xFF808000,
+        0xFF000080,0xFF800080,0xFF008080,0xFFC0C0C0,
+        0xFF808080,0xFFFF0000,0xFF00FF00,0xFFFFFF00,
+        0xFF0000FF,0xFFFF00FF,0xFF00FFFF,0xFFFFFFFF
     };
     if (color >= 0 && color < 16) prl_psp_text_color = palette[color];
 }
@@ -264,16 +435,13 @@ static inline void prl_psp_reset_text_color(void) {
     prl_psp_text_color = 0xFFFFFFFF;
 }
 static inline void prl_psp_console_write(PrlString s) {
-    prl_psp_start_frame();
-    prl_psp_draw_text(prl_psp_text_x, prl_psp_text_y, s, prl_psp_text_color);
-    prl_psp_text_x += s.len * 8;
-    prl_psp_swap_buffers();
+    prl_psp_text_put(s);
+    prl_psp_text_flush();
 }
 static inline void prl_psp_print(PrlString s) {
-    prl_psp_start_frame();
-    prl_psp_draw_text(prl_psp_text_x, prl_psp_text_y, s, prl_psp_text_color);
-    prl_psp_text_y += 10;
-    prl_psp_swap_buffers();
+    prl_psp_text_put(s);
+    prl_psp_text_newline();
+    prl_psp_text_flush();
 }
 
 #endif /* __PSP__ */

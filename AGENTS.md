@@ -825,7 +825,7 @@ map to `prl_psp_*` functions defined in the `__PSP__` branch of `prolang_runtime
 | Function | Description |
 |---|---|
 | `psp_init()` | Initialise GU, double-buffered 480×272, set analog sampling |
-| `psp_clear(color)` | Clear screen (0x00BBGGRR) |
+| `psp_clear(color)` | Clear screen |
 | `psp_fill_rect(x, y, w, h, color)` | Draw filled rectangle (GU 2D) |
 | `psp_draw_text(x, y, text, color)` | Draw text with an 8×8 bitmap font |
 | `psp_swap_buffers()` | Finish frame, wait vblank, swap display |
@@ -833,16 +833,38 @@ map to `prl_psp_*` functions defined in the `__PSP__` branch of `prolang_runtime
 | `psp_buttons_held()` | Return controller button bitmask (see `pspctrl.h`) |
 | `psp_button_pressed(button)` | True if a button bit is held |
 
+**Colours** are `0xRRGGBB` — the usual hex-colour ordering, so `16711680` / `0xFF0000`
+is red. The runtime swaps red and blue into the GE's native `0xAABBGGRR` and forces
+alpha opaque (`prl_psp_color`); callers never deal with the hardware order.
+
 Other `prl_*` runtime functions (print, sleep, console) also get PSP implementations.
 `prl_print` / `prl_console_write` route through the **same GU 8×8 font renderer** (not
 `pspDebugScreenPrintf`) and `prl_thread_sleep` → `sceKernelDelayThread`.
 
-> **Important (rendering):** GU must be the *single* owner of VRAM (`0x44000000`).
-> Do **not** call `pspDebugScreenInit()` alongside GU — both grab the same VRAM base and
-> corrupt each other (broken multicolor pixels). `psp_main.c` deliberately omits it, and
-> all text/`print()` output goes through the GU font so there is one framebuffer.
-> `prl_psp_start_frame()` guards against calling `sceGuStart` twice per frame; always end
-> a frame with `psp_swap_buffers()`.
+> **Important (rendering):** GU must be the *single* owner of VRAM. Do **not** call
+> `pspDebugScreenInit()` alongside GU — both grab the same VRAM base and corrupt each
+> other. `psp_main.c` deliberately omits it, and all text/`print()` output goes through
+> the GU font so there is one framebuffer. `prl_psp_start_frame()` guards against calling
+> `sceGuStart` twice per frame; always end a frame with `psp_swap_buffers()`.
+
+> **Rendering invariants in `prl_psp.h`** (each of these was previously violated and
+> produced flickering multicolour noise instead of the intended image):
+> 1. **Framebuffer parameters are VRAM-relative offsets, not absolute addresses.**
+>    `sceGuSwapBuffers` adds `sceGeEdramGetAddr()` (`0x04000000`) itself, so passing a
+>    `0x44000000`-based pointer to `sceGuDrawBuffer`/`sceGuDispBuffer` makes
+>    `sceDisplaySetFrameBuf` latch an out-of-range address and the display keeps showing
+>    raw VRAM. `prl_psp_vram_alloc()` therefore returns plain offsets.
+> 2. **Vertex data must live in display-list memory (`sceGuGetMemory`), never on the
+>    stack.** `GU_DIRECT` only records the *pointer*; the GE dereferences it later, when
+>    the list executes at `sceGuFinish`/`sceGuSync`. Stack locals are dead by then and
+>    were never flushed out of the CPU data cache, so the GE reads garbage coordinates
+>    and colours. `prl_psp_valloc()` sub-allocates from one pool taken per frame.
+> 3. **The font byte layout is MSB-left** (`bits & (0x80 >> col)`); scanning it LSB-first
+>    mirrors every glyph horizontally.
+> 4. **`print()` must not swap buffers after drawing only the new text** — consecutive
+>    prints then land in alternating buffers and the display flickers between two
+>    half-written frames. The PSP console keeps a character/colour grid and repaints all
+>    of it before each present.
 
 ### Examples
 
