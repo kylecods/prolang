@@ -1,1 +1,10 @@
-import "assembly:./CSharpFIbonacci.dll"
+/*
+* Declares the C# library that 05_dotnet_interop.prl calls into.
+*
+* The reference names the project rather than a built .dll, so it does not hardcode a build
+* configuration or target framework. Build the library first:
+*
+*     dotnet build test_lib/CSharpFibonacci.csproj
+*/
+
+import "assembly:test_lib/CSharpFibonacci.csproj"

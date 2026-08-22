@@ -111,6 +111,7 @@ PROLANG_UPDATE_SNAPSHOTS=1 dotnet test src/ProLang.Tests/ProLang.Tests.csproj -c
 
 - [The .NET backend](docs/architecture/dotnet-backend.md) — how source becomes an assembly
 - [Boxing in the .NET backend](docs/architecture/boxing.md) — where it comes from and how to remove it
+- [.NET interop](docs/architecture/dotnet-interop.md) — referencing assemblies and calling into .NET
 - [Adding a builtin](docs/contributing/adding-a-builtin.md)
 - [Performance baseline](docs/perf/baseline-2026-08-15.md)
 - [AGENTS.md](AGENTS.md) — language reference and PSP toolchain setup

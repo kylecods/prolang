@@ -1,1 +1,4 @@
-dotnet bin/Debug/interop.dll
+#!/bin/sh
+set -e
+./build.sh
+dotnet bin/interop.dll

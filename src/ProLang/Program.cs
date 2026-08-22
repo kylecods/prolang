@@ -92,24 +92,16 @@ internal sealed class Program
             syntaxTrees.Add(syntaxTree);
         }
 
-        foreach (var path in referencePaths)
-        {
-            if (!File.Exists(path))
-            {
-                Console.Error.WriteLine($"{path} does not exist.");
-
-                hasErrors = true;
-
-                continue;
-            }
-        }
+        // References are not checked here: -r accepts bare names and .csproj paths as well as
+        // .dll paths, so whether one resolves is for the resolver to decide. It reports where it
+        // looked, which a bare File.Exists check here could not.
 
         if (hasErrors)
         {
             return 1;
         }
 
-        var compilation = ProLangCompilation.Create(syntaxTrees.ToArray());
+        var compilation = ProLangCompilation.Create(referencePaths.ToArray(), syntaxTrees.ToArray());
 
         // C transpile mode
         if (emitC)

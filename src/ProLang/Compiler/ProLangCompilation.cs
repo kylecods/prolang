@@ -5,6 +5,7 @@ using ProLang.Parse;
 using ProLang.Symbols;
 using ProLang.Symbols.Modules;
 using ProLang.Syntax;
+using ProLang.Text;
 
 namespace ProLang.Compiler;
 
@@ -48,20 +49,46 @@ public sealed class ProLangCompilation
         _libAssemblyPaths = libAssemblyPaths;
     }
 
-    public static ProLangCompilation Create(params SyntaxTree[] syntaxTrees)
+    public static ProLangCompilation Create(params SyntaxTree[] syntaxTrees) =>
+        Create([], syntaxTrees);
+
+    /// <summary>
+    /// Creates a compilation with additional assembly references from the command line.
+    /// </summary>
+    /// <param name="references">
+    /// Values of the <c>-r</c> option. Each accepts the same shapes as an <c>assembly:</c>
+    /// import: a bare name, a path to a <c>.dll</c>, or a <c>.csproj</c>.
+    /// </param>
+    /// <remarks>
+    /// References given here are loaded exactly as an import would load them, so their
+    /// namespaces are visible to the binder. Previously <c>-r</c> reached only the emitter, which
+    /// meant a referenced type resolved during code generation but was rejected during binding as
+    /// undefined — the flag looked like it worked and then did not.
+    /// </remarks>
+    public static ProLangCompilation Create(string[] references, params SyntaxTree[] syntaxTrees)
     {
-        var (resolved, diagnostics, importedModules, libAssemblyPaths) = ResolveAllImports(syntaxTrees.ToImmutableArray());
-        return new ProLangCompilation(isScript:false, previous: null, diagnostics, importedModules, libAssemblyPaths, resolved.ToArray());
+        var (resolved, diagnostics, importedModules, libAssemblyPaths) =
+            ResolveAllImports(syntaxTrees.ToImmutableArray(), references);
+
+        return new ProLangCompilation(isScript: false, previous: null, diagnostics, importedModules, libAssemblyPaths, resolved.ToArray());
     }
 
     private static (ImmutableArray<SyntaxTree> Trees, ImmutableArray<Diagnostic> Diagnostics, ImmutableHashSet<string> ImportedModules, ImmutableHashSet<string> LibAssemblyPaths) ResolveAllImports(
-        ImmutableArray<SyntaxTree> syntaxTrees)
+        ImmutableArray<SyntaxTree> syntaxTrees,
+        string[] commandLineReferences)
     {
         var allTrees = ImmutableArray.CreateBuilder<SyntaxTree>();
         var diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var importedModules = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var libAssemblyPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // Command-line references are loaded before any import, so a -r assembly is available to
+        // every file rather than only to the one that names it.
+        foreach (var reference in commandLineReferences)
+        {
+            TryReferenceAssembly(reference, Directory.GetCurrentDirectory(), default, diagnostics, libAssemblyPaths);
+        }
 
         // Seed visited with the initially provided files
         foreach (var st in syntaxTrees)
@@ -108,78 +135,17 @@ public sealed class ProLangCompilation
                     continue;
                 }
 
-                // Handle .NET assembly file imports: "assembly:/path/to/MyLib.dll"
+                // Handle .NET assembly references: "assembly:MyLib", "assembly:libs/MyLib.dll",
+                // or "assembly:test_lib/MyLib.csproj".
                 if (importPath.StartsWith("assembly:", StringComparison.OrdinalIgnoreCase))
                 {
-                    var assemblyPath = importPath["assembly:".Length..];
+                    var request = importPath["assembly:".Length..];
 
-                    // Try relative to importing file first
-                    string? resolvedAssemblyPath = null;
-                    if (!string.IsNullOrEmpty(importingDir))
+                    if (TryReferenceAssembly(request, importingDir, import.PathToken.Location, diagnostics, libAssemblyPaths))
                     {
-                        var candidate = Path.GetFullPath(Path.Combine(importingDir, assemblyPath));
-                        if (File.Exists(candidate))
-                        {
-                            resolvedAssemblyPath = candidate;
-                        }
+                        importedModules.Add(importPath);
                     }
 
-                    // Try as absolute path
-                    if (resolvedAssemblyPath == null && Path.IsPathRooted(assemblyPath))
-                    {
-                        if (File.Exists(assemblyPath))
-                        {
-                            resolvedAssemblyPath = Path.GetFullPath(assemblyPath);
-                        }
-                    }
-
-                    // Try relative to CWD
-                    if (resolvedAssemblyPath == null)
-                    {
-                        var candidate = Path.GetFullPath(assemblyPath);
-                        if (File.Exists(candidate))
-                        {
-                            resolvedAssemblyPath = candidate;
-                        }
-                    }
-
-                    // Try the compiler's lib/ directory for bare names (no path separators).
-                    // Enables "assembly:WinFormsHelper" without specifying an explicit path.
-                    if (resolvedAssemblyPath == null
-                        && !assemblyPath.Contains('/')
-                        && !assemblyPath.Contains('\\'))
-                    {
-                        var libDir = Path.Combine(AppContext.BaseDirectory, "lib");
-                        var dllName = assemblyPath.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
-                            ? assemblyPath : assemblyPath + ".dll";
-                        var candidate = Path.GetFullPath(Path.Combine(libDir, dllName));
-                        if (File.Exists(candidate))
-                        {
-                            resolvedAssemblyPath = candidate;
-                            libAssemblyPaths.Add(candidate); // deploy alongside output at emit time
-                        }
-                    }
-
-                    if (resolvedAssemblyPath != null)
-                    {
-                        var assembly = BuiltInModule.LoadAssemblyFromFile(resolvedAssemblyPath);
-                        if (assembly != null)
-                        {
-                            importedModules.Add(importPath);
-                            // Register all public namespaces from the assembly
-                            RegisterAssemblyNamespaces(assembly);
-                        }
-                        else
-                        {
-                            diagnostics.Add(new Diagnostic(import.PathToken.Location,
-                                $"Could not load .NET assembly '{resolvedAssemblyPath}'. The file may not be a valid .NET assembly."));
-                        }
-                    }
-                    else
-                    {
-                        diagnostics.Add(new Diagnostic(import.PathToken.Location,
-                            $"Could not find assembly file '{assemblyPath}'."));
-                    }
                     continue;
                 }
 
@@ -268,6 +234,82 @@ public sealed class ProLangCompilation
         }
 
         return (allTrees.ToImmutable(), diagnostics.ToImmutable(), importedModules.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase), libAssemblyPaths.ToImmutableHashSet(StringComparer.OrdinalIgnoreCase));
+    }
+
+    /// <summary>
+    /// Resolves and loads a .NET assembly reference, making its namespaces usable.
+    /// </summary>
+    /// <returns>True when the assembly was found and loaded.</returns>
+    /// <remarks>
+    /// Shared by <c>assembly:</c> imports and the <c>-r</c> command-line option, so both accept
+    /// the same shapes and — more importantly — both make the assembly's types visible to the
+    /// binder. <c>-r</c> used to hand its path only to the emitter, so a referenced type resolved
+    /// during code generation but was rejected during binding as undefined.
+    /// </remarks>
+    internal static bool TryReferenceAssembly(
+        string request,
+        string? importingDirectory,
+        TextLocation location,
+        ImmutableArray<Diagnostic>.Builder diagnostics,
+        HashSet<string> libAssemblyPaths)
+    {
+        var libDirectory = Path.Combine(AppContext.BaseDirectory, "lib");
+        var resolution = AssemblyReferenceResolver.Resolve(request, importingDirectory, libDirectory);
+
+        if (!resolution.Found)
+        {
+            // A .csproj that was located but produced no output is a different problem from a
+            // reference that could not be found at all, and needs a different instruction.
+            if (request.EndsWith(".csproj", StringComparison.OrdinalIgnoreCase)
+                && resolution.ProbedLocations.FirstOrDefault(File.Exists) is { } projectPath)
+            {
+                diagnostics.Add(new Diagnostic(location,
+                    $"The referenced project '{projectPath}' has no build output. " +
+                    $"Build it first: dotnet build \"{projectPath}\""));
+            }
+            else
+            {
+                diagnostics.Add(new Diagnostic(location, AssemblyNotFoundMessage(request, resolution)));
+            }
+
+            return false;
+        }
+
+        var assembly = BuiltInModule.LoadAssemblyFromFile(resolution.Path!);
+
+        if (assembly == null)
+        {
+            diagnostics.Add(new Diagnostic(location,
+                $"Could not load .NET assembly '{resolution.Path}'. The file may not be a valid .NET assembly."));
+
+            return false;
+        }
+
+        RegisterAssemblyNamespaces(assembly);
+
+        // The assembly has to travel with the compiled program, or it will not start.
+        libAssemblyPaths.Add(resolution.Path!);
+
+        return true;
+    }
+
+    private static string AssemblyNotFoundMessage(string request, AssemblyResolution resolution)
+    {
+        var message = new System.Text.StringBuilder();
+        message.Append($"Could not find assembly '{request}'.");
+
+        if (resolution.Suggestions.Count > 0)
+        {
+            message.Append($" Did you mean {string.Join(" or ", resolution.Suggestions.Select(s => $"'{s}'"))}?");
+        }
+
+        foreach (var probed in resolution.ProbedLocations.Distinct(StringComparer.OrdinalIgnoreCase))
+        {
+            message.AppendLine();
+            message.Append($"    searched: {probed}");
+        }
+
+        return message.ToString();
     }
 
     /// <summary>
@@ -609,7 +651,7 @@ public sealed class ProLangCompilation
             return prepared.Diagnostics;
         }
 
-        var emitDiagnostics = Emitter.Emit(prepared.Program!, moduleName, references, outputPath);
+        var emitDiagnostics = Emitter.Emit(prepared.Program!, moduleName, ResolvedReferences(references), outputPath);
 
         // On success, copy any stdlib native assemblies (lib/ DLLs) next to the output
         // so the compiled program can resolve them at runtime without a manual deploy step.
@@ -661,6 +703,37 @@ public sealed class ProLangCompilation
         var outputPath = Path.Combine(outputDir, $"{moduleName}.cs");
 
         return CodeGen.CSharp.CSharpBackend.Emit(prepared.Program!, moduleName, outputPath);
+    }
+
+    /// <summary>
+    /// The assembly paths the emitter should read, resolved rather than as written.
+    /// </summary>
+    /// <remarks>
+    /// Everything already resolved during import handling — <c>assembly:</c> imports and
+    /// <c>-r</c> alike — is passed through by full path. The emitter reads references with Cecil,
+    /// which needs a real file: handing it a bare name or a <c>.csproj</c> the way the user typed
+    /// it would throw. Raw entries are still forwarded when they name an existing file, so a
+    /// caller passing explicit paths directly to <see cref="Emit"/> keeps working.
+    /// </remarks>
+    private string[] ResolvedReferences(string[] references)
+    {
+        var resolved = new List<string>(_libAssemblyPaths);
+
+        foreach (var reference in references)
+        {
+            // Only actual assemblies are forwarded verbatim. A .csproj or a bare name was already
+            // turned into a real path above; passing the original spelling on as well would have
+            // the emitter try to read a project file as metadata.
+            var isAssembly = reference.EndsWith(".dll", StringComparison.OrdinalIgnoreCase)
+                || reference.EndsWith(".exe", StringComparison.OrdinalIgnoreCase);
+
+            if (isAssembly && File.Exists(reference) && !resolved.Contains(reference, StringComparer.OrdinalIgnoreCase))
+            {
+                resolved.Add(reference);
+            }
+        }
+
+        return [.. resolved];
     }
 
     /// <summary>

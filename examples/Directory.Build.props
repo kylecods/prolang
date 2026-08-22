@@ -1,6 +1,16 @@
 <Project>
 
-  <PropertyGroup>
+  <!--
+    Makes MSBuild able to build .prlproj projects by treating .prl as the language's source
+    extension.
+
+    Scoped to .prlproj only. Without the condition this applies to every project under examples/,
+    including ordinary C# libraries such as 05-dotnet-interop-assembly-loading/test_lib — which
+    then "built" successfully while producing no assembly at all, because the overridden
+    CoreCompile in Directory.Build.targets ran the ProLang compiler over a project that has no
+    .prl files.
+  -->
+  <PropertyGroup Condition="'$(MSBuildProjectExtension)' == '.prlproj'">
     <DefaultLanguageSourceExtension>.prl</DefaultLanguageSourceExtension>
   </PropertyGroup>
 

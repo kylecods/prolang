@@ -1,3 +1,4 @@
+using System.Text;
 using System.Collections;
 using Mono.Cecil;
 using ProLang.Symbols;
@@ -287,6 +288,56 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     public void ReportInvalidAssignmentTarget(TextLocation location)
     {
         var message = "Invalid assignment target.";
+        Report(location, message);
+    }
+
+    /// <summary>
+    /// Reports a referenced .NET assembly that could not be located.
+    /// </summary>
+    /// <remarks>
+    /// Lists where the resolver looked and any similarly-named assemblies it passed on the way.
+    /// A reference failure is nearly always a typo, a path that assumes a build configuration, or
+    /// a project that has not been built — and which of the three it is only becomes obvious once
+    /// you can see the search.
+    /// </remarks>
+    public void ReportAssemblyNotFound(
+        TextLocation location,
+        string request,
+        IReadOnlyList<string> probedLocations,
+        IReadOnlyList<string> suggestions)
+    {
+        var message = new StringBuilder();
+        message.Append($"Could not find assembly '{request}'.");
+
+        if (suggestions.Count > 0)
+        {
+            message.Append($" Did you mean {string.Join(" or ", suggestions.Select(s => $"'{s}'"))}?");
+        }
+
+        if (probedLocations.Count > 0)
+        {
+            message.AppendLine();
+            message.Append("  Searched:");
+
+            foreach (var probed in probedLocations.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                message.AppendLine();
+                message.Append($"    {probed}");
+            }
+        }
+
+        Report(location, message.ToString());
+    }
+
+    /// <summary>
+    /// Reports a referenced project that exists but has produced no build output.
+    /// </summary>
+    public void ReportProjectNotBuilt(TextLocation location, string projectPath)
+    {
+        var message =
+            $"The referenced project '{projectPath}' has no build output. " +
+            $"Build it first, for example: dotnet build \"{projectPath}\"";
+
         Report(location, message);
     }
 
