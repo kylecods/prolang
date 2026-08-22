@@ -29,6 +29,8 @@ import "test_history.prl"
 import "test_palette.prl"
 import "test_view.prl"
 import "test_tools.prl"
+import "test_theme.prl"
+import "test_icons.prl"
 
 func main()
 {
@@ -47,6 +49,8 @@ func main()
     total = t_merge(total, test_palette_run(), "palette")
     total = t_merge(total, test_view_run(), "view")
     total = t_merge(total, test_tools_run(), "tools")
+    total = t_merge(total, test_theme_run(), "theme")
+    total = t_merge(total, test_icons_run(), "icons")
 
     t_report(total)
 }

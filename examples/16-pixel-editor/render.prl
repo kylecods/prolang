@@ -9,17 +9,15 @@
  * put the most error-prone code in the one module a test cannot reach.
  */
 
+import "array"
 import "winforms"
 import "document.prl"
 import "view.prl"
 import "palette.prl"
 import "color.prl"
 import "tools.prl"
-
-// The grid drawn over the image once the zoom is high enough to make it useful.
-func render_grid_colour() : int {
-    return color_argb(90, 0, 0, 0)
-}
+import "theme.prl"
+import "icons.prl"
 
 /*
  * Pushes a document's pixels into a bitmap.
@@ -38,11 +36,11 @@ func render_image(bitmapId: int, doc: Document) : void {
  * The grid colour is passed as fully transparent below the zoom threshold, which is how the
  * canvas is told not to draw it: at low zoom the lines occupy as much space as the pixels.
  */
-func render_view(canvasId: int, view: View) : void {
+func render_view(canvasId: int, view: View, activeTheme: int) : void {
     let grid: int = 0
 
     if (view_show_grid(view)) {
-        grid = render_grid_colour()
+        grid = theme_grid(activeTheme)
     }
 
     WinFormsHelper.CanvasSetView(canvasId, view.zoom, view.panX, view.panY, grid, 1)
@@ -54,14 +52,14 @@ func render_view(canvasId: int, view: View) : void {
  * While a shape is being rubber-banded the preview is shown instead of the image, because the
  * shape does not exist in the image until the button is released.
  */
-func render_canvas(canvasId: int, bitmapId: int, doc: Document, preview: Document, stroke: Stroke, view: View) : void {
+func render_canvas(canvasId: int, bitmapId: int, doc: Document, preview: Document, stroke: Stroke, view: View, activeTheme: int) : void {
     if (stroke.active && tool_is_shape(stroke.tool)) {
         render_image(bitmapId, preview)
     } else {
         render_image(bitmapId, doc)
     }
 
-    render_view(canvasId, view)
+    render_view(canvasId, view, activeTheme)
     WinFormsHelper.CanvasRefresh(canvasId)
 }
 
@@ -70,6 +68,94 @@ func render_palette(canvasId: int, bitmapId: int, strip: Document, cell: int, co
     palette_draw(strip, cell, columns, selected)
     render_image(bitmapId, strip)
     WinFormsHelper.CanvasRefresh(canvasId)
+}
+
+// ── Icons ────────────────────────────────────────────────────────────────────
+
+/*
+ * Draws one icon and hands it to the shim as a bitmap.
+ *
+ * The glyph is authored at 16x16 and enlarged by whole-pixel repetition, so the result is crisp
+ * pixel art at any scale rather than a blurred resample. Pixels the icon did not draw stay
+ * transparent, which is what lets the button's own background — hover, pressed, selected — show
+ * through the glyph.
+ */
+func render_icon_bitmap(icon: int, ink: int, accent: int, scale: int) : int {
+    let glyph: Document = doc_new(icon_size(), icon_size(), 0)
+    icon_draw(glyph, icon, ink, accent)
+
+    let enlarged: Document = doc_new(icon_size() * scale, icon_size() * scale, 0)
+    doc_scale_into(glyph, enlarged, scale)
+
+    let bitmap: int = WinFormsHelper.CreateBitmap(enlarged.width, enlarged.height)
+    WinFormsHelper.SetPixels(bitmap, enlarged.pixels, enlarged.width, enlarged.height)
+
+    return bitmap
+}
+
+/*
+ * Rebuilds every icon in the theme's colours, filling `bitmaps` by icon id.
+ *
+ * Icons are redrawn rather than tinted because they are drawn from theme colours in the first
+ * place; a theme switch is just another pass over the same code.
+ */
+func render_build_icons(bitmaps: array<int>, activeTheme: int, scale: int) : void {
+    let ink: int = theme_text(activeTheme)
+    let accent: int = theme_accent(activeTheme)
+
+    let i: int = 0
+    while (i < icon_count()) {
+        bitmaps[i] = render_icon_bitmap(i, ink, accent, scale)
+        i = i + 1
+    }
+}
+
+// Releases the GDI bitmaps behind a set of icons, before rebuilding them in another theme.
+func render_free_icons(bitmaps: array<int>) : void {
+    let i: int = 0
+    while (i < icon_count()) {
+        if (bitmaps[i] != 0) {
+            WinFormsHelper.DisposeBitmap(bitmaps[i])
+            bitmaps[i] = 0
+        }
+        i = i + 1
+    }
+}
+
+// ── Theme ────────────────────────────────────────────────────────────────────
+
+/*
+ * Applies a theme's colours to one button.
+ *
+ * `selected` marks the active tool: a filled background and an accent border, rather than a
+ * different icon, so the state is visible without the icon having to encode it.
+ */
+func render_style_button(buttonId: int, activeTheme: int, selected: bool) : void {
+    WinFormsHelper.SetFlatStyle(buttonId,
+                                theme_border(activeTheme),
+                                theme_hover(activeTheme),
+                                theme_pressed(activeTheme))
+
+    if (selected) {
+        WinFormsHelper.SetBackColor(buttonId, theme_selected(activeTheme))
+        WinFormsHelper.SetFlatBorder(buttonId, theme_accent(activeTheme), 2)
+    } else {
+        WinFormsHelper.SetBackColor(buttonId, theme_surface(activeTheme))
+        WinFormsHelper.SetFlatBorder(buttonId, theme_border(activeTheme), 1)
+    }
+
+    WinFormsHelper.SetForeColor(buttonId, theme_text(activeTheme))
+    WinFormsHelper.SetHandCursor(buttonId, true)
+}
+
+// Paints a panel in the theme's surface colour, for a toolbar.
+func render_style_surface(controlId: int, activeTheme: int) : void {
+    WinFormsHelper.SetBackColor(controlId, theme_surface(activeTheme))
+}
+
+// Paints a thin panel in the theme's border colour, for a separator or rule.
+func render_style_divider(controlId: int, activeTheme: int) : void {
+    WinFormsHelper.SetBackColor(controlId, theme_border(activeTheme))
 }
 
 /*

@@ -1,0 +1,157 @@
+/*
+ * Pixel editor tests — icons.prl
+ *
+ * An icon cannot be checked for looking right, but the ways it can be *wrong* are all mechanical:
+ * drawing nothing, drawing outside its grid, using a colour it was not given, or being
+ * indistinguishable from another icon. Those are what these cover.
+ */
+
+import "testing.prl"
+import "../icons.prl"
+import "../document.prl"
+import "../color.prl"
+import "../tools.prl"
+
+func test_icons_run() : TestRun {
+    let r: TestRun = t_new()
+
+    let ink: int = color_rgb(255, 255, 255)
+    let accent: int = color_rgb(0, 120, 255)
+    let size: int = icon_size()
+
+    r = t_eq_int(r, "icon grid is 16", size, 16)
+    r = t_eq_int(r, "icon count", icon_count(), 21)
+
+    // Every tool maps to an icon, and no two tools share one — a duplicate would put the same
+    // picture on two toolbar buttons.
+    let toolIcons: array<int> = array_new(tool_count())
+    let t: int = 0
+    while (t < tool_count()) {
+        toolIcons[t] = icon_for_tool(t)
+        t = t + 1
+    }
+
+    let duplicateTools: int = 0
+    let a: int = 0
+    while (a < tool_count()) {
+        let b: int = a + 1
+        while (b < tool_count()) {
+            if (toolIcons[a] == toolIcons[b]) {
+                duplicateTools = duplicateTools + 1
+            }
+            b = b + 1
+        }
+        a = a + 1
+    }
+    r = t_eq_int(r, "each tool has its own icon", duplicateTools, 0)
+
+    // ── Properties every icon must satisfy ───────────────────────────────────
+    let drawn: int = 0
+    let inBounds: int = 0
+    let correctColours: int = 0
+    let usesAccent: int = 0
+
+    let i: int = 0
+    while (i < icon_count()) {
+        let glyph: Document = doc_new(size, size, 0)
+        icon_draw(glyph, i, ink, accent)
+
+        // Something was drawn. An icon that draws nothing is an invisible button.
+        let painted: int = size * size - doc_count_colour(glyph, 0)
+        if (painted > 0) {
+            drawn = drawn + 1
+        }
+
+        // A glyph occupying almost the whole grid has no breathing room next to its neighbours;
+        // one occupying a handful of pixels vanishes at button size.
+        if (painted > 12 && painted < (size * size) - 20) {
+            inBounds = inBounds + 1
+        }
+
+        // Only the two colours it was handed, plus transparency. A stray colour means something
+        // was drawn with a hardcoded value that will not follow the theme.
+        if ((doc_count_colour(glyph, ink) + doc_count_colour(glyph, accent) + doc_count_colour(glyph, 0))
+            == size * size) {
+            correctColours = correctColours + 1
+        }
+
+        if (doc_count_colour(glyph, accent) > 0) {
+            usesAccent = usesAccent + 1
+        }
+
+        i = i + 1
+    }
+
+    r = t_eq_int(r, "every icon draws something", drawn, icon_count())
+    r = t_eq_int(r, "every icon is a sensible size", inBounds, icon_count())
+    r = t_eq_int(r, "every icon uses only theme colours", correctColours, icon_count())
+    r = t_eq_int(r, "every icon uses the accent", usesAccent, icon_count())
+
+    // No two icons may be identical, or two buttons would be indistinguishable.
+    let duplicateIcons: int = 0
+    let x: int = 0
+    while (x < icon_count()) {
+        let first: Document = doc_new(size, size, 0)
+        icon_draw(first, x, ink, accent)
+
+        let y: int = x + 1
+        while (y < icon_count()) {
+            let second: Document = doc_new(size, size, 0)
+            icon_draw(second, y, ink, accent)
+
+            if (doc_equals(first, second)) {
+                duplicateIcons = duplicateIcons + 1
+            }
+
+            y = y + 1
+        }
+        x = x + 1
+    }
+    r = t_eq_int(r, "no two icons are identical", duplicateIcons, 0)
+
+    // Recolouring is what makes a theme switch work: the same icon drawn with different colours
+    // must come out different, and must not retain any of the old ones.
+    let blue: Document = doc_new(size, size, 0)
+    icon_draw(blue, Icon.SAVE, ink, accent)
+
+    let red: Document = doc_new(size, size, 0)
+    icon_draw(red, Icon.SAVE, color_rgb(0, 0, 0), color_rgb(255, 0, 0))
+
+    r = t_false(r, "recolouring changes the icon", doc_equals(blue, red))
+    r = t_eq_int(r, "recolouring leaves no old accent", doc_count_colour(red, accent), 0)
+    r = t_eq_int(r, "recolouring leaves no old ink", doc_count_colour(red, ink), 0)
+
+    // An unknown icon id draws nothing rather than falling through to some other picture.
+    let unknown: Document = doc_new(size, size, 0)
+    icon_draw(unknown, 99, ink, accent)
+    r = t_eq_int(r, "unknown icon draws nothing", doc_count_colour(unknown, 0), size * size)
+
+    // ── Scaling ──────────────────────────────────────────────────────────────
+    // Icons are authored at 16x16 and shown at twice that, so the enlargement has to be exact
+    // pixel repetition: any blending would make the toolbar look resampled rather than drawn.
+    let source: Document = doc_new(size, size, 0)
+    icon_draw(source, Icon.PENCIL, ink, accent)
+
+    let enlarged: Document = doc_new(size * 2, size * 2, 0)
+    doc_scale_into(source, enlarged, 2)
+
+    r = t_eq_int(r, "scaling introduces no new colours",
+                 doc_count_colour(enlarged, ink) + doc_count_colour(enlarged, accent)
+                 + doc_count_colour(enlarged, 0),
+                 size * 2 * size * 2)
+    r = t_eq_int(r, "scaling multiplies the ink exactly",
+                 doc_count_colour(enlarged, ink), doc_count_colour(source, ink) * 4)
+
+    // Each source pixel becomes a 2x2 block of itself.
+    r = t_eq_int(r, "block top-left matches", doc_get(enlarged, 10, 8), doc_get(source, 5, 4))
+    r = t_eq_int(r, "block top-right matches", doc_get(enlarged, 11, 8), doc_get(source, 5, 4))
+    r = t_eq_int(r, "block bottom-left matches", doc_get(enlarged, 10, 9), doc_get(source, 5, 4))
+    r = t_eq_int(r, "block bottom-right matches", doc_get(enlarged, 11, 9), doc_get(source, 5, 4))
+
+    // A factor below one is refused rather than producing an empty or corrupt target.
+    let untouched: Document = doc_new(4, 4, 0)
+    doc_scale_into(source, untouched, 0)
+    r = t_eq_int(r, "scale factor below one is ignored", doc_count_colour(untouched, 0), 16)
+
+    return r
+}

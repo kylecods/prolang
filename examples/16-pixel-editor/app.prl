@@ -7,10 +7,14 @@
  * function values of any kind. So the shim owns every handler: they push a flattened record onto
  * a queue, and this loop pulls from it. What would be a callback in C# is an `elif` arm here.
  *
- * The same constraint explains the shape of the state. prolang structs are .NET value types and a
- * struct-typed field cannot be assigned through, so there is no App struct holding the document,
- * history and view together — they are locals of app_run, passed to whatever needs them, and
- * reassigned from the value each helper returns.
+ * The same constraint explains the shape of the state. prolang structs are .NET value types, so
+ * there is no App struct holding the document, history and view together — they are locals of
+ * app_run, passed to whatever needs them, and reassigned from the value each helper returns.
+ *
+ * Control handles are kept in `array<int>`s rather than named locals wherever the interface has a
+ * row of similar things. An array is a reference, so a helper can fill one in and the caller sees
+ * the result — the only mutable channel the language offers — and it makes restyling every button
+ * on a theme change a loop instead of thirty lines.
  */
 
 import "io"
@@ -23,6 +27,8 @@ import "view.prl"
 import "tools.prl"
 import "history.prl"
 import "render.prl"
+import "theme.prl"
+import "icons.prl"
 import "util.prl"
 
 // Event kinds, matching PrlEventKind in std/WinFormsHelper/EventQueue.cs.
@@ -40,7 +46,12 @@ enum Ev {
     COMMAND
 }
 
-// Toolbar command tags. Tool buttons use TOOL_BASE + the tool's own value.
+/*
+ * Toolbar command tags.
+ *
+ * Tool buttons use TOOL_BASE + the tool's own value, so the loop decodes a tool button with one
+ * subtraction instead of nine comparisons.
+ */
 enum Cmd {
     TOOL_BASE = 100,
     NEW = 200,
@@ -53,7 +64,8 @@ enum Cmd {
     ZOOM_OUT = 207,
     ZOOM_FIT = 208,
     SIZE_DOWN = 209,
-    SIZE_UP = 210
+    SIZE_UP = 210,
+    THEME = 211
 }
 
 // Virtual key codes, from System.Windows.Forms.Keys.
@@ -68,6 +80,7 @@ enum Key {
     P = 80,
     R = 82,
     S = 83,
+    T = 84,
     Y = 89,
     Z = 90,
     MINUS = 189,
@@ -83,15 +96,28 @@ enum Mod {
 
 // ── Layout ───────────────────────────────────────────────────────────────────
 
+func app_icon_scale() : int    { return 2 }
+func app_button() : int        { return 38 }
+func app_gap() : int           { return 8 }
+func app_topbar_height() : int { return 54 }
+func app_leftbar_width() : int { return 92 }
+func app_tool_columns() : int  { return 2 }
+
 func app_canvas_width() : int  { return 820 }
-func app_canvas_height() : int { return 600 }
-func app_palette_cell() : int  { return 30 }
+func app_canvas_height() : int { return 560 }
+func app_palette_cell() : int  { return 26 }
 func app_palette_columns() : int { return 16 }
-func app_toolbar_width() : int { return 104 }
+func app_status_height() : int { return 26 }
 
 func app_default_width() : int  { return 64 }
 func app_default_height() : int { return 64 }
 func app_undo_slots() : int     { return 24 }
+
+// How many buttons the toolbars hold in total: nine tools plus thirteen actions.
+func app_button_count() : int { return 22 }
+
+// Hairline rules: one edging each bar, one under the tools, and one between each toolbar group.
+func app_divider_count() : int { return 5 }
 
 // ── Entry point ──────────────────────────────────────────────────────────────
 
@@ -99,25 +125,63 @@ func app_run() : void
 {
     WinFormsHelper.InitApplication()
 
+    let gap: int = app_gap()
     let canvasW: int = app_canvas_width()
     let canvasH: int = app_canvas_height()
     let cell: int = app_palette_cell()
     let columns: int = app_palette_columns()
     let stripW: int = cell * columns
     let stripH: int = cell * palette_rows(columns)
-    let left: int = app_toolbar_width() + 16
 
-    let form: int = WinFormsHelper.CreateForm("ProLang Pixel Editor", left + canvasW + 16, canvasH + stripH + 96)
+    let contentX: int = app_leftbar_width() + gap
+    let contentY: int = app_topbar_height() + gap
 
-    let canvas: int = WinFormsHelper.CreateCanvas(left, 8, canvasW, canvasH)
-    let strip: int = WinFormsHelper.CreateCanvas(left, canvasH + 16, stripW, stripH)
-    let status: int = WinFormsHelper.CreateLabel("", left, canvasH + stripH + 26, canvasW, 22)
+    let formW: int = contentX + canvasW + gap
+    let formH: int = contentY + canvasH + gap + stripH + gap + app_status_height() + gap
+
+    let form: int = WinFormsHelper.CreateForm("ProLang Pixel Editor", formW, formH)
+
+    // ── Chrome ───────────────────────────────────────────────────────────────
+    // The rules are children of the bars they edge, not of the form. Windows Forms adds each new
+    // control to the *back* of the z-order, so anything placed on the form after a bar would be
+    // covered by it — which is also why the toolbar buttons below are parented to the bars.
+    let topBar: int = WinFormsHelper.CreatePanel(0, 0, formW, app_topbar_height())
+    let leftBar: int = WinFormsHelper.CreatePanel(0, app_topbar_height(), app_leftbar_width(),
+                                                  formH - app_topbar_height())
+
+    WinFormsHelper.AddControl(form, topBar)
+    WinFormsHelper.AddControl(form, leftBar)
+
+    // ── Canvas, palette, status ──────────────────────────────────────────────
+    let canvas: int = WinFormsHelper.CreateCanvas(contentX, contentY, canvasW, canvasH)
+
+    let paletteY: int = contentY + canvasH + gap
+    let swatch: int = WinFormsHelper.CreatePanel(contentX, paletteY, stripH, stripH)
+    let strip: int = WinFormsHelper.CreateCanvas(contentX + stripH + gap, paletteY, stripW, stripH)
+
+    let status: int = WinFormsHelper.CreateLabel("", contentX, paletteY + stripH + gap,
+                                                 canvasW, app_status_height())
 
     WinFormsHelper.AddControl(form, canvas)
+    WinFormsHelper.AddControl(form, swatch)
     WinFormsHelper.AddControl(form, strip)
     WinFormsHelper.AddControl(form, status)
 
-    app_build_toolbar(form)
+    WinFormsHelper.SetBorderStyle(swatch, 1)
+    WinFormsHelper.SetFont(status, "Consolas", 9, false)
+    WinFormsHelper.SetCrosshairCursor(canvas, true)
+    WinFormsHelper.SetHandCursor(strip, true)
+
+    // ── Toolbars ─────────────────────────────────────────────────────────────
+    // Handles are collected so a theme change can restyle every one in a loop. Index 0..8 are the
+    // tools, in tool order; the rest are actions.
+    let buttons: array<int> = array_new(app_button_count())
+    let iconOf: array<int> = array_new(app_button_count())
+    let dividers: array<int> = array_new(app_divider_count())
+
+    WinFormsHelper.BeginLayout(form)
+    app_build_toolbars(topBar, leftBar, buttons, iconOf, dividers, formW, formH)
+    WinFormsHelper.EndLayout(form)
 
     // ── Model ────────────────────────────────────────────────────────────────
     let doc: Document = doc_new(app_default_width(), app_default_height(), color_rgb(255, 255, 255))
@@ -138,12 +202,20 @@ func app_run() : void
     WinFormsHelper.CanvasSetBitmap(canvas, image)
     WinFormsHelper.CanvasSetBitmap(strip, stripImage)
 
+    // ── Theme ────────────────────────────────────────────────────────────────
+    let icons: array<int> = array_new(icon_count())
+    let activeTheme: int = Theme.MIDNIGHT
+
+    app_apply_theme(activeTheme, form, topBar, leftBar, canvas, status, swatch,
+                    buttons, iconOf, dividers, icons, stroke.tool)
+
     WinFormsHelper.EnableMouseInput(canvas)
     WinFormsHelper.EnableMouseInput(strip)
     WinFormsHelper.EnableKeyInput(form)
 
-    render_canvas(canvas, image, doc, preview, stroke, view)
+    render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
     render_palette(strip, stripImage, swatches, cell, columns, 0)
+    WinFormsHelper.SetBackColor(swatch, stroke.colour)
     WinFormsHelper.Show(form)
 
     // ── Loop ─────────────────────────────────────────────────────────────────
@@ -168,6 +240,7 @@ func app_run() : void
                     selected = picked
                     stroke = stroke_with_colour(stroke, palette_colour(picked))
                     render_palette(strip, stripImage, swatches, cell, columns, selected)
+                    WinFormsHelper.SetBackColor(swatch, stroke.colour)
                 }
             } else {
                 let x: int = view_to_image_x(view, ev[0])
@@ -185,6 +258,7 @@ func app_run() : void
                 // The picker reports a colour rather than changing the image.
                 if (held.picked >= 0) {
                     held = stroke_with_colour(held, held.picked)
+                    WinFormsHelper.SetBackColor(swatch, held.colour)
                 }
 
                 stroke = stroke_with_tool(held, stroke.tool)
@@ -202,7 +276,7 @@ func app_run() : void
 
                 cursorX = x
                 cursorY = y
-                render_canvas(canvas, image, doc, preview, stroke, view)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             }
         } elif (kind == Ev.MOUSE_MOVE) {
             if (ev[7] != strip) {
@@ -211,7 +285,7 @@ func app_run() : void
 
                 if (stroke.active) {
                     stroke = tool_drag(stroke, doc, preview, touched, cursorX, cursorY)
-                    render_canvas(canvas, image, doc, preview, stroke, view)
+                    render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
                 }
             }
         } elif (kind == Ev.MOUSE_UP) {
@@ -226,79 +300,93 @@ func app_run() : void
                     dirty = true
                 }
 
-                render_canvas(canvas, image, doc, preview, stroke, view)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             }
         } elif (kind == Ev.MOUSE_LEAVE) {
             // A drag that leaves the canvas is abandoned rather than left half-drawn with no way
             // to finish it, since the button release will never arrive.
             if (stroke.active) {
                 stroke = tool_cancel(stroke, doc, preview, touched)
-                render_canvas(canvas, image, doc, preview, stroke, view)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             }
             cursorX = 0 - 1
             cursorY = 0 - 1
         } elif (kind == Ev.WHEEL) {
             view = view_zoom_to(view, app_wheel_zoom(view, ev[4]), ev[0], ev[1])
             view = view_clamp_pan(view, doc.width, doc.height, canvasW, canvasH)
-            render_canvas(canvas, image, doc, preview, stroke, view)
+            render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
         } elif (kind == Ev.KEY_DOWN) {
             let tool: int = app_tool_for_key(ev[3])
 
             if (tool >= 0) {
                 stroke = stroke_with_tool(stroke, tool)
+                app_mark_selected_tool(buttons, activeTheme, stroke.tool)
             } elif (ev[3] == Key.ESCAPE) {
                 if (stroke.active) {
                     stroke = tool_cancel(stroke, doc, preview, touched)
-                    render_canvas(canvas, image, doc, preview, stroke, view)
+                    render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
                 }
+            } elif (ev[3] == Key.T) {
+                activeTheme = theme_next(activeTheme)
+                app_apply_theme(activeTheme, form, topBar, leftBar, canvas, status, swatch,
+                                buttons, iconOf, dividers, icons, stroke.tool)
+                render_palette(strip, stripImage, swatches, cell, columns, selected)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (ev[3] == Key.Z && (ev[5] & Mod.CONTROL) != 0) {
                 history = hist_undo(history, doc)
                 doc_copy_into(doc, preview)
                 dirty = true
-                render_canvas(canvas, image, doc, preview, stroke, view)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (ev[3] == Key.Y && (ev[5] & Mod.CONTROL) != 0) {
                 history = hist_redo(history, doc)
                 doc_copy_into(doc, preview)
                 dirty = true
-                render_canvas(canvas, image, doc, preview, stroke, view)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (ev[3] == Key.PLUS) {
                 view = view_zoom_in(view, canvasW / 2, canvasH / 2)
-                render_canvas(canvas, image, doc, preview, stroke, view)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (ev[3] == Key.MINUS) {
                 view = view_zoom_out(view, canvasW / 2, canvasH / 2)
-                render_canvas(canvas, image, doc, preview, stroke, view)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             }
         } elif (kind == Ev.COMMAND) {
             let tag: int = ev[6]
 
             if (tag >= Cmd.TOOL_BASE && tag < (Cmd.TOOL_BASE + tool_count())) {
                 stroke = stroke_with_tool(stroke, tag - Cmd.TOOL_BASE)
+                app_mark_selected_tool(buttons, activeTheme, stroke.tool)
+            } elif (tag == Cmd.THEME) {
+                activeTheme = theme_next(activeTheme)
+                app_apply_theme(activeTheme, form, topBar, leftBar, canvas, status, swatch,
+                                buttons, iconOf, dividers, icons, stroke.tool)
+                render_palette(strip, stripImage, swatches, cell, columns, selected)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.UNDO) {
                 history = hist_undo(history, doc)
                 doc_copy_into(doc, preview)
                 dirty = true
-                render_canvas(canvas, image, doc, preview, stroke, view)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.REDO) {
                 history = hist_redo(history, doc)
                 doc_copy_into(doc, preview)
                 dirty = true
-                render_canvas(canvas, image, doc, preview, stroke, view)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.CLEAR) {
                 doc_fill(doc, color_rgb(255, 255, 255))
                 doc_copy_into(doc, preview)
                 history = hist_commit(history, doc)
                 dirty = true
-                render_canvas(canvas, image, doc, preview, stroke, view)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.ZOOM_IN) {
                 view = view_zoom_in(view, canvasW / 2, canvasH / 2)
-                render_canvas(canvas, image, doc, preview, stroke, view)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.ZOOM_OUT) {
                 view = view_zoom_out(view, canvasW / 2, canvasH / 2)
-                render_canvas(canvas, image, doc, preview, stroke, view)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.ZOOM_FIT) {
                 view = view_centre(view_new(view_fit_zoom(doc.width, doc.height, canvasW, canvasH)),
                                    doc.width, doc.height, canvasW, canvasH)
-                render_canvas(canvas, image, doc, preview, stroke, view)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.SIZE_UP) {
                 stroke = stroke_with_size(stroke, stroke.size + 1)
             } elif (tag == Cmd.SIZE_DOWN) {
@@ -324,6 +412,7 @@ func app_run() : void
                     // reassignment has nothing to infer from and fails to convert.
                     let resized: array<int> = array_new(doc_pixel_count(doc))
                     touched = resized
+
                     history = hist_reset(hist_new(doc.width, doc.height, app_undo_slots()), doc)
                     stroke = stroke_with_tool(stroke, stroke.tool)
                     dirty = false
@@ -334,69 +423,193 @@ func app_run() : void
 
                     view = view_centre(view_new(view_fit_zoom(doc.width, doc.height, canvasW, canvasH)),
                                        doc.width, doc.height, canvasW, canvasH)
-                    render_canvas(canvas, image, doc, preview, stroke, view)
+                    render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
                 }
             }
         }
 
-        WinFormsHelper.SetText(status, render_status(stroke, view, doc, cursorX, cursorY, dirty))
+        WinFormsHelper.SetText(status, render_status(stroke, view, doc, cursorX, cursorY, dirty)
+                                       + "   " + theme_name(activeTheme))
     }
 
+    render_free_icons(icons)
     WinFormsHelper.DisposeBitmap(image)
     WinFormsHelper.DisposeBitmap(stripImage)
 }
 
-// ── Toolbar ──────────────────────────────────────────────────────────────────
+// ── Toolbars ─────────────────────────────────────────────────────────────────
 
 /*
- * Lays the toolbar out as one column of buttons.
+ * Lays out both toolbars, filling `buttons` with handles and `iconOf` with the icon each one
+ * shows.
  *
- * Every button posts a Command event carrying its tag, so the loop above has a single dispatch
- * chain rather than one polling call per control.
+ * The two arrays are parallel and indexed the same way — tools first, in tool order, then
+ * actions. Keeping the icon id alongside the handle is what lets a theme change re-apply the
+ * right picture to each button without rediscovering the layout.
  */
-func app_build_toolbar(form: int) : void {
-    let x: int = 8
-    let width: int = app_toolbar_width() - 8
-    let y: int = 8
+func app_build_toolbars(topBar: int, leftBar: int, buttons: array<int>, iconOf: array<int>,
+                        dividers: array<int>, formW: int, formH: int) : void {
+    let size: int = app_button()
+    let gap: int = app_gap()
 
+    // The rules edging each bar, parented to the bar so they sit in front of it.
+    dividers[0] = app_add_divider(topBar, 0, app_topbar_height() - 1, formW, 1)
+    dividers[1] = app_add_divider(leftBar, app_leftbar_width() - 1, 0, 1, formH - app_topbar_height())
+
+    // ── Left: tools, in a two-column grid ────────────────────────────────────
+    // Coordinates are relative to the bar, which is the control they are parented to.
+    let columns: int = app_tool_columns()
     let tool: int = 0
+
     while (tool < tool_count()) {
-        app_add_button(form, tool_name(tool), x, y, width, 26, Cmd.TOOL_BASE + tool)
-        y = y + 28
+        let x: int = gap + ((tool % columns) * (size + 2))
+        let y: int = gap + ((tool / columns) * (size + 2))
+
+        buttons[tool] = app_add_button(leftBar, x, y, size, size,
+                                       Cmd.TOOL_BASE + tool, tool_name(tool))
+        iconOf[tool] = icon_for_tool(tool)
         tool = tool + 1
     }
 
-    y = y + 10
-    app_add_button(form, "size -", x, y, width, 26, Cmd.SIZE_DOWN)
-    y = y + 28
-    app_add_button(form, "size +", x, y, width, 26, Cmd.SIZE_UP)
+    // Brush size, below the tools and separated from them by a rule.
+    let toolRows: int = (tool_count() + columns - 1) / columns
+    let sizeRowY: int = gap + (toolRows * (size + 2)) + gap
 
-    y = y + 38
-    app_add_button(form, "zoom -", x, y, width, 26, Cmd.ZOOM_OUT)
-    y = y + 28
-    app_add_button(form, "zoom +", x, y, width, 26, Cmd.ZOOM_IN)
-    y = y + 28
-    app_add_button(form, "fit", x, y, width, 26, Cmd.ZOOM_FIT)
+    dividers[2] = app_add_divider(leftBar, gap, sizeRowY - (gap / 2), (size * 2) + 2, 1)
 
-    y = y + 38
-    app_add_button(form, "undo", x, y, width, 26, Cmd.UNDO)
-    y = y + 28
-    app_add_button(form, "redo", x, y, width, 26, Cmd.REDO)
-    y = y + 28
-    app_add_button(form, "clear", x, y, width, 26, Cmd.CLEAR)
+    buttons[9] = app_add_button(leftBar, gap, sizeRowY, size, size, Cmd.SIZE_DOWN, "Smaller brush")
+    iconOf[9] = Icon.SIZE_DOWN
+    buttons[10] = app_add_button(leftBar, gap + size + 2, sizeRowY, size, size, Cmd.SIZE_UP, "Larger brush")
+    iconOf[10] = Icon.SIZE_UP
 
-    y = y + 38
-    app_add_button(form, "new", x, y, width, 26, Cmd.NEW)
-    y = y + 28
-    app_add_button(form, "open", x, y, width, 26, Cmd.OPEN)
-    y = y + 28
-    app_add_button(form, "save", x, y, width, 26, Cmd.SAVE)
+    // ── Top: file, edit, view, theme ─────────────────────────────────────────
+    let y: int = (app_topbar_height() - size) / 2
+    let x: int = gap
+
+    buttons[11] = app_add_button(topBar, x, y, size, size, Cmd.NEW, "New image")
+    iconOf[11] = Icon.NEW
+    x = x + size + 2
+    buttons[12] = app_add_button(topBar, x, y, size, size, Cmd.OPEN, "Open a PNG")
+    iconOf[12] = Icon.OPEN
+    x = x + size + 2
+    buttons[13] = app_add_button(topBar, x, y, size, size, Cmd.SAVE, "Save as PNG")
+    iconOf[13] = Icon.SAVE
+
+    x = x + size + gap
+    dividers[3] = app_add_divider(topBar, x, y + 4, 1, size - 8)
+    x = x + gap
+
+    buttons[14] = app_add_button(topBar, x, y, size, size, Cmd.UNDO, "Undo (Ctrl+Z)")
+    iconOf[14] = Icon.UNDO
+    x = x + size + 2
+    buttons[15] = app_add_button(topBar, x, y, size, size, Cmd.REDO, "Redo (Ctrl+Y)")
+    iconOf[15] = Icon.REDO
+    x = x + size + 2
+    buttons[16] = app_add_button(topBar, x, y, size, size, Cmd.CLEAR, "Clear the canvas")
+    iconOf[16] = Icon.CLEAR
+
+    x = x + size + gap
+    dividers[4] = app_add_divider(topBar, x, y + 4, 1, size - 8)
+    x = x + gap
+
+    buttons[17] = app_add_button(topBar, x, y, size, size, Cmd.ZOOM_OUT, "Zoom out (-)")
+    iconOf[17] = Icon.ZOOM_OUT
+    x = x + size + 2
+    buttons[18] = app_add_button(topBar, x, y, size, size, Cmd.ZOOM_IN, "Zoom in (+)")
+    iconOf[18] = Icon.ZOOM_IN
+    x = x + size + 2
+    buttons[19] = app_add_button(topBar, x, y, size, size, Cmd.ZOOM_FIT, "Fit to window")
+    iconOf[19] = Icon.ZOOM_FIT
+
+    // Theme sits on the right, away from the commands, because it changes appearance not content.
+    buttons[20] = app_add_button(topBar, formW - size - gap, y, size, size, Cmd.THEME, "Change theme (T)")
+    iconOf[20] = Icon.THEME
+
+    // One unused slot keeps app_button_count a round number and leaves room for the next command.
+    buttons[21] = buttons[20]
+    iconOf[21] = Icon.THEME
 }
 
-func app_add_button(form: int, text: string, x: int, y: int, width: int, height: int, tag: int) : void {
-    let button: int = WinFormsHelper.CreateButton(text, x, y, width, height)
-    WinFormsHelper.AddControl(form, button)
+/*
+ * Creates a button, wires its command tag, and gives it hover text.
+ *
+ * The tooltip is not decoration once the toolbar is icons: an icon button with no tooltip is a
+ * guess. This is where the labels that used to be on the buttons went.
+ */
+func app_add_button(parent: int, x: int, y: int, width: int, height: int, tag: int, tip: string) : int {
+    let button: int = WinFormsHelper.CreateButton("", x, y, width, height)
+    WinFormsHelper.AddControl(parent, button)
     WinFormsHelper.EnableCommand(button, tag)
+    WinFormsHelper.SetToolTip(button, tip)
+    return button
+}
+
+/*
+ * A hairline rule, used both to edge a toolbar and to separate groups of buttons within one.
+ *
+ * Returned so it can be collected and recoloured with the theme; a divider left at the Windows
+ * default is a light grey line that only looks right on one of the four.
+ */
+func app_add_divider(parent: int, x: int, y: int, width: int, height: int) : int {
+    let rule: int = WinFormsHelper.CreatePanel(x, y, width, height)
+    WinFormsHelper.AddControl(parent, rule)
+    return rule
+}
+
+// ── Theme ────────────────────────────────────────────────────────────────────
+
+/*
+ * Repaints the whole interface in a theme, rebuilding the icons in its colours.
+ *
+ * Icons are redrawn rather than recoloured in place: they are drawn from theme colours to begin
+ * with, so a theme switch is another pass over the same drawing code. The old bitmaps are
+ * released first — they are GDI handles, and a few dozen leaked per switch would accumulate.
+ */
+func app_apply_theme(activeTheme: int, form: int, topBar: int, leftBar: int, canvas: int,
+                     status: int, swatch: int, buttons: array<int>, iconOf: array<int>,
+                     dividers: array<int>, icons: array<int>, selectedTool: int) : void {
+    WinFormsHelper.BeginLayout(form)
+
+    WinFormsHelper.SetBackColor(form, theme_background(activeTheme))
+    render_style_surface(topBar, activeTheme)
+    render_style_surface(leftBar, activeTheme)
+
+    WinFormsHelper.SetBackColor(canvas, theme_canvas_backdrop(activeTheme))
+    WinFormsHelper.SetBackColor(status, theme_background(activeTheme))
+    WinFormsHelper.SetForeColor(status, theme_text_dim(activeTheme))
+    WinFormsHelper.SetForeColor(swatch, theme_border(activeTheme))
+
+    let d: int = 0
+    while (d < app_divider_count()) {
+        render_style_divider(dividers[d], activeTheme)
+        d = d + 1
+    }
+
+    render_free_icons(icons)
+    render_build_icons(icons, activeTheme, app_icon_scale())
+
+    let i: int = 0
+    while (i < app_button_count()) {
+        let button: int = buttons[i]
+
+        if (button != 0) {
+            WinFormsHelper.SetButtonImage(button, icons[iconOf[i]])
+            render_style_button(button, activeTheme, i < tool_count() && i == selectedTool)
+        }
+
+        i = i + 1
+    }
+
+    WinFormsHelper.EndLayout(form)
+}
+
+// Moves the selected highlight to the active tool, leaving every other button unstyled.
+func app_mark_selected_tool(buttons: array<int>, activeTheme: int, selectedTool: int) : void {
+    let i: int = 0
+    while (i < tool_count()) {
+        render_style_button(buttons[i], activeTheme, i == selectedTool)
+        i = i + 1
+    }
 }
 
 // ── Input mapping ────────────────────────────────────────────────────────────

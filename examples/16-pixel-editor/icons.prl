@@ -1,0 +1,398 @@
+/*
+ * Pixel editor — toolbar icons
+ *
+ * Every icon is pixel art, drawn at 16x16 by the same rasteriser that draws in the canvas. Pure
+ * prolang; exercised by tests/test_icons.prl.
+ *
+ * Drawing them rather than shipping image files is the point. A pixel editor whose own buttons
+ * are pixel art has a look nothing else does, the icons recolour themselves for each theme
+ * because they are drawn from theme colours at load time, and they stay sharp at any integer
+ * zoom because doc_scale_into repeats pixels instead of resampling. It also means the icon set
+ * has no binary assets to keep in step with the source.
+ *
+ * Icons are two-colour by convention: `ink` for structure and `accent` for the part that says
+ * which tool it is. Two colours is what keeps a 16x16 glyph readable — more detail at this size
+ * turns into noise.
+ *
+ * The canvas is transparent to start, so anything not drawn lets the button's background show
+ * through and the icon picks up hover and selection states for free.
+ */
+
+import "array"
+import "document.prl"
+import "raster.prl"
+import "color.prl"
+import "tools.prl"
+
+enum Icon {
+    PENCIL,
+    ERASER,
+    FILL,
+    LINE,
+    RECT,
+    RECT_FILLED,
+    ELLIPSE,
+    ELLIPSE_FILLED,
+    PICKER,
+    NEW,
+    OPEN,
+    SAVE,
+    UNDO,
+    REDO,
+    CLEAR,
+    ZOOM_IN,
+    ZOOM_OUT,
+    ZOOM_FIT,
+    SIZE_UP,
+    SIZE_DOWN,
+    THEME
+}
+
+// Every icon is authored on this grid.
+func icon_size() : int {
+    return 16
+}
+
+func icon_count() : int {
+    return 21
+}
+
+/*
+ * The icon for a tool, so the toolbar does not need its own mapping.
+ *
+ * The tool enum and the icon enum agree for the first nine entries by construction, but this is
+ * written out rather than relying on that: they are separate enums, and a reordering of either
+ * would otherwise silently put the wrong picture on every tool button.
+ */
+func icon_for_tool(tool: int) : int {
+    if (tool == Tool.PENCIL)         { return Icon.PENCIL }
+    if (tool == Tool.ERASER)         { return Icon.ERASER }
+    if (tool == Tool.FILL)           { return Icon.FILL }
+    if (tool == Tool.LINE)           { return Icon.LINE }
+    if (tool == Tool.RECT)           { return Icon.RECT }
+    if (tool == Tool.RECT_FILLED)    { return Icon.RECT_FILLED }
+    if (tool == Tool.ELLIPSE)        { return Icon.ELLIPSE }
+    if (tool == Tool.ELLIPSE_FILLED) { return Icon.ELLIPSE_FILLED }
+    if (tool == Tool.PICKER)         { return Icon.PICKER }
+    return Icon.PENCIL
+}
+
+/*
+ * Draws one icon into `target`, which should be at least 16x16 and already transparent.
+ */
+func icon_draw(target: Document, icon: int, ink: int, accent: int) : void {
+    if (icon == Icon.PENCIL) {
+        icon_draw_pencil(target, ink, accent)
+    } elif (icon == Icon.ERASER) {
+        icon_draw_eraser(target, ink, accent)
+    } elif (icon == Icon.FILL) {
+        icon_draw_fill(target, ink, accent)
+    } elif (icon == Icon.LINE) {
+        icon_draw_line(target, ink, accent)
+    } elif (icon == Icon.RECT) {
+        icon_draw_rect(target, ink, accent, false)
+    } elif (icon == Icon.RECT_FILLED) {
+        icon_draw_rect(target, ink, accent, true)
+    } elif (icon == Icon.ELLIPSE) {
+        icon_draw_ellipse(target, ink, accent, false)
+    } elif (icon == Icon.ELLIPSE_FILLED) {
+        icon_draw_ellipse(target, ink, accent, true)
+    } elif (icon == Icon.PICKER) {
+        icon_draw_picker(target, ink, accent)
+    } elif (icon == Icon.NEW) {
+        icon_draw_new(target, ink, accent)
+    } elif (icon == Icon.OPEN) {
+        icon_draw_open(target, ink, accent)
+    } elif (icon == Icon.SAVE) {
+        icon_draw_save(target, ink, accent)
+    } elif (icon == Icon.UNDO) {
+        icon_draw_arrow(target, ink, accent, false)
+    } elif (icon == Icon.REDO) {
+        icon_draw_arrow(target, ink, accent, true)
+    } elif (icon == Icon.CLEAR) {
+        icon_draw_clear(target, ink, accent)
+    } elif (icon == Icon.ZOOM_IN) {
+        icon_draw_zoom(target, ink, accent, 1)
+    } elif (icon == Icon.ZOOM_OUT) {
+        icon_draw_zoom(target, ink, accent, 0 - 1)
+    } elif (icon == Icon.ZOOM_FIT) {
+        icon_draw_fit(target, ink, accent)
+    } elif (icon == Icon.SIZE_UP) {
+        icon_draw_size(target, ink, accent, true)
+    } elif (icon == Icon.SIZE_DOWN) {
+        icon_draw_size(target, ink, accent, false)
+    } elif (icon == Icon.THEME) {
+        icon_draw_theme(target, ink, accent)
+    }
+}
+
+/*
+ * A scratch touch-log for the rasterisers.
+ *
+ * They all take one so that a shape tool can rewind its preview; an icon is drawn once and never
+ * undone, so a zero-length array is passed and raster_plot's bounds check skips the recording.
+ * Bound to a typed local first because array_new returns an untyped `array`, and it is the
+ * annotation that pins the element type.
+ */
+func icon_log() : array<int> {
+    let empty: array<int> = array_new(0)
+    return empty
+}
+
+// ── Tools ────────────────────────────────────────────────────────────────────
+
+// A pencil lying diagonally, tip at the bottom left.
+func icon_draw_pencil(t: Document, ink: int, accent: int) : void {
+    let log: array<int> = icon_log()
+
+    // Body, three pixels wide along the diagonal.
+    raster_line(t, 5, 10, 11, 4, 3, accent, log, 0)
+    // Ferrule, a darker band across the body.
+    raster_line(t, 9, 8, 12, 5, 2, ink, log, 0)
+    // Tip.
+    raster_line(t, 2, 13, 5, 10, 2, ink, log, 0)
+    doc_set(t, 2, 13, ink)
+}
+
+/*
+ * An eraser held at an angle.
+ *
+ * Built as a parallelogram — each row shifted one pixel left of the one above — rather than as an
+ * upright block. Two earlier attempts were upright: a flat one split into two-pixel stripes that
+ * read as a list, and a square one that read as the filled-rectangle tool. The slant is what
+ * makes it an eraser, and the band across it is where the rubber meets the holder.
+ */
+func icon_draw_eraser(t: Document, ink: int, accent: int) : void {
+    let log: array<int> = icon_log()
+
+    let row: int = 0
+    while (row < 8) {
+        let left: int = 8 - row
+        raster_line(t, left, 4 + row, left + 6, 4 + row, 1, accent, log, 0)
+        row = row + 1
+    }
+
+    // The four edges.
+    raster_line(t, 8, 4, 1, 11, 1, ink, log, 0)
+    raster_line(t, 14, 4, 7, 11, 1, ink, log, 0)
+    raster_line(t, 8, 4, 14, 4, 1, ink, log, 0)
+    raster_line(t, 1, 11, 7, 11, 1, ink, log, 0)
+
+    // Rubber below, holder above.
+    raster_line(t, 5, 7, 11, 7, 1, ink, log, 0)
+}
+
+// A paint bucket tipped over, with a drop coming out.
+func icon_draw_fill(t: Document, ink: int, accent: int) : void {
+    let log: array<int> = icon_log()
+
+    raster_rect_filled(t, 3, 6, 10, 12, accent, log, 0)
+    raster_rect(t, 3, 6, 10, 12, 1, ink, log, 0)
+    // Handle.
+    raster_line(t, 3, 5, 6, 2, 1, ink, log, 0)
+    raster_line(t, 6, 2, 10, 5, 1, ink, log, 0)
+    // Falling drop.
+    doc_set(t, 13, 8, accent)
+    raster_rect_filled(t, 12, 9, 14, 12, accent, log, 0)
+    doc_set(t, 13, 13, accent)
+}
+
+// A bare diagonal with its endpoints marked, matching what the line tool does.
+func icon_draw_line(t: Document, ink: int, accent: int) : void {
+    let log: array<int> = icon_log()
+
+    raster_line(t, 3, 12, 12, 3, 1, ink, log, 0)
+    raster_rect_filled(t, 2, 11, 4, 13, accent, log, 0)
+    raster_rect_filled(t, 11, 2, 13, 4, accent, log, 0)
+}
+
+func icon_draw_rect(t: Document, ink: int, accent: int, filled: bool) : void {
+    let log: array<int> = icon_log()
+
+    if (filled) {
+        raster_rect_filled(t, 3, 4, 12, 11, accent, log, 0)
+        raster_rect(t, 3, 4, 12, 11, 1, ink, log, 0)
+    } else {
+        raster_rect(t, 3, 4, 12, 11, 2, ink, log, 0)
+        // Corner handles, the difference between "outline" and "filled" at a glance.
+        doc_set(t, 3, 4, accent)
+        doc_set(t, 12, 4, accent)
+        doc_set(t, 3, 11, accent)
+        doc_set(t, 12, 11, accent)
+    }
+}
+
+func icon_draw_ellipse(t: Document, ink: int, accent: int, filled: bool) : void {
+    let log: array<int> = icon_log()
+
+    if (filled) {
+        raster_ellipse_filled(t, 2, 3, 13, 12, accent, log, 0)
+        raster_ellipse(t, 2, 3, 13, 12, 1, ink, log, 0)
+    } else {
+        raster_ellipse(t, 2, 3, 13, 12, 2, ink, log, 0)
+
+        // Handles at the four cardinal points, the same device the rectangle outline uses to
+        // distinguish itself from its filled twin. Without them this icon is the only one drawn
+        // in a single colour, so it alone would not respond to a theme's accent.
+        doc_set(t, 2, 7, accent)
+        doc_set(t, 12, 7, accent)
+        doc_set(t, 7, 3, accent)
+        doc_set(t, 7, 11, accent)
+    }
+}
+
+// An eyedropper: barrel on the diagonal, bulb at the top right, drawn colour at the tip.
+func icon_draw_picker(t: Document, ink: int, accent: int) : void {
+    let log: array<int> = icon_log()
+
+    raster_line(t, 3, 12, 10, 5, 2, ink, log, 0)
+    raster_rect_filled(t, 9, 2, 13, 6, accent, log, 0)
+    raster_rect(t, 9, 2, 13, 6, 1, ink, log, 0)
+    doc_set(t, 2, 13, accent)
+    doc_set(t, 3, 13, accent)
+    doc_set(t, 2, 12, accent)
+}
+
+// ── File ─────────────────────────────────────────────────────────────────────
+
+// A blank page with a folded corner and a plus.
+func icon_draw_new(t: Document, ink: int, accent: int) : void {
+    let log: array<int> = icon_log()
+
+    raster_rect(t, 3, 1, 11, 14, 1, ink, log, 0)
+    // The fold, cutting the top-right corner off.
+    raster_line(t, 8, 1, 11, 4, 1, ink, log, 0)
+    // Plus, marking it as "new" rather than "a document".
+    raster_line(t, 7, 8, 7, 12, 1, accent, log, 0)
+    raster_line(t, 5, 10, 9, 10, 1, accent, log, 0)
+}
+
+// A folder, open at the front.
+func icon_draw_open(t: Document, ink: int, accent: int) : void {
+    let log: array<int> = icon_log()
+
+    // Tab along the back edge.
+    raster_rect_filled(t, 1, 3, 7, 5, accent, log, 0)
+    raster_rect_filled(t, 1, 5, 14, 12, accent, log, 0)
+    raster_rect(t, 1, 5, 14, 12, 1, ink, log, 0)
+    raster_rect(t, 1, 3, 7, 5, 1, ink, log, 0)
+    // The front flap, lower than the back so the folder reads as open.
+    raster_line(t, 1, 8, 14, 8, 1, ink, log, 0)
+}
+
+// A floppy disk: shutter at the top, label at the bottom.
+func icon_draw_save(t: Document, ink: int, accent: int) : void {
+    let log: array<int> = icon_log()
+
+    raster_rect_filled(t, 2, 2, 13, 13, accent, log, 0)
+    raster_rect(t, 2, 2, 13, 13, 1, ink, log, 0)
+    // Metal shutter.
+    raster_rect_filled(t, 5, 2, 10, 6, ink, log, 0)
+    doc_set(t, 9, 3, accent)
+    doc_set(t, 9, 4, accent)
+    // Paper label.
+    raster_rect_filled(t, 4, 9, 11, 13, ink, log, 0)
+}
+
+// ── Edit ─────────────────────────────────────────────────────────────────────
+
+/*
+ * An arrow with a hooked tail. `forward` mirrors it into a redo.
+ *
+ * A half-ellipse arc was the first attempt and did not survive being looked at: masking its lower
+ * half left a hump with a stub attached, which reads as neither an arrow nor a curve. A straight
+ * shaft with a chevron head and a tail dropping away is unmistakable at sixteen pixels, and the
+ * accent on the head alone is what makes the direction visible at a glance.
+ */
+func icon_draw_arrow(t: Document, ink: int, accent: int, forward: bool) : void {
+    let log: array<int> = icon_log()
+
+    if (forward) {
+        raster_line(t, 3, 6, 11, 6, 2, ink, log, 0)
+        // Head, opening to the right.
+        raster_line(t, 11, 6, 7, 2, 2, accent, log, 0)
+        raster_line(t, 11, 6, 7, 10, 2, accent, log, 0)
+        // Tail, turning down and away.
+        raster_line(t, 3, 6, 3, 12, 2, ink, log, 0)
+        raster_line(t, 3, 12, 6, 12, 2, ink, log, 0)
+    } else {
+        raster_line(t, 4, 6, 12, 6, 2, ink, log, 0)
+        raster_line(t, 4, 6, 8, 2, 2, accent, log, 0)
+        raster_line(t, 4, 6, 8, 10, 2, accent, log, 0)
+        raster_line(t, 12, 6, 12, 12, 2, ink, log, 0)
+        raster_line(t, 9, 12, 12, 12, 2, ink, log, 0)
+    }
+}
+
+// A waste basket, for clearing the canvas.
+func icon_draw_clear(t: Document, ink: int, accent: int) : void {
+    let log: array<int> = icon_log()
+
+    // Handle and lid.
+    raster_rect(t, 6, 1, 9, 2, 1, ink, log, 0)
+    raster_line(t, 2, 4, 13, 4, 2, accent, log, 0)
+    // Body, tapering is not worth the pixels at this size.
+    raster_rect(t, 4, 5, 11, 14, 1, ink, log, 0)
+    raster_line(t, 6, 7, 6, 12, 1, ink, log, 0)
+    raster_line(t, 9, 7, 9, 12, 1, ink, log, 0)
+}
+
+// ── View ─────────────────────────────────────────────────────────────────────
+
+// A magnifier. `sign` picks the plus, the minus, or neither.
+func icon_draw_zoom(t: Document, ink: int, accent: int, sign: int) : void {
+    let log: array<int> = icon_log()
+
+    raster_ellipse(t, 1, 1, 10, 10, 2, ink, log, 0)
+    raster_line(t, 9, 9, 14, 14, 2, ink, log, 0)
+
+    raster_line(t, 3, 5, 8, 5, 1, accent, log, 0)
+
+    if (sign > 0) {
+        raster_line(t, 5, 3, 5, 8, 1, accent, log, 0)
+    }
+}
+
+// Four corner brackets, the usual "fit to window".
+func icon_draw_fit(t: Document, ink: int, accent: int) : void {
+    let log: array<int> = icon_log()
+
+    raster_rect(t, 5, 5, 10, 10, 1, accent, log, 0)
+
+    // Top left.
+    raster_line(t, 1, 1, 4, 1, 1, ink, log, 0)
+    raster_line(t, 1, 1, 1, 4, 1, ink, log, 0)
+    // Top right.
+    raster_line(t, 11, 1, 14, 1, 1, ink, log, 0)
+    raster_line(t, 14, 1, 14, 4, 1, ink, log, 0)
+    // Bottom left.
+    raster_line(t, 1, 11, 1, 14, 1, ink, log, 0)
+    raster_line(t, 1, 14, 4, 14, 1, ink, log, 0)
+    // Bottom right.
+    raster_line(t, 14, 11, 14, 14, 1, ink, log, 0)
+    raster_line(t, 11, 14, 14, 14, 1, ink, log, 0)
+}
+
+// A dot whose size is the point, with a plus or minus beside it.
+func icon_draw_size(t: Document, ink: int, accent: int, larger: bool) : void {
+    let log: array<int> = icon_log()
+
+    if (larger) {
+        raster_ellipse_filled(t, 1, 4, 8, 11, ink, log, 0)
+        raster_line(t, 12, 5, 12, 11, 2, accent, log, 0)
+        raster_line(t, 9, 8, 15, 8, 2, accent, log, 0)
+    } else {
+        raster_ellipse_filled(t, 3, 6, 6, 9, ink, log, 0)
+        raster_line(t, 9, 8, 15, 8, 2, accent, log, 0)
+    }
+}
+
+// A circle half filled: the usual light/dark switch.
+func icon_draw_theme(t: Document, ink: int, accent: int) : void {
+    let log: array<int> = icon_log()
+
+    raster_ellipse_filled(t, 2, 2, 13, 13, accent, log, 0)
+    // Clear the right half back to transparent, leaving a half moon.
+    raster_rect_filled(t, 8, 0, 15, 15, 0, log, 0)
+    raster_ellipse(t, 2, 2, 13, 13, 1, ink, log, 0)
+}

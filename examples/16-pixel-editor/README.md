@@ -1,7 +1,7 @@
 # Pixel editor
 
-A pixel art editor written in ProLang, on Windows Forms. Twelve modules, ~2,000 lines, with a
-295-check test suite also written in ProLang.
+A pixel art editor written in ProLang, on Windows Forms. Fourteen modules, ~2,600 lines, with a
+331-check test suite also written in ProLang.
 
 ```powershell
 .\build.ps1 -Run     # build and start it
@@ -13,7 +13,38 @@ filled), colour picker. Sixteen-colour palette, integer zoom with a pixel grid, 
 and PNG open and save.
 
 Right-click erases. Single letters select tools (`p` `e` `f` `l` `r` `o` `i`), `ctrl+z` and
-`ctrl+y` undo and redo, `+` and `-` zoom, and the wheel zooms about the cursor.
+`ctrl+y` undo and redo, `+` and `-` zoom, `t` changes theme, and the wheel zooms about the cursor.
+
+## The icons are drawn in ProLang
+
+Every toolbar icon is pixel art, drawn at 16x16 by the same rasteriser that draws in the canvas —
+`icons.prl` is Bresenham lines, rectangles and ellipses, the module the editor already had.
+
+That is worth doing rather than shipping PNGs. The icons recolour themselves for each theme,
+because they are *drawn* from theme colours rather than tinted. They stay sharp at any integer
+zoom, because `doc_scale_into` repeats pixels instead of resampling. There are no binary assets to
+keep in step with the source. And an editor whose own buttons are pixel art looks like nothing
+else.
+
+`test_icons.prl` covers what can go mechanically wrong with a drawn icon: one that draws nothing,
+one that spills outside its grid, one that uses a colour it was not handed and so ignores the
+theme, and any two that come out identical.
+
+## Themes
+
+Four — Midnight, Paper, Ember, Contrast — cycled with the theme button or `t`. A theme is an int,
+and each colour role is a function of it (`theme_surface`, `theme_accent`, `theme_grid`, …) rather
+than a struct of colours: ProLang has no module-level state a table could live in, and no way to
+hold a nested struct safely, so a lookup chain per role is what the language actually supports.
+
+The roles are named for purpose rather than appearance, so a light theme is a matter of returning
+different values instead of every call site asking which theme is active.
+
+`test_theme.prl` mostly checks *properties across all four* rather than particular colours, since
+the numbers are meant to be retuned by eye: text stays legible against its surface, the accent
+stays distinct from what it sits on, buttons give hover feedback, and the grid stays visible.
+That last one caught a real bug — Contrast's grid was near-opaque white, which is invisible on the
+white canvas every new image starts as.
 
 ## Layout
 
@@ -34,6 +65,8 @@ being runnable under `dotnet test`.
 | `palette.prl` | the sixteen colours and the swatch strip |
 | `view.prl` | zoom and pan arithmetic |
 | `tools.prl` | the press / drag / release state machine |
+| `theme.prl` | the four themes, as a colour per role |
+| `icons.prl` | every toolbar icon, drawn as 16x16 pixel art |
 | `render.prl` | the boundary: hands model state to the shim |
 | `app.prl` | window construction and the event loop |
 

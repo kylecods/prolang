@@ -137,6 +137,43 @@ func doc_copy_into(source: Document, target: Document) : void {
     }
 }
 
+/*
+ * Copies `source` into `target` with each pixel repeated `factor` times in both directions.
+ *
+ * Nearest-neighbour by construction — every output pixel is exactly one input pixel, never a
+ * blend — which is what keeps a scaled-up icon looking drawn rather than resampled. The toolbar
+ * icons are authored at 16x16 and shown at twice that.
+ */
+func doc_scale_into(source: Document, target: Document, factor: int) : void {
+    if (factor < 1) {
+        return
+    }
+
+    let rows: int = min(source.height, target.height / factor)
+    let cols: int = min(source.width, target.width / factor)
+
+    let y: int = 0
+    while (y < rows) {
+        let x: int = 0
+        while (x < cols) {
+            let colour: int = source.pixels[(y * source.width) + x]
+
+            let dy: int = 0
+            while (dy < factor) {
+                let dx: int = 0
+                while (dx < factor) {
+                    target.pixels[(((y * factor) + dy) * target.width) + (x * factor) + dx] = colour
+                    dx = dx + 1
+                }
+                dy = dy + 1
+            }
+
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
 // True when both documents have the same dimensions and identical pixels. Used by the tests.
 func doc_equals(a: Document, b: Document) : bool {
     if (a.width != b.width || a.height != b.height) {

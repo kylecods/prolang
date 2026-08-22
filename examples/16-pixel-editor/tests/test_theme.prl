@@ -1,0 +1,110 @@
+/*
+ * Pixel editor tests — theme.prl
+ *
+ * Most of these are properties that have to hold for *every* theme rather than checks on
+ * particular colours. A theme is a set of numbers someone will retune by eye; what the tests can
+ * usefully protect is that a retuned theme stays legible — text against its background, an accent
+ * distinct from the surface it sits on, a grid that does not vanish.
+ */
+
+import "testing.prl"
+import "../theme.prl"
+import "../color.prl"
+
+func test_theme_run() : TestRun {
+    let r: TestRun = t_new()
+
+    r = t_eq_int(r, "theme count", theme_count(), 4)
+    r = t_eq_str(r, "first theme is named", theme_name(Theme.MIDNIGHT), "Midnight")
+    r = t_eq_str(r, "unknown theme is named", theme_name(99), "Unknown")
+
+    // Cycling visits every theme and comes back to the start.
+    let seen: int = 0
+    let current: int = Theme.MIDNIGHT
+    let step: int = 0
+    while (step < theme_count()) {
+        seen = seen + 1
+        current = theme_next(current)
+        step = step + 1
+    }
+    r = t_eq_int(r, "cycling wraps to the start", current, Theme.MIDNIGHT)
+    r = t_eq_int(r, "cycling visits every theme", seen, theme_count())
+
+    // ── Properties every theme must satisfy ──────────────────────────────────
+    let opaque: int = 0
+    let readable: int = 0
+    let accented: int = 0
+    let layered: int = 0
+    let gridVisible: int = 0
+
+    let i: int = 0
+    while (i < theme_count()) {
+        // Every solid role must be opaque. A transparent surface shows the desktop through it.
+        if (color_a(theme_background(i)) == 255
+            && color_a(theme_surface(i)) == 255
+            && color_a(theme_text(i)) == 255
+            && color_a(theme_accent(i)) == 255
+            && color_a(theme_canvas_backdrop(i)) == 255) {
+            opaque = opaque + 1
+        }
+
+        // Text has to be legible on the surface it is drawn on. 60 points of luma separation is
+        // about where it stops being comfortable.
+        if (util_abs(color_luma(theme_text(i)) - color_luma(theme_surface(i))) > 60) {
+            readable = readable + 1
+        }
+
+        // The accent marks the selected tool, so it must not match the surface behind it.
+        if (theme_accent(i) != theme_surface(i)
+            && util_abs(color_luma(theme_accent(i)) - color_luma(theme_surface(i))) > 30) {
+            accented = accented + 1
+        }
+
+        // Toolbars sit on the window; if the two matched, the layout would read as one slab.
+        if (theme_surface(i) != theme_background(i)) {
+            layered = layered + 1
+        }
+
+        // The grid is drawn over the artwork, not over the interface. A new canvas is white, so
+        // a grid that is near-white and near-opaque disappears exactly where it is needed —
+        // which is what Contrast originally did.
+        if (color_a(theme_grid(i)) < 255 && color_luma(theme_grid(i)) < 220) {
+            gridVisible = gridVisible + 1
+        }
+
+        i = i + 1
+    }
+
+    r = t_eq_int(r, "every theme is opaque", opaque, theme_count())
+    r = t_eq_int(r, "every theme has readable text", readable, theme_count())
+    r = t_eq_int(r, "every accent stands out", accented, theme_count())
+    r = t_eq_int(r, "every theme layers its surfaces", layered, theme_count())
+    r = t_eq_int(r, "every grid stays visible on white", gridVisible, theme_count())
+
+    // Hover and pressed have to differ from the resting surface, or a button gives no feedback.
+    let feedback: int = 0
+    let k: int = 0
+    while (k < theme_count()) {
+        if (theme_hover(k) != theme_surface(k)
+            && theme_pressed(k) != theme_surface(k)
+            && theme_selected(k) != theme_surface(k)) {
+            feedback = feedback + 1
+        }
+        k = k + 1
+    }
+    r = t_eq_int(r, "every theme gives button feedback", feedback, theme_count())
+
+    // theme_is_dark is derived from the surface rather than listed, so it cannot disagree with
+    // the palette it describes.
+    r = t_true(r, "midnight is dark", theme_is_dark(Theme.MIDNIGHT))
+    r = t_false(r, "paper is light", theme_is_dark(Theme.PAPER))
+    r = t_true(r, "ember is dark", theme_is_dark(Theme.EMBER))
+    r = t_true(r, "contrast is dark", theme_is_dark(Theme.CONTRAST))
+
+    // An out-of-range theme falls back rather than returning a transparent colour, so a bad id
+    // cannot paint the interface invisible.
+    r = t_eq_int(r, "unknown theme falls back", theme_background(99), theme_background(Theme.MIDNIGHT))
+    r = t_eq_int(r, "unknown accent falls back", theme_accent(99), theme_accent(Theme.MIDNIGHT))
+
+    return r
+}

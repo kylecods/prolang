@@ -1,0 +1,162 @@
+/*
+ * Pixel editor — themes
+ *
+ * Every colour the interface uses, for each theme. Pure prolang; exercised by tests/test_theme.prl.
+ *
+ * A theme is an int, and each role is a function of it rather than a struct of colours. That is
+ * not a stylistic choice: prolang structs are value types with no way to hold a nested struct
+ * safely, and there is no module-level state a table could live in, so a lookup chain per role is
+ * what the language actually supports. It also means adding a role does not touch any existing
+ * theme's definition.
+ *
+ * The roles are deliberately about *purpose* rather than appearance — `theme_surface` rather than
+ * `theme_dark_grey` — so a light theme is a matter of returning different values, not of every
+ * call site testing which theme is active.
+ */
+
+import "color.prl"
+
+enum Theme {
+    MIDNIGHT,
+    PAPER,
+    EMBER,
+    CONTRAST
+}
+
+func theme_count() : int {
+    return 4
+}
+
+func theme_name(theme: int) : string {
+    if (theme == Theme.MIDNIGHT) { return "Midnight" }
+    if (theme == Theme.PAPER)    { return "Paper" }
+    if (theme == Theme.EMBER)    { return "Ember" }
+    if (theme == Theme.CONTRAST) { return "Contrast" }
+    return "Unknown"
+}
+
+// Cycles to the next theme, wrapping. The theme button steps through them.
+func theme_next(theme: int) : int {
+    return (theme + 1) % theme_count()
+}
+
+// ── Roles ────────────────────────────────────────────────────────────────────
+
+// The window behind everything.
+func theme_background(theme: int) : int {
+    if (theme == Theme.MIDNIGHT) { return color_rgb(24, 26, 33) }
+    if (theme == Theme.PAPER)    { return color_rgb(238, 236, 230) }
+    if (theme == Theme.EMBER)    { return color_rgb(30, 24, 22) }
+    if (theme == Theme.CONTRAST) { return color_rgb(0, 0, 0) }
+    return color_rgb(24, 26, 33)
+}
+
+// Toolbars and the status bar: one step away from the background.
+func theme_surface(theme: int) : int {
+    if (theme == Theme.MIDNIGHT) { return color_rgb(33, 36, 45) }
+    if (theme == Theme.PAPER)    { return color_rgb(250, 249, 246) }
+    if (theme == Theme.EMBER)    { return color_rgb(43, 34, 31) }
+    if (theme == Theme.CONTRAST) { return color_rgb(20, 20, 20) }
+    return color_rgb(33, 36, 45)
+}
+
+// Hairlines between regions.
+func theme_border(theme: int) : int {
+    if (theme == Theme.MIDNIGHT) { return color_rgb(52, 57, 70) }
+    if (theme == Theme.PAPER)    { return color_rgb(206, 202, 193) }
+    if (theme == Theme.EMBER)    { return color_rgb(72, 55, 48) }
+    if (theme == Theme.CONTRAST) { return color_rgb(255, 255, 255) }
+    return color_rgb(52, 57, 70)
+}
+
+// Ordinary text and icon strokes.
+func theme_text(theme: int) : int {
+    if (theme == Theme.MIDNIGHT) { return color_rgb(214, 219, 230) }
+    if (theme == Theme.PAPER)    { return color_rgb(42, 42, 46) }
+    if (theme == Theme.EMBER)    { return color_rgb(232, 216, 205) }
+    if (theme == Theme.CONTRAST) { return color_rgb(255, 255, 255) }
+    return color_rgb(214, 219, 230)
+}
+
+// Secondary text: the status bar's less important half.
+func theme_text_dim(theme: int) : int {
+    if (theme == Theme.MIDNIGHT) { return color_rgb(132, 141, 158) }
+    if (theme == Theme.PAPER)    { return color_rgb(118, 116, 112) }
+    if (theme == Theme.EMBER)    { return color_rgb(160, 134, 120) }
+    if (theme == Theme.CONTRAST) { return color_rgb(200, 200, 200) }
+    return color_rgb(132, 141, 158)
+}
+
+// The selected tool, the focus ring, and the second colour in every icon.
+func theme_accent(theme: int) : int {
+    if (theme == Theme.MIDNIGHT) { return color_rgb(94, 158, 255) }
+    if (theme == Theme.PAPER)    { return color_rgb(0, 110, 200) }
+    if (theme == Theme.EMBER)    { return color_rgb(240, 140, 60) }
+    if (theme == Theme.CONTRAST) { return color_rgb(255, 235, 0) }
+    return color_rgb(94, 158, 255)
+}
+
+// Background of a button under the pointer.
+func theme_hover(theme: int) : int {
+    if (theme == Theme.MIDNIGHT) { return color_rgb(48, 54, 68) }
+    if (theme == Theme.PAPER)    { return color_rgb(226, 232, 240) }
+    if (theme == Theme.EMBER)    { return color_rgb(62, 48, 42) }
+    if (theme == Theme.CONTRAST) { return color_rgb(60, 60, 60) }
+    return color_rgb(48, 54, 68)
+}
+
+// Background of a button being held down.
+func theme_pressed(theme: int) : int {
+    if (theme == Theme.MIDNIGHT) { return color_rgb(62, 70, 88) }
+    if (theme == Theme.PAPER)    { return color_rgb(206, 216, 228) }
+    if (theme == Theme.EMBER)    { return color_rgb(82, 62, 52) }
+    if (theme == Theme.CONTRAST) { return color_rgb(90, 90, 90) }
+    return color_rgb(62, 70, 88)
+}
+
+// Background of the currently selected tool.
+func theme_selected(theme: int) : int {
+    if (theme == Theme.MIDNIGHT) { return color_rgb(40, 62, 100) }
+    if (theme == Theme.PAPER)    { return color_rgb(206, 226, 246) }
+    if (theme == Theme.EMBER)    { return color_rgb(92, 58, 32) }
+    if (theme == Theme.CONTRAST) { return color_rgb(70, 60, 0) }
+    return color_rgb(40, 62, 100)
+}
+
+// The area around the image, outside its bounds.
+func theme_canvas_backdrop(theme: int) : int {
+    if (theme == Theme.MIDNIGHT) { return color_rgb(18, 19, 24) }
+    if (theme == Theme.PAPER)    { return color_rgb(220, 218, 212) }
+    if (theme == Theme.EMBER)    { return color_rgb(22, 17, 15) }
+    if (theme == Theme.CONTRAST) { return color_rgb(0, 0, 0) }
+    return color_rgb(18, 19, 24)
+}
+
+/*
+ * The pixel grid, drawn over the image.
+ *
+ * Semi-transparent, and never the same hue as the theme's own surfaces. The grid sits on top of
+ * whatever has been drawn, so a colour chosen to look right against the interface can disappear
+ * against the artwork — Contrast originally used near-opaque white, which was invisible on the
+ * white canvas every new image starts as. Its grid is the accent yellow instead, which reads on
+ * both black and white.
+ */
+func theme_grid(theme: int) : int {
+    if (theme == Theme.MIDNIGHT) { return color_argb(70, 150, 170, 210) }
+    if (theme == Theme.PAPER)    { return color_argb(60, 90, 90, 100) }
+    if (theme == Theme.EMBER)    { return color_argb(70, 220, 160, 120) }
+    if (theme == Theme.CONTRAST) { return color_argb(140, 255, 235, 0) }
+    return color_argb(70, 150, 170, 210)
+}
+
+// ── Derived ──────────────────────────────────────────────────────────────────
+
+/*
+ * True when the theme's surfaces are dark.
+ *
+ * Computed from the surface colour rather than listed per theme, so it cannot disagree with the
+ * palette it describes when a theme is retuned.
+ */
+func theme_is_dark(theme: int) : bool {
+    return color_luma(theme_surface(theme)) < 128
+}
