@@ -1,0 +1,229 @@
+/*
+ * Pixel editor tests — icons.prl
+ *
+ * An icon cannot be checked for looking right, but the ways it can be *wrong* are all mechanical:
+ * drawing nothing, filling its whole box, crowding its neighbours, using a colour it was not given
+ * and so ignoring the theme, or being indistinguishable from another icon.
+ *
+ * The set is also meant to be resolution independent, which is a property that can be tested
+ * directly: the same glyph drawn at two sizes must cover the same *proportion* of its box. That is
+ * the check that catches a coordinate accidentally written in pixels rather than units, which
+ * looks perfectly correct at whatever size the author happened to try.
+ */
+
+import "array"
+import "testing"
+import "ui/icons"
+import "ui/document"
+import "ui/color"
+
+// How many pixels of `glyph` are not transparent.
+func test_icons_painted(glyph: Document) : int {
+    return doc_pixel_count(glyph) - doc_count_colour(glyph, 0)
+}
+
+/*
+ * How many pixels of the outermost ring of `glyph` are painted.
+ *
+ * Icons are drawn with a margin so that two buttons side by side do not read as one wide one. A
+ * glyph touching its own edge has lost that margin.
+ */
+func test_icons_border(glyph: Document) : int {
+    let last: int = glyph.width - 1
+    let touched: int = 0
+    let i: int = 0
+
+    while (i <= last) {
+        if (doc_get(glyph, i, 0) != 0)    { touched = touched + 1 }
+        if (doc_get(glyph, i, last) != 0) { touched = touched + 1 }
+        if (doc_get(glyph, 0, i) != 0)    { touched = touched + 1 }
+        if (doc_get(glyph, last, i) != 0) { touched = touched + 1 }
+        i = i + 1
+    }
+
+    return touched
+}
+
+func test_icons_run() : TestRun {
+    let r: TestRun = t_new()
+
+    let ink: int = color_rgb(255, 255, 255)
+    let accent: int = color_rgb(0, 120, 255)
+
+    // Icons are described in units, not pixels. This is the size they are rasterised at here; one
+    // unit is one pixel at this size, which makes the coordinates in icons.prl readable directly.
+    let size: int = icon_grid()
+    let area: int = size * size
+
+    r = t_eq_int(r, "the design grid is 48 units", icon_grid(), 48)
+    r = t_eq_int(r, "icon count", icon_count(), 21)
+    r = t_true(r, "the set has one stroke weight", icon_stroke_width() > 0)
+
+    // The unit conversion is what makes the set resolution independent, so it is checked first.
+    let probe: Document = doc_new(96, 96, 0)
+    r = t_eq_int(r, "a unit scales with the target", icon_u(probe, 24), 48)
+    r = t_eq_int(r, "the origin stays the origin", icon_u(probe, 0), 0)
+    r = t_eq_int(r, "the far edge stays the far edge", icon_u(probe, icon_grid()), 96)
+
+    // ── Properties every icon must satisfy ───────────────────────────────────
+    let drawn: int = 0
+    let notCrowded: int = 0
+    let notSparse: int = 0
+    let marginKept: int = 0
+    let correctColours: int = 0
+    let usesAccent: int = 0
+    let usesInk: int = 0
+
+    let i: int = 0
+    while (i < icon_count()) {
+        let glyph: Document = doc_new(size, size, 0)
+        icon_draw(glyph, i, ink, accent)
+
+        let painted: int = test_icons_painted(glyph)
+
+        // An icon that draws nothing is an invisible button.
+        if (painted > 0) {
+            drawn = drawn + 1
+        }
+
+        // One occupying a handful of pixels vanishes at button size; one filling its box reads as
+        // a coloured tile rather than a symbol.
+        if ((painted * 40) > area) {
+            notSparse = notSparse + 1
+        }
+        if ((painted * 4) < (area * 3)) {
+            notCrowded = notCrowded + 1
+        }
+
+        if (test_icons_border(glyph) == 0) {
+            marginKept = marginKept + 1
+        }
+
+        // Only the two colours it was handed, plus transparency. A stray colour means something
+        // was drawn with a hardcoded value that will not follow the theme.
+        if ((doc_count_colour(glyph, ink) + doc_count_colour(glyph, accent) + doc_count_colour(glyph, 0))
+            == area) {
+            correctColours = correctColours + 1
+        }
+
+        // Both colours, not just one. An icon drawn entirely in ink would not respond to a theme's
+        // accent, and one drawn entirely in accent would not read as part of the set.
+        if (doc_count_colour(glyph, accent) > 0) {
+            usesAccent = usesAccent + 1
+        }
+        if (doc_count_colour(glyph, ink) > 0) {
+            usesInk = usesInk + 1
+        }
+
+        i = i + 1
+    }
+
+    r = t_eq_int(r, "every icon draws something", drawn, icon_count())
+    r = t_eq_int(r, "no icon is too sparse to see", notSparse, icon_count())
+    r = t_eq_int(r, "no icon fills its box", notCrowded, icon_count())
+    r = t_eq_int(r, "every icon keeps its margin", marginKept, icon_count())
+    r = t_eq_int(r, "every icon uses only theme colours", correctColours, icon_count())
+    r = t_eq_int(r, "every icon uses the accent", usesAccent, icon_count())
+    r = t_eq_int(r, "every icon uses the ink", usesInk, icon_count())
+
+    // ── Resolution independence ──────────────────────────────────────────────
+    /*
+     * The same glyph at twice the size must cover about four times the pixels, because it is the
+     * same drawing over four times the area.
+     *
+     * Not exactly four times: an outline is a *perimeter*, which grows linearly while the area
+     * grows quadratically, so a stroke covers proportionally less of a larger box. A third either
+     * way is loose enough for that and tight enough to catch a coordinate written in pixels, which
+     * would leave the larger glyph the same absolute size and so a quarter of the proportion.
+     */
+    let consistent: int = 0
+    let big: int = size * 2
+    let bigArea: int = big * big
+
+    let s: int = 0
+    while (s < icon_count()) {
+        let small: Document = doc_new(size, size, 0)
+        icon_draw(small, s, ink, accent)
+
+        let large: Document = doc_new(big, big, 0)
+        icon_draw(large, s, ink, accent)
+
+        // Compared as parts per thousand of the box, so the two sizes are directly comparable.
+        let smallShare: int = (test_icons_painted(small) * 1000) / area
+        let largeShare: int = (test_icons_painted(large) * 1000) / bigArea
+
+        if ((largeShare * 3) >= (smallShare * 2) && (largeShare * 2) <= (smallShare * 3)) {
+            consistent = consistent + 1
+        }
+
+        s = s + 1
+    }
+    r = t_eq_int(r, "every icon covers the same share at twice the size", consistent, icon_count())
+
+    // A glyph an eighth of the size still draws rather than collapsing to nothing, which is what
+    // would happen if a unit conversion truncated a whole shape away.
+    let tiny: Document = doc_new(size / 8, size / 8, 0)
+    icon_draw(tiny, Icon.SAVE, ink, accent)
+    r = t_true(r, "an icon survives a very small target", test_icons_painted(tiny) > 0)
+
+    // ── Distinctness ─────────────────────────────────────────────────────────
+    // No two icons may be identical, or two buttons would be indistinguishable.
+    let duplicateIcons: int = 0
+    let x: int = 0
+    while (x < icon_count()) {
+        let first: Document = doc_new(size, size, 0)
+        icon_draw(first, x, ink, accent)
+
+        let y: int = x + 1
+        while (y < icon_count()) {
+            let second: Document = doc_new(size, size, 0)
+            icon_draw(second, y, ink, accent)
+
+            if (doc_equals(first, second)) {
+                duplicateIcons = duplicateIcons + 1
+            }
+
+            y = y + 1
+        }
+        x = x + 1
+    }
+    r = t_eq_int(r, "no two icons are identical", duplicateIcons, 0)
+
+    // The two arrows are mirror images and the pairs of tool icons differ only in their fill, so
+    // they are the ones most likely to come out the same. Checked by name rather than trusting the
+    // sweep above to have covered them.
+    let undo: Document = doc_new(size, size, 0)
+    icon_draw(undo, Icon.UNDO, ink, accent)
+    let redo: Document = doc_new(size, size, 0)
+    icon_draw(redo, Icon.REDO, ink, accent)
+    r = t_false(r, "undo and redo differ", doc_equals(undo, redo))
+
+    let hollow: Document = doc_new(size, size, 0)
+    icon_draw(hollow, Icon.RECT, ink, accent)
+    let solid: Document = doc_new(size, size, 0)
+    icon_draw(solid, Icon.RECT_FILLED, ink, accent)
+    r = t_true(r, "the filled rectangle is the fuller of the two",
+               test_icons_painted(solid) > test_icons_painted(hollow))
+
+    // ── Theming ──────────────────────────────────────────────────────────────
+    // Recolouring is what makes a theme switch work: the same icon drawn with different colours
+    // must come out different, and must not retain any of the old ones.
+    let blue: Document = doc_new(size, size, 0)
+    icon_draw(blue, Icon.SAVE, ink, accent)
+
+    let red: Document = doc_new(size, size, 0)
+    icon_draw(red, Icon.SAVE, color_rgb(0, 0, 0), color_rgb(255, 0, 0))
+
+    r = t_false(r, "recolouring changes the icon", doc_equals(blue, red))
+    r = t_eq_int(r, "recolouring leaves no old accent", doc_count_colour(red, accent), 0)
+    r = t_eq_int(r, "recolouring leaves no old ink", doc_count_colour(red, ink), 0)
+    r = t_eq_int(r, "recolouring changes nothing else",
+                 test_icons_painted(red), test_icons_painted(blue))
+
+    // An unknown icon id draws nothing rather than falling through to some other picture.
+    let unknown: Document = doc_new(size, size, 0)
+    icon_draw(unknown, 99, ink, accent)
+    r = t_eq_int(r, "unknown icon draws nothing", test_icons_painted(unknown), 0)
+
+    return r
+}

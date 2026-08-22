@@ -1,0 +1,452 @@
+/*
+ * Pixel editor — toolbar icons
+ *
+ * Every icon is drawn, not loaded. Pure prolang; exercised by tests/test_icons.prl.
+ *
+ * They are described in *units* on a 48-unit square and rasterised at whatever pixel size the
+ * display calls for, so there is no authored resolution and nothing to look wrong at 150% or 200%
+ * scaling. render.prl draws each one several times oversized and averages it down, which is where
+ * the smooth edges come from — shape.prl itself only ever writes solid pixels.
+ *
+ * That resolution independence is the reason for drawing them at all. A set of PNGs would need one
+ * file per size per theme, would still be wrong at the next scaling factor Windows offers, and
+ * would have to be kept in step with a colour scheme it cannot see. These follow the theme because
+ * they are drawn from its colours, and they follow the display because they have no fixed size.
+ *
+ * ── The drawing rules ────────────────────────────────────────────────────────
+ *
+ * They are deliberately uniform, because a set of icons is read as a set: an odd stroke weight or
+ * a glyph that crowds its box is visible immediately even when no single icon looks wrong.
+ *
+ *   - One stroke weight, ICON_STROKE units, for every outline.
+ *   - Round caps and joins everywhere, which shape_stroke gives for nothing.
+ *   - Corner radii on every rectangle. Nothing in the set has a sharp right angle.
+ *   - A margin of at least two units on all four sides, so neighbouring buttons do not run
+ *     together.
+ *   - Two colours: `ink` for structure, `accent` for the one part that says which tool it is.
+ *     Three would be noise at this size, and one would leave the icon unable to respond to a
+ *     theme change.
+ *
+ * Anything not drawn stays transparent, which is what lets a button's own background — hover,
+ * pressed, selected — show through the glyph rather than sitting behind a coloured tile.
+ */
+
+import "array"
+import "ui/document"
+import "ui/shape"
+import "ui/color"
+
+enum Icon {
+    PENCIL,
+    ERASER,
+    FILL,
+    LINE,
+    RECT,
+    RECT_FILLED,
+    ELLIPSE,
+    ELLIPSE_FILLED,
+    PICKER,
+    NEW,
+    OPEN,
+    SAVE,
+    UNDO,
+    REDO,
+    CLEAR,
+    ZOOM_IN,
+    ZOOM_OUT,
+    ZOOM_FIT,
+    SIZE_UP,
+    SIZE_DOWN,
+    THEME
+}
+
+/*
+ * The side of the square every icon is described on.
+ *
+ * 48 rather than the 24 an icon set is normally drawn on, so that half-unit positions — the centre
+ * of a stroke, the midpoint of an edge — are still whole numbers. prolang has no floating point,
+ * and rounding them would put the two halves of a symmetric glyph a unit apart.
+ */
+func icon_grid() : int {
+    return 48
+}
+
+// The one stroke weight the whole set uses, in units.
+func icon_stroke_width() : int {
+    return 4
+}
+
+func icon_count() : int {
+    return 21
+}
+
+/*
+ * Converts a coordinate in design units to a pixel in `target`.
+ *
+ * This is the whole of the resolution independence: every icon below is written in units and goes
+ * through here, so drawing at a different size is a different multiplier and no other change.
+ */
+func icon_u(target: Document, units: int) : int {
+    return (target.width * units) / icon_grid()
+}
+
+// ── Unit-space drawing ───────────────────────────────────────────────────────
+//
+// One thin wrapper per shape.prl primitive, taking design units instead of pixels. They exist so
+// that the glyph definitions below read as the drawings they are, rather than as a column of
+// identical conversion calls. Every icon uses these and none calls shape.prl directly.
+
+func icon_stroke(t: Document, x0: int, y0: int, x1: int, y1: int, width: int, colour: int) : void {
+    shape_stroke(t, icon_u(t, x0), icon_u(t, y0), icon_u(t, x1), icon_u(t, y1), icon_u(t, width), colour)
+}
+
+func icon_disc(t: Document, cx: int, cy: int, radius: int, colour: int) : void {
+    shape_disc(t, icon_u(t, cx), icon_u(t, cy), icon_u(t, radius), colour)
+}
+
+func icon_ring(t: Document, cx: int, cy: int, outer: int, inner: int, colour: int) : void {
+    shape_ring(t, icon_u(t, cx), icon_u(t, cy), icon_u(t, outer), icon_u(t, inner), colour)
+}
+
+func icon_arc(t: Document, cx: int, cy: int, outer: int, inner: int, quadrants: int, colour: int) : void {
+    shape_arc(t, icon_u(t, cx), icon_u(t, cy), icon_u(t, outer), icon_u(t, inner), quadrants, colour)
+}
+
+func icon_rect(t: Document, x0: int, y0: int, x1: int, y1: int, radius: int, width: int, colour: int) : void {
+    shape_round_rect(t, icon_u(t, x0), icon_u(t, y0), icon_u(t, x1), icon_u(t, y1),
+                     icon_u(t, radius), icon_u(t, width), colour)
+}
+
+func icon_rect_filled(t: Document, x0: int, y0: int, x1: int, y1: int, radius: int, colour: int) : void {
+    shape_round_rect_filled(t, icon_u(t, x0), icon_u(t, y0), icon_u(t, x1), icon_u(t, y1),
+                            icon_u(t, radius), colour)
+}
+
+func icon_tri(t: Document, ax: int, ay: int, bx: int, by: int, cx: int, cy: int, colour: int) : void {
+    shape_triangle(t, icon_u(t, ax), icon_u(t, ay), icon_u(t, bx), icon_u(t, by),
+                   icon_u(t, cx), icon_u(t, cy), colour)
+}
+
+func icon_quad(t: Document, ax: int, ay: int, bx: int, by: int, cx: int, cy: int, dx: int, dy: int, colour: int) : void {
+    shape_quad(t, icon_u(t, ax), icon_u(t, ay), icon_u(t, bx), icon_u(t, by),
+               icon_u(t, cx), icon_u(t, cy), icon_u(t, dx), icon_u(t, dy), colour)
+}
+
+/*
+ * Draws one icon into `target`, which should be square and already transparent.
+ *
+ * An unrecognised id draws nothing. Falling through to some other picture would put a plausible
+ * but wrong glyph on a button, which is harder to notice than an empty one.
+ */
+func icon_draw(target: Document, icon: int, ink: int, accent: int) : void {
+    if (icon == Icon.PENCIL) {
+        icon_draw_pencil(target, ink, accent)
+    } elif (icon == Icon.ERASER) {
+        icon_draw_eraser(target, ink, accent)
+    } elif (icon == Icon.FILL) {
+        icon_draw_fill(target, ink, accent)
+    } elif (icon == Icon.LINE) {
+        icon_draw_line(target, ink, accent)
+    } elif (icon == Icon.RECT) {
+        icon_draw_rect(target, ink, accent, false)
+    } elif (icon == Icon.RECT_FILLED) {
+        icon_draw_rect(target, ink, accent, true)
+    } elif (icon == Icon.ELLIPSE) {
+        icon_draw_ellipse(target, ink, accent, false)
+    } elif (icon == Icon.ELLIPSE_FILLED) {
+        icon_draw_ellipse(target, ink, accent, true)
+    } elif (icon == Icon.PICKER) {
+        icon_draw_picker(target, ink, accent)
+    } elif (icon == Icon.NEW) {
+        icon_draw_new(target, ink, accent)
+    } elif (icon == Icon.OPEN) {
+        icon_draw_open(target, ink, accent)
+    } elif (icon == Icon.SAVE) {
+        icon_draw_save(target, ink, accent)
+    } elif (icon == Icon.UNDO) {
+        icon_draw_arrow(target, ink, accent, false)
+    } elif (icon == Icon.REDO) {
+        icon_draw_arrow(target, ink, accent, true)
+    } elif (icon == Icon.CLEAR) {
+        icon_draw_clear(target, ink, accent)
+    } elif (icon == Icon.ZOOM_IN) {
+        icon_draw_zoom(target, ink, accent, true)
+    } elif (icon == Icon.ZOOM_OUT) {
+        icon_draw_zoom(target, ink, accent, false)
+    } elif (icon == Icon.ZOOM_FIT) {
+        icon_draw_fit(target, ink, accent)
+    } elif (icon == Icon.SIZE_UP) {
+        icon_draw_size(target, ink, accent, true)
+    } elif (icon == Icon.SIZE_DOWN) {
+        icon_draw_size(target, ink, accent, false)
+    } elif (icon == Icon.THEME) {
+        icon_draw_theme(target, ink, accent)
+    }
+}
+
+// ── Tools ────────────────────────────────────────────────────────────────────
+
+/*
+ * A pencil on the diagonal, point at the lower left.
+ *
+ * The body is a quadrilateral rather than a thick stroke because a pencil has square-cut ends and
+ * shape_stroke rounds them off. Its four corners are the centre line's two endpoints displaced by
+ * the same perpendicular, which is what keeps the sides parallel; the ferrule is built from the
+ * same displacement at two points further along, so it meets both edges exactly.
+ */
+func icon_draw_pencil(t: Document, ink: int, accent: int) : void {
+    icon_quad(t, 30, 10, 38, 18, 22, 34, 14, 26, accent)
+    icon_quad(t, 23, 17, 27, 13, 35, 21, 31, 25, ink)
+    icon_tri(t, 14, 26, 22, 34, 8, 40, ink)
+}
+
+/*
+ * An eraser held at an angle, resting on the line it is clearing.
+ *
+ * The slant is what makes it an eraser rather than a block, and the line under it is what makes
+ * the slant read as an angle rather than as a rotated rectangle tool. Two upright attempts did not
+ * survive being looked at: one read as a list and the other as the filled-rectangle tool.
+ */
+func icon_draw_eraser(t: Document, ink: int, accent: int) : void {
+    let weight: int = icon_stroke_width()
+
+    icon_quad(t, 12, 28, 28, 12, 40, 24, 24, 40, accent)
+
+    icon_stroke(t, 12, 28, 28, 12, weight, ink)
+    icon_stroke(t, 28, 12, 40, 24, weight, ink)
+    icon_stroke(t, 40, 24, 24, 40, weight, ink)
+    icon_stroke(t, 24, 40, 12, 28, weight, ink)
+
+    // Where the rubber meets the holder: parallel to the long sides, through both midpoints.
+    icon_stroke(t, 18, 34, 34, 18, weight, ink)
+
+    icon_stroke(t, 10, 44, 42, 44, weight, ink)
+}
+
+// A bucket with a handle over it and a drop leaving the rim.
+func icon_draw_fill(t: Document, ink: int, accent: int) : void {
+    let weight: int = icon_stroke_width()
+
+    icon_quad(t, 8, 12, 32, 12, 28, 36, 12, 36, accent)
+
+    icon_stroke(t, 8, 12, 32, 12, weight, ink)
+    icon_stroke(t, 32, 12, 28, 36, weight, ink)
+    icon_stroke(t, 28, 36, 12, 36, weight, ink)
+    icon_stroke(t, 12, 36, 8, 12, weight, ink)
+
+    // The handle is the top half of a ring. prolang has no trigonometry and shape.prl draws arcs
+    // by quadrant, which is exactly the half needed here. Drawn at the set's full stroke weight
+    // rather than thinner: at toolbar size a hairline handle disappears, and a bucket with no
+    // handle is a waste basket, which is another icon in the same window.
+    icon_arc(t, 20, 14, 11, 7, 3, ink)
+
+    // A drop, in the colour being poured.
+    icon_tri(t, 41, 26, 36, 36, 46, 36, accent)
+    icon_disc(t, 41, 36, 5, accent)
+}
+
+// A bare diagonal with its endpoints marked, matching what the line tool does.
+func icon_draw_line(t: Document, ink: int, accent: int) : void {
+    icon_stroke(t, 13, 35, 35, 13, 5, ink)
+    icon_disc(t, 13, 35, 6, accent)
+    icon_disc(t, 35, 13, 6, accent)
+}
+
+/*
+ * The rectangle tools.
+ *
+ * The outline form carries accent handles at its corners; without them it would be the only glyph
+ * in the set drawn in a single colour, so it alone would not respond to a theme's accent.
+ */
+func icon_draw_rect(t: Document, ink: int, accent: int, filled: bool) : void {
+    if (filled) {
+        icon_rect_filled(t, 9, 13, 39, 35, 5, accent)
+        icon_rect(t, 9, 13, 39, 35, 5, icon_stroke_width(), ink)
+        return
+    }
+
+    icon_rect(t, 9, 13, 39, 35, 5, icon_stroke_width(), ink)
+    icon_disc(t, 9, 13, 5, accent)
+    icon_disc(t, 39, 13, 5, accent)
+    icon_disc(t, 9, 35, 5, accent)
+    icon_disc(t, 39, 35, 5, accent)
+}
+
+// The ellipse tools, with handles at the cardinal points for the same reason.
+func icon_draw_ellipse(t: Document, ink: int, accent: int, filled: bool) : void {
+    if (filled) {
+        icon_disc(t, 24, 24, 18, accent)
+        icon_ring(t, 24, 24, 18, 14, ink)
+        return
+    }
+
+    icon_ring(t, 24, 24, 18, 14, ink)
+    icon_disc(t, 8, 24, 4, accent)
+    icon_disc(t, 40, 24, 4, accent)
+    icon_disc(t, 24, 8, 4, accent)
+    icon_disc(t, 24, 40, 4, accent)
+}
+
+/*
+ * An eyedropper: bulb at the top right, barrel on the diagonal, sampled colour at the point.
+ *
+ * The bulb is a square stood on its corner rather than a circle. A round bulb on a straight barrel
+ * reads as a lollipop, or worse as another magnifier, and the toolbar already has two of those.
+ * The flat sides are what say "instrument".
+ */
+func icon_draw_picker(t: Document, ink: int, accent: int) : void {
+    icon_stroke(t, 14, 34, 29, 19, 7, ink)
+
+    // The point, in the colour it has just picked up.
+    icon_tri(t, 12, 32, 18, 38, 7, 42, accent)
+
+    icon_quad(t, 35, 4, 44, 13, 35, 22, 26, 13, accent)
+    icon_stroke(t, 35, 4, 44, 13, 3, ink)
+    icon_stroke(t, 44, 13, 35, 22, 3, ink)
+    icon_stroke(t, 35, 22, 26, 13, 3, ink)
+    icon_stroke(t, 26, 13, 35, 4, 3, ink)
+}
+
+// ── File ─────────────────────────────────────────────────────────────────────
+
+/*
+ * A page with a folded corner and a plus.
+ *
+ * The corner is cut before the fold is drawn on it. Drawing the diagonal over a complete rectangle
+ * leaves the square corner poking out past the fold, which reads as a label stuck on the page
+ * rather than as a page with a corner turned down. Clearing to transparent is exact here because
+ * the glyph starts transparent and nothing else has been drawn behind it.
+ */
+func icon_draw_new(t: Document, ink: int, accent: int) : void {
+    let weight: int = icon_stroke_width()
+
+    icon_rect(t, 11, 5, 37, 43, 4, weight, ink)
+    icon_tri(t, 24, 4, 40, 4, 40, 20, 0)
+    icon_stroke(t, 25, 5, 37, 17, weight, ink)
+
+    icon_stroke(t, 17, 30, 31, 30, 5, accent)
+    icon_stroke(t, 24, 23, 24, 37, 5, accent)
+}
+
+/*
+ * A folder standing open.
+ *
+ * Order matters: the tab is drawn first and the body over it, so the tab's lower edge is covered
+ * rather than crossing the front of the folder.
+ */
+func icon_draw_open(t: Document, ink: int, accent: int) : void {
+    icon_rect_filled(t, 5, 9, 21, 19, 3, accent)
+    icon_rect(t, 5, 9, 21, 19, 3, 3, ink)
+
+    icon_rect_filled(t, 5, 15, 43, 39, 4, accent)
+    icon_rect(t, 5, 15, 43, 39, 4, icon_stroke_width(), ink)
+
+    // The front lip, lower than the back edge, which is what makes it read as open.
+    icon_stroke(t, 9, 26, 39, 26, 3, ink)
+}
+
+// A floppy disk: shutter at the top, label at the bottom.
+func icon_draw_save(t: Document, ink: int, accent: int) : void {
+    icon_rect(t, 7, 7, 41, 41, 5, icon_stroke_width(), ink)
+    icon_rect_filled(t, 17, 7, 31, 22, 2, accent)
+    icon_rect_filled(t, 25, 10, 29, 19, 1, ink)
+    icon_rect(t, 13, 27, 35, 41, 2, 3, ink)
+}
+
+// ── Edit ─────────────────────────────────────────────────────────────────────
+
+/*
+ * A curved arrow. `forward` swaps the head and the tail, turning an undo into a redo.
+ *
+ * The sweep is the top half of a ring, so it is a true arc rather than the masked half-ellipse an
+ * earlier version used — that left a hump with a stub attached and read as neither. The head is
+ * the only part in the accent, which is what makes the direction visible before the shape is.
+ */
+func icon_draw_arrow(t: Document, ink: int, accent: int, forward: bool) : void {
+    icon_arc(t, 24, 26, 16, 12, 3, ink)
+
+    // The head's base sits on the arc's last row rather than below it, so the two meet instead of
+    // leaving a hairline of background between them.
+    if (forward) {
+        icon_stroke(t, 10, 26, 10, 40, icon_stroke_width(), ink)
+        icon_tri(t, 31, 25, 45, 25, 38, 40, accent)
+        return
+    }
+
+    icon_stroke(t, 38, 26, 38, 40, icon_stroke_width(), ink)
+    icon_tri(t, 3, 25, 17, 25, 10, 40, accent)
+}
+
+// A waste basket, for clearing the canvas.
+func icon_draw_clear(t: Document, ink: int, accent: int) : void {
+    let weight: int = icon_stroke_width()
+
+    icon_stroke(t, 7, 14, 41, 14, weight, accent)
+
+    // Handle.
+    icon_stroke(t, 18, 14, 18, 7, 3, ink)
+    icon_stroke(t, 18, 7, 30, 7, 3, ink)
+    icon_stroke(t, 30, 7, 30, 14, 3, ink)
+
+    // Body, tapering inward toward the base.
+    icon_stroke(t, 12, 18, 15, 42, weight, ink)
+    icon_stroke(t, 15, 42, 33, 42, weight, ink)
+    icon_stroke(t, 33, 42, 36, 18, weight, ink)
+
+    icon_stroke(t, 21, 24, 21, 36, 3, ink)
+    icon_stroke(t, 27, 24, 27, 36, 3, ink)
+}
+
+// ── View ─────────────────────────────────────────────────────────────────────
+
+// A magnifier carrying a plus or a minus.
+func icon_draw_zoom(t: Document, ink: int, accent: int, larger: bool) : void {
+    icon_ring(t, 20, 20, 15, 11, ink)
+    icon_stroke(t, 31, 31, 41, 41, 5, ink)
+    icon_stroke(t, 14, 20, 26, 20, icon_stroke_width(), accent)
+
+    if (larger) {
+        icon_stroke(t, 20, 14, 20, 26, icon_stroke_width(), accent)
+    }
+}
+
+// Four corner brackets around the frame that would be fitted.
+func icon_draw_fit(t: Document, ink: int, accent: int) : void {
+    let weight: int = icon_stroke_width()
+
+    icon_stroke(t, 6, 16, 6, 6, weight, ink)
+    icon_stroke(t, 6, 6, 16, 6, weight, ink)
+
+    icon_stroke(t, 32, 6, 42, 6, weight, ink)
+    icon_stroke(t, 42, 6, 42, 16, weight, ink)
+
+    icon_stroke(t, 42, 32, 42, 42, weight, ink)
+    icon_stroke(t, 42, 42, 32, 42, weight, ink)
+
+    icon_stroke(t, 16, 42, 6, 42, weight, ink)
+    icon_stroke(t, 6, 42, 6, 32, weight, ink)
+
+    icon_rect(t, 17, 17, 31, 31, 3, 3, accent)
+}
+
+// A dot whose size is the point, with a plus or a minus beside it.
+func icon_draw_size(t: Document, ink: int, accent: int, larger: bool) : void {
+    let weight: int = icon_stroke_width()
+
+    if (larger) {
+        icon_disc(t, 16, 24, 11, ink)
+        icon_stroke(t, 30, 24, 42, 24, weight, accent)
+        icon_stroke(t, 36, 18, 36, 30, weight, accent)
+        return
+    }
+
+    icon_disc(t, 16, 24, 5, ink)
+    icon_stroke(t, 30, 24, 42, 24, weight, accent)
+}
+
+// A circle half filled: the usual light and dark switch.
+func icon_draw_theme(t: Document, ink: int, accent: int) : void {
+    // Quadrant bits 2 and 4 are the two on the right, so 6 is the right half.
+    icon_arc(t, 24, 24, 13, 0, 6, accent)
+    icon_ring(t, 24, 24, 17, 13, ink)
+}

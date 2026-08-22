@@ -14,9 +14,13 @@ internal sealed class Program
         string? moduleName = null;
         string? msilPath = null;
         string? cOutputDir = null;
+        string? target = null;
+        string? framework = null;
+        string? iconPath = null;
         var referencePaths = new List<string>();
         var sourcePaths = new List<string>();
         var helpRequested = false;
+        var appHost = false;
         var disassemble = false;
         var emitC = false;
         var emitPsp = false;
@@ -34,6 +38,10 @@ internal sealed class Program
             {"emit-psp", "Transpile to C99 for PSP and write PSP wrapper + Makefile", v => emitPsp = true },
             {"emit-csharp", "Render the lowered program as C# for inspection (does not compile)", v => emitCSharp = true },
             {"c-output=", "Override output directory for C transpilation", v => cOutputDir = v },
+            {"target=", "Subsystem of the emitted assembly: {library} (default), console, or winexe", v => target = v },
+            {"framework=", "Shared framework to request: {name}, or the shorthand 'windowsdesktop'", v => framework = v },
+            {"apphost", "Also write a native launcher next to the assembly, so it runs without 'dotnet'", v => appHost = true },
+            {"icon=", "Embed an .ico {path} in the launcher, as the program's icon. Implies --apphost", v => iconPath = v },
             {"h|help", "Prints help", v=>helpRequested = true},
             {"<>", v=>sourcePaths.Add(v) }
         };
@@ -212,14 +220,53 @@ internal sealed class Program
             }
         }
 
+        if (!TryBuildEmitOptions(target, framework, out var emitOptions))
+        {
+            return 1;
+        }
+
         try
         {
-            var diagnostics = compilation.Emit(moduleName, referencePaths.ToArray(), outputPath);
+            var diagnostics = compilation.Emit(moduleName, referencePaths.ToArray(), outputPath, emitOptions);
 
             if (diagnostics.Any())
             {
                 Console.Error.WriteDiagnostics(diagnostics);
                 return 1;
+            }
+
+            // The launcher is written after the assembly it launches, and a failure to write one
+            // is reported but not fatal: the .dll is still a complete program, runnable with
+            // `dotnet`. Refusing to have compiled at all because a packaging step did not work
+            // would be the wrong trade.
+            //
+            // An icon needs a launcher to live in, so asking for one asks for the other. The
+            // alternative — rejecting `--icon` without `--apphost` — would be a rule to remember
+            // in exchange for nothing.
+            if (appHost || iconPath != null)
+            {
+                var wantsWindow = emitOptions.TargetKind == EmitTargetKind.WindowsApplication;
+
+                if (AppHost.TryCreate(outputPath, wantsWindow, out var executablePath, out var appHostError))
+                {
+                    Console.WriteLine($"launcher written to: {executablePath}");
+
+                    if (iconPath != null)
+                    {
+                        if (IconEmbedder.TryEmbed(executablePath, iconPath, out var iconError))
+                        {
+                            Console.WriteLine($"icon embedded from: {iconPath}");
+                        }
+                        else
+                        {
+                            Console.Error.WriteLine($"warning: no icon embedded — {iconError}");
+                        }
+                    }
+                }
+                else
+                {
+                    Console.Error.WriteLine($"warning: no launcher written — {appHostError}");
+                }
             }
 
             return 0;
@@ -229,5 +276,59 @@ internal sealed class Program
             Console.Error.WriteLine(ex.ToString());
             return 1;
         }
+    }
+
+    /// <summary>
+    /// Turns the <c>--target</c> and <c>--framework</c> arguments into <see cref="EmitOptions"/>.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// <c>--target=winexe</c> implies the Windows Desktop framework unless <c>--framework</c> says
+    /// otherwise. The two are almost always wanted together, and getting only the first produces
+    /// an assembly that fails to resolve <c>System.Windows.Forms</c> with no console attached to
+    /// report it on — a silent non-start rather than an error message.
+    /// </para>
+    /// <para>
+    /// An unrecognised value is rejected rather than ignored. Silently falling back to the default
+    /// would mean <c>--target=winexec</c> produces a console assembly and a mystery console window.
+    /// </para>
+    /// </remarks>
+    private static bool TryBuildEmitOptions(string? target, string? framework, out EmitOptions options)
+    {
+        options = EmitOptions.Default;
+
+        var targetKind = EmitTargetKind.Library;
+
+        if (target != null)
+        {
+            switch (target.ToLowerInvariant())
+            {
+                case "library" or "dll":
+                    targetKind = EmitTargetKind.Library;
+                    break;
+                case "console" or "exe":
+                    targetKind = EmitTargetKind.ConsoleApplication;
+                    break;
+                case "winexe" or "windows":
+                    targetKind = EmitTargetKind.WindowsApplication;
+                    break;
+                default:
+                    Console.Error.WriteLine(
+                        $"error: unknown target '{target}'. Expected 'library', 'console', or 'winexe'.");
+                    return false;
+            }
+        }
+
+        var frameworkName = framework?.ToLowerInvariant() switch
+        {
+            null when targetKind == EmitTargetKind.WindowsApplication => EmitOptions.WindowsDesktopFrameworkName,
+            null => EmitOptions.DefaultFrameworkName,
+            "windowsdesktop" or "desktop" => EmitOptions.WindowsDesktopFrameworkName,
+            "netcore" or "default" => EmitOptions.DefaultFrameworkName,
+            _ => framework!,
+        };
+
+        options = new EmitOptions(targetKind, frameworkName);
+        return true;
     }
 }

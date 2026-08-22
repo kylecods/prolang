@@ -13,7 +13,7 @@ namespace WinFormsHelper;
 ///   prolang bool  <-> .NET bool  (enabled, visible flags)
 ///   prolang int   <-> System.Drawing.Color (ARGB packed int via Color.FromArgb / Color.ToArgb)
 /// </summary>
-public static class WinFormsHelper
+public static partial class WinFormsHelper
 {
     // ── Registry ──────────────────────────────────────────────────────────────
     private static readonly Dictionary<int, Control> _controls = [];
@@ -35,11 +35,25 @@ public static class WinFormsHelper
     // ── Form lifecycle ────────────────────────────────────────────────────────
 
     /// <summary>Creates a new Form. Returns an int handle (prolang int ↔ .NET int, one-to-one).</summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="AutoScaleMode.None"/> is deliberate. The process is DPI aware (see
+    /// <see cref="InitApplication"/>), and a prolang program scales its own sizes from
+    /// <see cref="GetDpiScalePercent"/>; letting Windows Forms apply a second factor on top would
+    /// scale everything twice.
+    /// </para>
+    /// <para>
+    /// It also keeps the sizes exact. Automatic scaling multiplies every coordinate by a
+    /// fractional factor and rounds, which is fine for a form of labels and unacceptable for one
+    /// holding a canvas that maps an image pixel to a whole number of screen pixels.
+    /// </para>
+    /// </remarks>
     public static int CreateForm(string title, int width, int height)
     {
         var form = new Form
         {
             Text = title,
+            AutoScaleMode = AutoScaleMode.None,
             ClientSize = new Size(width, height),
             StartPosition = FormStartPosition.CenterScreen,
         };
@@ -162,6 +176,33 @@ public static class WinFormsHelper
 
     public static void SetSize(int id, int width, int height)
         => _controls[id].Size = new Size(width, height);
+
+    /// <summary>Moves and resizes a control in one call.</summary>
+    /// <remarks>
+    /// Not just shorthand for <see cref="SetLocation"/> followed by <see cref="SetSize"/>. Those
+    /// are two changes, and a control laid out again while its window is being dragged is seen in
+    /// the intermediate state — moved but not yet resized — which reads as a flicker along the
+    /// edge being dragged. <see cref="Control.SetBounds(int, int, int, int)"/> is one change.
+    /// </remarks>
+    public static void SetBounds(int id, int x, int y, int width, int height)
+        => _controls[id].SetBounds(x, y, Math.Max(0, width), Math.Max(0, height));
+
+    /// <summary>
+    /// Sets the smallest <em>client</em> area the window may be resized to.
+    /// </summary>
+    /// <remarks>
+    /// Windows Forms states a minimum in whole-window terms, but a layout is written against the
+    /// client area — so the frame is measured here rather than guessed at the call site. Without a
+    /// minimum, a window dragged small enough gives the layout negative room, and every control
+    /// positioned from what is left lands on top of the ones before it.
+    /// </remarks>
+    public static void SetMinimumClientSize(int formId, int width, int height)
+    {
+        var form = Get<Form>(formId);
+        var frame = form.Size - form.ClientSize;
+
+        form.MinimumSize = new Size(width + frame.Width, height + frame.Height);
+    }
 
     /// <summary>
     /// Sets the back-color from a packed ARGB int.
@@ -401,17 +442,14 @@ public static class WinFormsHelper
 
     /// <summary>Shows a MessageBox with OK button.</summary>
     public static void MessageBoxShow(string text, string title)
-        => MessageBox.Show(text, title);
+        => ShowMessage(text, title, MessageBoxButtons.OK);
 
     /// <summary>
     /// Shows a Yes/No MessageBox.
     /// Returns 1 for Yes, 0 for No (prolang int ↔ DialogResult, one-to-one mapping).
     /// </summary>
     public static int MessageBoxYesNo(string text, string title)
-    {
-        var result = MessageBox.Show(text, title, MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-        return result == DialogResult.Yes ? 1 : 0;
-    }
+        => ShowMessage(text, title, MessageBoxButtons.YesNo) == DialogResult.Yes ? 1 : 0;
 
     /// <summary>
     /// Shows a simple input dialog. Returns the entered string, or "" if cancelled.

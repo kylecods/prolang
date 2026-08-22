@@ -1,0 +1,40 @@
+/*
+ * Pixel editor — test suite
+ *
+ * What is left after the reusable modules moved to `std/`: the editor's own drag state machine.
+ * Everything it is built on — documents, rasterisers, shapes, themes, icons, layout — is covered
+ * by tests/std/run_tests.prl, which is where those modules now live.
+ *
+ * Run it with:
+ *
+ *   dotnet run --project src/ProLang/ProLang.csproj -- \
+ *     examples/16-pixel-editor/tests/run_tests.prl -o bin/tests.dll
+ *   dotnet bin/tests.dll
+ *
+ * It is the one file here classified `Runnable` in
+ * src/ProLang.Tests/Infrastructure/TestCorpus.cs, so `dotnet test` compiles it, runs it, and
+ * compares its output against a golden file. The execution tests demand a zero exit code and
+ * empty stderr, and t_report's `assert` breaks both when a check fails.
+ *
+ * Nothing reachable from here imports "winforms", deliberately: the whole import graph is compiled
+ * into one assembly, and a single reference to the shim would make this program require the
+ * Windows Desktop runtime pack and stop it being runnable under test.
+ */
+
+import "io"
+import "testing"
+import "test_tools.prl"
+import "test_appicon.prl"
+
+func main()
+{
+    print("pixel editor test suite")
+    print("")
+
+    let total: TestRun = t_new()
+
+    total = t_merge(total, test_tools_run(), "tools")
+    total = t_merge(total, test_appicon_run(), "appicon")
+
+    t_report(total)
+}

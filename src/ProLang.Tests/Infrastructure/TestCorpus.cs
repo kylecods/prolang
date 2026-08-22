@@ -61,6 +61,7 @@ internal static class TestCorpus
         new("examples/08-ring-buffer/ring-buffer.prl", CorpusKind.Runnable),
         new("examples/09-json-parser/json-parser-tests.prl", CorpusKind.Runnable),
         new("examples/11-std/dynarray_demo.prl", CorpusKind.Runnable),
+        new("examples/16-pixel-editor/tests/run_tests.prl", CorpusKind.Runnable),
         new("tests/cast-comprehensive.prl", CorpusKind.Runnable),
         new("tests/cast-expression.prl", CorpusKind.Runnable),
         new("tests/cast-simple.prl", CorpusKind.Runnable),
@@ -68,6 +69,8 @@ internal static class TestCorpus
         new("tests/print-types.prl", CorpusKind.Runnable),
         new("tests/language/arrays/array_syntax.prl", CorpusKind.Runnable),
         new("tests/language/datatypes/types.prl", CorpusKind.Runnable),
+        new("tests/language/structs/array-of-structs.prl", CorpusKind.Runnable),
+        new("tests/language/structs/nested-field-assignment.prl", CorpusKind.Runnable),
         new("tests/language/entry-point/basic-main.prl", CorpusKind.Runnable),
         new("tests/language/entry-point/multiple-prints.prl", CorpusKind.Runnable),
         new("tests/language/entry-point/nested-calls.prl", CorpusKind.Runnable),
@@ -90,6 +93,62 @@ internal static class TestCorpus
         new("examples/13-winforms/05_color_demo.prl", CorpusKind.CompileOnly, "See 01_hello_world."),
         new("examples/13-winforms/06_native_enum.prl", CorpusKind.CompileOnly, "See 01_hello_world."),
         new("examples/13-winforms/07_paint_demo.prl", CorpusKind.CompileOnly, "See 01_hello_world."),
+
+        // ── Pixel editor ─────────────────────────────────────────────────────────────────
+        // The modules the editor still owns. Everything general moved to std/, which this corpus
+        // does not scan — those are covered by tests/std/run_tests.prl instead, which compiles the
+        // whole library graph and asserts on it.
+        new("examples/16-pixel-editor/tools.prl", CorpusKind.CompileOnly,
+            "Library — pixel editor module; exercised by tests/run_tests.prl."),
+        new("examples/16-pixel-editor/appicon.prl", CorpusKind.CompileOnly,
+            "Library — draws the program's own icon; exercised by tests/run_tests.prl."),
+        new("examples/16-pixel-editor/render.prl", CorpusKind.CompileOnly,
+            "Library — hands model state to WinFormsHelper; no main() and no runnable behaviour."),
+        new("examples/16-pixel-editor/app.prl", CorpusKind.CompileOnly,
+            "Library — window construction and the event loop; no main()."),
+        new("examples/16-pixel-editor/main.prl", CorpusKind.CompileOnly,
+            "Interactive GUI event loop; needs the Windows Desktop runtime pack, which the "
+            + "emitted runtimeconfig does not request without --framework."),
+        new("examples/16-pixel-editor/makeicon.prl", CorpusKind.CompileOnly,
+            "Build step: writes the program's .ico through the shim, so it needs the Windows "
+            + "Desktop runtime pack that the emitted runtimeconfig does not request without "
+            + "--framework. Run by build.ps1 before the editor is compiled."),
+
+        // The test programs themselves are libraries; run_tests.prl is the only entry point.
+        new("examples/16-pixel-editor/tests/test_tools.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/run_tests.prl."),
+        new("examples/16-pixel-editor/tests/test_appicon.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/run_tests.prl."),
+
+        // The standard library's own suite. The modules under std/ are not scanned by this corpus
+        // — nothing there is, by design — so this is what compiles and exercises them.
+        new("tests/std/run_tests.prl", CorpusKind.Runnable),
+        new("tests/std/test_util.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_intstack.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_color.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_document.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_raster.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_shape.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_fill.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_history.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_palette.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_view.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_theme.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_icons.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_layout.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
         new("examples/05-dotnet-interop-assembly-loading/05_dotnet_interop.prl", CorpusKind.CompileOnly,
             "Prints a freshly generated Guid, so its output is not reproducible. Needs "
             + "test_lib/CSharpFibonacci.csproj built, which ProLang.Tests.csproj does."),
@@ -111,6 +170,10 @@ internal static class TestCorpus
             "BINDER CRASH: same as test-parser-simple.prl."),
         new("tests/language/compiler/test-else-if.prl", CorpusKind.KnownBroken,
             "Corpus rot: global statements, written before main() became mandatory."),
+        new("tests/language/compiler/undefined-function-is-not-bcl.prl", CorpusKind.KnownBroken,
+            "Negative test by design: a misspelled call must report an undefined function rather "
+            + "than binding to a same-named static somewhere in the BCL. If this starts compiling, "
+            + "the unqualified-call fallback has gone back to guessing."),
         new("tests/language/lexer/test-lexer-digits.prl", CorpusKind.KnownBroken,
             "Corpus rot: global statements."),
         new("tests/language/generics/single_parameter.prl", CorpusKind.KnownBroken,

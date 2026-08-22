@@ -1,0 +1,430 @@
+/*
+ * Pixel editor — vector shapes
+ *
+ * Solid primitives with exact geometry: discs, rings, arcs, thick round-capped strokes, convex
+ * polygons and rounded rectangles. Pure prolang; exercised by tests/test_shape.prl.
+ *
+ * This is not raster.prl and does not replace it. raster.prl draws *into the image the user is
+ * editing*, so it is one-pixel-exact, reproducible, and records every pixel it touches so a shape
+ * tool can rewind its preview. Nothing here does any of that. These are shapes for drawing the
+ * interface — the toolbar icons — where the requirement is the opposite one: smooth edges at
+ * whatever size the display happens to be, with no visible stair-stepping.
+ *
+ * There is no anti-aliasing here either. Every function writes solid pixels. Smooth edges come
+ * from drawing several times larger than needed and averaging down through doc_downsample_into,
+ * which is why the tests below can compare exact pixel counts: at this level a pixel is in the
+ * shape or it is not.
+ *
+ * Everything is tested by squared distance rather than by walking an outline. Scan-converting is
+ * faster and is what raster.prl does, but it leaves seams where two shapes meet and needs a
+ * separate fill pass that can disagree with its own outline. Testing every pixel of the bounding
+ * box cannot: a pixel is inside or it is not, so overlapping shapes compose exactly. An icon is
+ * drawn once when the theme changes, so the cost buys something and pays nothing.
+ */
+
+import "array"
+import "math"
+import "ui/document"
+import "util"
+
+// ── Rectangles ───────────────────────────────────────────────────────────────
+
+/*
+ * A solid axis-aligned rectangle, corners inclusive.
+ *
+ * Coordinates are clamped to the document rather than dropped one at a time, so the inner loop
+ * has no bounds test in it. Every function below clamps the same way for the same reason.
+ */
+func shape_fill_rect(doc: Document, x0: int, y0: int, x1: int, y1: int, colour: int) : void {
+    let left: int = max(0, min(x0, x1))
+    let right: int = min(doc.width - 1, max(x0, x1))
+    let top: int = max(0, min(y0, y1))
+    let bottom: int = min(doc.height - 1, max(y0, y1))
+
+    let y: int = top
+    while (y <= bottom) {
+        let row: int = y * doc.width
+        let x: int = left
+        while (x <= right) {
+            doc.pixels[row + x] = colour
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
+// ── Circles ──────────────────────────────────────────────────────────────────
+
+/*
+ * Which quadrant a pixel offset falls in, as a single bit.
+ *
+ * 1 top-left, 2 top-right, 4 bottom-right, 8 bottom-left — clockwise from the top left, so a
+ * half is two adjacent bits: the top half is 3, the right half is 6.
+ */
+func shape_quadrant_bit(dx: int, dy: int) : int {
+    if (dy < 0) {
+        if (dx < 0) {
+            return 1
+        }
+        return 2
+    }
+
+    if (dx < 0) {
+        return 8
+    }
+
+    return 4
+}
+
+/*
+ * The part of an annulus lying in the given quadrants.
+ *
+ * The general case the two functions below specialise. `inner` of zero makes it solid, and a
+ * `quadrants` mask of 15 makes it whole; both are common enough to have their own names.
+ *
+ * Arcs are what curved icons are built from — the undo arrow's sweep and the paint bucket's
+ * handle — because prolang has no floating point and nothing here may call a trigonometric
+ * function. A quadrant test is exact in integers and needs no angle at all.
+ */
+func shape_arc(doc: Document, cx: int, cy: int, outer: int, inner: int, quadrants: int, colour: int) : void {
+    if (outer < 0) {
+        return
+    }
+
+    let outerSquared: int = outer * outer
+    let innerSquared: int = inner * inner
+
+    if (inner < 0) {
+        innerSquared = 0
+    }
+
+    let left: int = max(0, cx - outer)
+    let right: int = min(doc.width - 1, cx + outer)
+    let top: int = max(0, cy - outer)
+    let bottom: int = min(doc.height - 1, cy + outer)
+
+    let y: int = top
+    while (y <= bottom) {
+        let dy: int = y - cy
+        let row: int = y * doc.width
+        let x: int = left
+
+        while (x <= right) {
+            let dx: int = x - cx
+            let distance: int = (dx * dx) + (dy * dy)
+
+            if (distance <= outerSquared && distance >= innerSquared) {
+                if ((quadrants & shape_quadrant_bit(dx, dy)) != 0) {
+                    doc.pixels[row + x] = colour
+                }
+            }
+
+            x = x + 1
+        }
+
+        y = y + 1
+    }
+}
+
+// A solid circle.
+func shape_disc(doc: Document, cx: int, cy: int, radius: int, colour: int) : void {
+    shape_arc(doc, cx, cy, radius, 0, 15, colour)
+}
+
+// A circle outline: everything between `inner` and `outer`.
+func shape_ring(doc: Document, cx: int, cy: int, outer: int, inner: int, colour: int) : void {
+    shape_arc(doc, cx, cy, outer, inner, 15, colour)
+}
+
+// ── Strokes ──────────────────────────────────────────────────────────────────
+
+/*
+ * Integer square root, rounded down.
+ *
+ * Newton's method, descending. It exists because shape_stroke needs the *length* of a segment
+ * rather than its square, and prolang has neither floating point nor a sqrt in its standard
+ * library.
+ *
+ * The iteration stops when a step would not go down rather than when two steps agree. Written the
+ * obvious way it does not terminate: for a value that is one below a perfect square the sequence
+ * settles into a two-cycle — 99 alternates between 9 and 10 forever — and "stop when the estimate
+ * stops falling" is what breaks it. It also lands exactly on the floor, which is why there is no
+ * correction afterwards.
+ *
+ * The starting estimate is halved once for every two bits of the input, which puts it between
+ * sqrt(value) and sqrt(3 * value). Newton only converges from above, so starting too low would
+ * return the starting estimate unchanged.
+ */
+func shape_isqrt(value: int) : int {
+    if (value <= 0) {
+        return 0
+    }
+
+    if (value < 4) {
+        return 1
+    }
+
+    let estimate: int = value
+    let remaining: int = value
+
+    while (remaining > 3) {
+        estimate = estimate / 2
+        remaining = remaining / 4
+    }
+
+    if (estimate < 1) {
+        estimate = 1
+    }
+
+    let next: int = (estimate + (value / estimate)) / 2
+
+    while (next < estimate) {
+        estimate = next
+        next = (estimate + (value / estimate)) / 2
+    }
+
+    return estimate
+}
+
+/*
+ * A line of the given width with round caps.
+ *
+ * Round caps and round joins are the whole point. Modern icon sets are drawn as strokes of one
+ * constant weight, and a square cap makes two strokes meeting at an angle show a notch on the
+ * outside of the join; a round one makes the join disappear without any join-mitring arithmetic.
+ * It also means a polyline is just several calls, with nothing to say about the corners.
+ *
+ * A pixel is in the stroke when its distance to the segment is within half the width. Distance to
+ * the *segment* rather than to the infinite line is what produces the caps: past either end the
+ * nearest point is the endpoint, so the shape rounds off there on its own.
+ */
+func shape_stroke(doc: Document, x0: int, y0: int, x1: int, y1: int, width: int, colour: int) : void {
+    let radius: int = width / 2
+
+    if (radius < 1) {
+        radius = 1
+    }
+
+    let dx: int = x1 - x0
+    let dy: int = y1 - y0
+    let lengthSquared: int = (dx * dx) + (dy * dy)
+
+    if (lengthSquared == 0) {
+        shape_disc(doc, x0, y0, radius, colour)
+        return
+    }
+
+    let left: int = max(0, min(x0, x1) - radius)
+    let right: int = min(doc.width - 1, max(x0, x1) + radius)
+    let top: int = max(0, min(y0, y1) - radius)
+    let bottom: int = min(doc.height - 1, max(y0, y1) + radius)
+
+    let radiusSquared: int = radius * radius
+
+    /*
+     * The perpendicular test is |cross| <= radius * length rather than the exact
+     * cross^2 <= radius^2 * lengthSquared, because at the sizes an icon is supersampled to that
+     * product overflows a 32-bit int. Rounding the length down makes the stroke narrower by at
+     * most half a pixel in the supersampled space, which is a fraction of one output pixel.
+     */
+    let length: int = shape_isqrt(lengthSquared)
+    let limit: int = radius * length
+
+    let y: int = top
+    while (y <= bottom) {
+        let row: int = y * doc.width
+        let x: int = left
+
+        while (x <= right) {
+            let wx: int = x - x0
+            let wy: int = y - y0
+            let along: int = (wx * dx) + (wy * dy)
+            let inside: bool = false
+
+            if (along <= 0) {
+                inside = ((wx * wx) + (wy * wy)) <= radiusSquared
+            } elif (along >= lengthSquared) {
+                let ex: int = x - x1
+                let ey: int = y - y1
+                inside = ((ex * ex) + (ey * ey)) <= radiusSquared
+            } else {
+                inside = util_abs((wx * dy) - (wy * dx)) <= limit
+            }
+
+            if (inside) {
+                doc.pixels[row + x] = colour
+            }
+
+            x = x + 1
+        }
+
+        y = y + 1
+    }
+}
+
+// ── Polygons ─────────────────────────────────────────────────────────────────
+
+/*
+ * Twice the signed area of a triangle, which is also which side of AB the point C is on.
+ *
+ * Positive one way round, negative the other, zero on the line.
+ */
+func shape_edge(ax: int, ay: int, bx: int, by: int, cx: int, cy: int) : int {
+    return ((bx - ax) * (cy - ay)) - ((by - ay) * (cx - ax))
+}
+
+/*
+ * A solid triangle.
+ *
+ * A pixel is inside when it is on the same side of all three edges. Testing for *either* sign
+ * rather than a fixed one means the winding does not matter, so a mirrored icon can reuse the
+ * same call with two coordinates swapped and does not silently come out empty.
+ */
+func shape_triangle(doc: Document, ax: int, ay: int, bx: int, by: int, cx: int, cy: int, colour: int) : void {
+    let left: int = max(0, min(ax, min(bx, cx)))
+    let right: int = min(doc.width - 1, max(ax, max(bx, cx)))
+    let top: int = max(0, min(ay, min(by, cy)))
+    let bottom: int = min(doc.height - 1, max(ay, max(by, cy)))
+
+    let y: int = top
+    while (y <= bottom) {
+        let row: int = y * doc.width
+        let x: int = left
+
+        while (x <= right) {
+            let first: int = shape_edge(ax, ay, bx, by, x, y)
+            let second: int = shape_edge(bx, by, cx, cy, x, y)
+            let third: int = shape_edge(cx, cy, ax, ay, x, y)
+
+            let negative: bool = first <= 0 && second <= 0 && third <= 0
+            let positive: bool = first >= 0 && second >= 0 && third >= 0
+
+            if (negative || positive) {
+                doc.pixels[row + x] = colour
+            }
+
+            x = x + 1
+        }
+
+        y = y + 1
+    }
+}
+
+/*
+ * A solid convex quadrilateral, corners given in order around the shape.
+ *
+ * Split into two triangles sharing the A-C diagonal. This is how the tilted bodies are drawn —
+ * the pencil, the eraser — because a rotated rectangle has no axis-aligned form and stamping a
+ * thick stroke instead would round the corners off.
+ */
+func shape_quad(doc: Document, ax: int, ay: int, bx: int, by: int, cx: int, cy: int, dx: int, dy: int, colour: int) : void {
+    shape_triangle(doc, ax, ay, bx, by, cx, cy, colour)
+    shape_triangle(doc, ax, ay, cx, cy, dx, dy, colour)
+}
+
+// ── Rounded rectangles ───────────────────────────────────────────────────────
+
+/*
+ * The largest corner radius a rectangle can actually take.
+ *
+ * A radius past half the shorter side would make the corner arcs overlap, and the containment
+ * test below would then reject pixels in the middle of the shape.
+ */
+func shape_corner_radius(x0: int, y0: int, x1: int, y1: int, radius: int) : int {
+    let limit: int = min((x1 - x0) / 2, (y1 - y0) / 2)
+
+    if (radius < 0) {
+        return 0
+    }
+
+    return min(radius, max(0, limit))
+}
+
+/*
+ * Whether a pixel is inside a rounded rectangle.
+ *
+ * The point is clamped into the box joining the four corner-arc centres, and the test is then its
+ * distance to that clamped point. In the straight parts the clamp changes only one coordinate, so
+ * the distance is measured across the edge; near a corner it changes both and the distance is
+ * measured to the arc centre. One expression covers the whole shape with no cases.
+ */
+func shape_in_round_rect(x: int, y: int, x0: int, y0: int, x1: int, y1: int, radius: int) : bool {
+    if (x < x0 || x > x1 || y < y0 || y > y1) {
+        return false
+    }
+
+    let r: int = shape_corner_radius(x0, y0, x1, y1, radius)
+
+    if (r < 1) {
+        return true
+    }
+
+    let nearX: int = util_clamp(x, x0 + r, x1 - r)
+    let nearY: int = util_clamp(y, y0 + r, y1 - r)
+    let dx: int = x - nearX
+    let dy: int = y - nearY
+
+    return ((dx * dx) + (dy * dy)) <= (r * r)
+}
+
+// A solid rounded rectangle, corners inclusive.
+func shape_round_rect_filled(doc: Document, x0: int, y0: int, x1: int, y1: int, radius: int, colour: int) : void {
+    let left: int = max(0, min(x0, x1))
+    let right: int = min(doc.width - 1, max(x0, x1))
+    let top: int = max(0, min(y0, y1))
+    let bottom: int = min(doc.height - 1, max(y0, y1))
+
+    let y: int = top
+    while (y <= bottom) {
+        let row: int = y * doc.width
+        let x: int = left
+
+        while (x <= right) {
+            if (shape_in_round_rect(x, y, x0, y0, x1, y1, radius)) {
+                doc.pixels[row + x] = colour
+            }
+
+            x = x + 1
+        }
+
+        y = y + 1
+    }
+}
+
+/*
+ * A rounded rectangle outline of the given stroke width, drawn inside the given bounds.
+ *
+ * Defined as the difference between the shape and the same shape inset by the width, rather than
+ * as four strokes and four corner arcs. The difference is exact everywhere including the corners,
+ * where four separate pieces would have to agree about where each one stops.
+ *
+ * The border is drawn inward, so the rectangle passed is the outer extent. That is what makes it
+ * safe to size an icon to its bounding box: a centred border would spill half its width outside.
+ */
+func shape_round_rect(doc: Document, x0: int, y0: int, x1: int, y1: int, radius: int, width: int, colour: int) : void {
+    let stroke: int = max(1, width)
+    let left: int = max(0, min(x0, x1))
+    let right: int = min(doc.width - 1, max(x0, x1))
+    let top: int = max(0, min(y0, y1))
+    let bottom: int = min(doc.height - 1, max(y0, y1))
+
+    let innerRadius: int = max(0, radius - stroke)
+
+    let y: int = top
+    while (y <= bottom) {
+        let row: int = y * doc.width
+        let x: int = left
+
+        while (x <= right) {
+            if (shape_in_round_rect(x, y, x0, y0, x1, y1, radius)) {
+                if (!shape_in_round_rect(x, y, x0 + stroke, y0 + stroke, x1 - stroke, y1 - stroke, innerRadius)) {
+                    doc.pixels[row + x] = colour
+                }
+            }
+
+            x = x + 1
+        }
+
+        y = y + 1
+    }
+}

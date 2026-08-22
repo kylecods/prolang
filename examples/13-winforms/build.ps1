@@ -5,10 +5,13 @@
 # What this script does:
 #   1. Builds ProLang (which also builds WinFormsHelper via AfterTargets in ProLang.csproj
 #      and places WinFormsHelper.dll in the compiler's lib/ directory).
-#   2. Compiles each .prl example.  Examples use  import "winforms"  — the compiler
-#      resolves this through std/winforms.prl → lib/WinFormsHelper.dll automatically.
-#   3. Copies WinFormsHelper.dll next to the compiled DLLs for runtime resolution.
-#   4. Patches each runtimeconfig.json to use Microsoft.WindowsDesktop.App.
+#   2. Compiles each .prl example with --target=winexe.  Examples use  import "winforms"  — the
+#      compiler resolves this through std/winforms.prl → lib/WinFormsHelper.dll automatically,
+#      and copies the DLL next to the output itself.
+#
+# --target=winexe selects the windows subsystem, so no console window opens behind the form, and
+# implies Microsoft.WindowsDesktop.App in the emitted runtimeconfig.json. This script used to
+# rewrite that file afterwards, because the framework name was hardcoded in the emitter.
 
 $ErrorActionPreference = "Stop"
 $root     = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -45,22 +48,8 @@ foreach ($name in $examples) {
     $src = Join-Path $root "$name.prl"
     $out = Join-Path $outDir "$name.dll"
     Write-Host "==> Compiling $name.prl ..." -ForegroundColor Cyan
-    dotnet run --project $prolang --no-build -- "$src" "--o=$out"
+    dotnet run --project $prolang --no-build -- "$src" "--target=winexe" "--o=$out"
     if ($LASTEXITCODE -ne 0) { throw "Compilation failed: $name.prl" }
-
-    # Patch runtimeconfig.json: compiled DLLs need the Windows Desktop framework
-    # (WinFormsHelper.dll depends on System.Windows.Forms)
-    $rcPath = Join-Path $outDir "$name.runtimeconfig.json"
-    $rc = @{
-        runtimeOptions = @{
-            tfm       = "net10.0"
-            framework = @{
-                name    = "Microsoft.WindowsDesktop.App"
-                version = "10.0.0"
-            }
-        }
-    } | ConvertTo-Json -Depth 5
-    Set-Content -Path $rcPath -Value $rc -Encoding UTF8
 
     Write-Host "    -> $out" -ForegroundColor Green
 }

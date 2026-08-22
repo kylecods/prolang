@@ -51,6 +51,11 @@ internal static class IntrinsicRegistry
         [BuiltInFunctions.ConsoleKeyAvailable] = Intrinsic.Call(RuntimeLibrary.ConsoleOps, "KeyAvailable"),
         [BuiltInFunctions.ConsoleReadKey] = Intrinsic.Call(RuntimeLibrary.ConsoleOps, "ReadKey"),
 
+        // ── Testing ──────────────────────────────────────────────────────────────────────
+        // Flushes the print buffer before throwing, so a failing assert keeps the output that
+        // led up to it. See ProLang.Runtime.TestOps.
+        [BuiltInFunctions.Assert] = Intrinsic.Call(RuntimeLibrary.TestOps, "Assert", "System.Boolean", "System.String"),
+
         // ── Math ─────────────────────────────────────────────────────────────────────────
         // Min and Max map exactly onto System.Math, so they stay direct calls; only Random
         // needed adapting.

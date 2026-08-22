@@ -1,0 +1,83 @@
+/*
+ * Pixel editor tests — fill.prl
+ */
+
+import "testing"
+import "ui/fill"
+import "ui/document"
+import "ui/raster"
+import "ui/color"
+
+func test_fill_run() : TestRun {
+    let r: TestRun = t_new()
+
+    let white: int = color_rgb(255, 255, 255)
+    let black: int = color_rgb(0, 0, 0)
+    let red: int = color_rgb(255, 0, 0)
+    let log: array<int> = array_new(4096)
+
+    // Filling an empty canvas reaches every pixel.
+    let doc: Document = doc_new(8, 8, white)
+    let changed: int = fill_flood(doc, 0, 0, black)
+    r = t_eq_int(r, "fill covers the whole canvas", changed, 64)
+    r = t_eq_int(r, "every pixel changed", doc_count_colour(doc, black), 64)
+
+    // Filling with the colour already there must return immediately. Without the early exit the
+    // traversal never terminates: recolouring to the same value leaves every neighbour matching.
+    let same: int = fill_flood(doc, 0, 0, black)
+    r = t_eq_int(r, "filling with the same colour is a no-op", same, 0)
+
+    // A wall splits the canvas: the fill must stop at it.
+    let walled: Document = doc_new(8, 8, white)
+    raster_line(walled, 4, 0, 4, 7, 1, black, log, 0)
+
+    let left: int = fill_flood(walled, 0, 0, red)
+    r = t_eq_int(r, "fill stops at the wall", left, 32)
+    r = t_eq_int(r, "left side is filled", doc_get(walled, 3, 3), red)
+    r = t_eq_int(r, "wall is untouched", doc_get(walled, 4, 3), black)
+    r = t_eq_int(r, "right side is untouched", doc_get(walled, 5, 3), white)
+
+    // The fill is four-connected, so a diagonal gap does not leak.
+    let diagonal: Document = doc_new(4, 4, white)
+    doc_set(diagonal, 1, 0, black)
+    doc_set(diagonal, 0, 1, black)
+
+    let corner: int = fill_flood(diagonal, 0, 0, red)
+    r = t_eq_int(r, "diagonal contact does not leak", corner, 1)
+    r = t_eq_int(r, "only the corner changed", doc_get(diagonal, 0, 0), red)
+    r = t_eq_int(r, "the far side is untouched", doc_get(diagonal, 1, 1), white)
+
+    // A fully enclosed region fills without escaping.
+    let enclosed: Document = doc_new(8, 8, white)
+    raster_rect(enclosed, 1, 1, 6, 6, 1, black, log, 0)
+
+    let inside: int = fill_flood(enclosed, 3, 3, red)
+    r = t_eq_int(r, "enclosed fill covers the interior", inside, 16)
+    r = t_eq_int(r, "outside the border is untouched", doc_get(enclosed, 0, 0), white)
+
+    // Starting outside the canvas does nothing rather than failing.
+    let ignored: int = fill_flood(enclosed, 0 - 1, 0, red)
+    r = t_eq_int(r, "fill outside the canvas is a no-op", ignored, 0)
+
+    // A single-pixel canvas is the smallest case the stack arithmetic has to handle.
+    let tiny: Document = doc_new(1, 1, white)
+    r = t_eq_int(r, "one pixel canvas fills", fill_flood(tiny, 0, 0, red), 1)
+
+    // The stack is sized at one entry per pixel, which holds only because a pixel is recoloured
+    // when it is pushed. A canvas of one uniform colour is the worst case for that bound.
+    let large: Document = doc_new(64, 64, white)
+    r = t_eq_int(r, "large uniform fill completes", fill_flood(large, 32, 32, red), 4096)
+
+    // replace_all ignores connectivity.
+    let scattered: Document = doc_new(4, 4, white)
+    doc_set(scattered, 0, 0, black)
+    doc_set(scattered, 3, 3, black)
+
+    r = t_eq_int(r, "replace_all reaches both", fill_replace_all(scattered, black, red), 2)
+    r = t_eq_int(r, "first is replaced", doc_get(scattered, 0, 0), red)
+    r = t_eq_int(r, "second is replaced", doc_get(scattered, 3, 3), red)
+    r = t_eq_int(r, "replace_all with the same colour is a no-op",
+                 fill_replace_all(scattered, red, red), 0)
+
+    return r
+}

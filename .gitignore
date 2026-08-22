@@ -29,6 +29,10 @@ vscode-extension/bun.lock
 *.deps.json
 build/
 
+# `dotnet pack` output for the global tool. Rebuilt from source by install.ps1 and by anyone
+# publishing a release; a committed .nupkg would go stale the moment the compiler changed.
+artifacts/
+
 # Compiled output from running the compiler over examples/ and tests/. The .prl files are the
 # sources; the assemblies beside them are throwaway. Several of these were committed before the
 # *.dll and *.runtimeconfig.json rules existed, so they stayed tracked — a .gitignore entry has

@@ -917,6 +917,16 @@ internal sealed class CEmitter
         if (ReferenceEquals(fn, BuiltInFunctions.ConsoleReadKey)) { _sb.Append("prl_console_read_key()"); return; }
         if (ReferenceEquals(fn, BuiltInFunctions.ThreadSleep)) { _sb.Append("prl_thread_sleep("); EmitExpression(args[0]); _sb.Append(")"); return; }
 
+        // assert — named prl_assert rather than assert so it cannot collide with the macro in
+        // C's <assert.h>, which a translation unit including it would otherwise expand.
+        if (ReferenceEquals(fn, BuiltInFunctions.Assert))
+        {
+            _sb.Append("prl_assert(");
+            EmitExpression(args[0]); _sb.Append(", ");
+            EmitStringCoerce(args[1]); _sb.Append(")");
+            return;
+        }
+
         // PSP graphics/input built-ins
         if (ReferenceEquals(fn, BuiltInFunctions.PspInit))        { _sb.Append("prl_psp_init()"); return; }
         if (ReferenceEquals(fn, BuiltInFunctions.PspClear))       { _sb.Append("prl_psp_clear("); EmitExpression(args[0]); _sb.Append(")"); return; }

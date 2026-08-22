@@ -1,0 +1,20 @@
+/*
+ * Negative test: a misspelled call must report an undefined function.
+ *
+ * `equals` is not declared here, but `System.Object.Equals` exists. Unqualified calls fall back to
+ * searching the loaded assemblies for a public static method, and that search used to match
+ * case-insensitively and take the first method of that name regardless of its parameter count.
+ * So this bound to Object.Equals and reported that `Equals` requires 2 arguments — a complaint
+ * about a method the program never mentioned, which sends you looking in the wrong place.
+ *
+ * The fallback now requires an exact-case name and a matching parameter count, and refuses a name
+ * that resolves on more than one type rather than picking between them. This program is expected
+ * to fail to compile with "Function 'equals' doesn't exist."
+ */
+
+import "io"
+
+func main()
+{
+    print(equals(1))
+}

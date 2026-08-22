@@ -93,6 +93,22 @@ internal static class BuiltInFunctions
     public static readonly FunctionSymbol ThreadSleep = new("thread_sleep",
         ImmutableArray.Create(new ParameterSymbol("ms", TypeSymbol.Int, 0)), TypeSymbol.Void);
 
+    /// <summary>
+    /// Fails the program when <c>condition</c> is false. Exposed by <c>import "test"</c>.
+    /// </summary>
+    /// <remarks>
+    /// ProLang has no exceptions and no way to set an exit code, so before this a test program
+    /// could only print "passed" and return 0 whatever happened — which is what
+    /// <c>examples/09-json-parser/json-parser-tests.prl</c> does. The execution tests assert on a
+    /// zero exit code and empty stderr, so an assert that throws is what lets a ProLang test suite
+    /// actually fail.
+    /// </remarks>
+    public static readonly FunctionSymbol Assert = new("assert",
+        ImmutableArray.Create(
+            new ParameterSymbol("condition", TypeSymbol.Bool, 0),
+            new ParameterSymbol("message", TypeSymbol.String, 1)),
+        TypeSymbol.Void);
+
     // PSP graphics / input
     public static readonly FunctionSymbol PspInit = new("psp_init",
         ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Void);

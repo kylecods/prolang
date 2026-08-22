@@ -1,0 +1,73 @@
+/*
+ * Pixel editor — rendering
+ *
+ * What is left after the reusable parts moved to `ui/chrome`: the two things that know what this
+ * particular program is. Everything generic — blitting a document, setting a canvas view, drawing
+ * the palette strip, building and styling icon buttons — is in the library now and is shared with
+ * every other application built on it.
+ *
+ * Keeping this thin is deliberate. ui/view computes the zoom and pan mapping and is tested
+ * exactly; this file only decides *which* document to hand over. Doing arithmetic here would put
+ * error-prone code in the one module a test cannot reach, because importing the shim would make
+ * the test suite need the Windows Desktop runtime pack.
+ */
+
+import "array"
+import "winforms"
+import "ui/document"
+import "ui/view"
+import "ui/color"
+import "ui/chrome"
+import "util"
+import "tools.prl"
+
+/*
+ * Redraws the canvas from whichever document is currently live.
+ *
+ * While a shape is being rubber-banded the preview is shown instead of the image, because the
+ * shape does not exist in the image until the button is released. That choice is the whole reason
+ * this function is not `chrome_blit` at the call site: it depends on the editor's Stroke.
+ */
+func render_canvas(canvasId: int, bitmapId: int, doc: Document, preview: Document, stroke: Stroke, view: View, activeTheme: int) : void {
+    if (stroke.active && tool_is_shape(stroke.tool)) {
+        chrome_blit(bitmapId, preview)
+    } else {
+        chrome_blit(bitmapId, doc)
+    }
+
+    chrome_set_view(canvasId, view, activeTheme)
+    WinFormsHelper.CanvasRefresh(canvasId)
+}
+
+/*
+ * Builds the status line.
+ *
+ * Coordinates are padded to a fixed width, including when there are none to show: the bar is
+ * rewritten on every mouse move, and an unpadded value going from 10 to 9 leaves the stale digit
+ * behind while a shorter placeholder makes everything after it jump sideways.
+ *
+ * Kept compact on purpose. The label is as wide as the canvas, and the canvas at the window's
+ * minimum size is not wide: a Windows Forms label wraps rather than clipping, so a line a little
+ * too long does not trail off — it silently becomes two, and the second one is cut off by the
+ * bottom of the window.
+ */
+func render_status(stroke: Stroke, view: View, doc: Document, x: int, y: int, dirty: bool) : string {
+    let position: string = util_pad_left("-", 4) + "," + util_pad_left("-", 4)
+
+    if (doc_in_bounds(doc, x, y)) {
+        position = util_pad_left("" + x, 4) + "," + util_pad_left("" + y, 4)
+    }
+
+    let modified: string = ""
+    if (dirty) {
+        modified = "  *"
+    }
+
+    return position
+        + "  " + doc.width + "x" + doc.height
+        + "  zoom " + view.zoom + "x"
+        + "  " + tool_name(stroke.tool)
+        + " " + stroke.size + "px"
+        + "  " + color_hex(stroke.colour)
+        + modified
+}

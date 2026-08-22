@@ -111,15 +111,28 @@ prolang/
 ├── examples/                      # ProLang example programs
 │   ├── 01-syntax-types/           # Type system examples
 │   ├── 02-operators/              # Operator examples
-│   ├── 03-control-flow/           # If/loops/match
+│   ├── 03-control-flow/           # If/elif/else, loops
 │   ├── 04-functions/              # Function definitions
 │   ├── 05-dotnet-interop/         # .NET interop examples
 │   ├── 06-structs/                # Struct definitions
 │   ├── 07-strings/                # String operations
 │   ├── 08-ring-buffer/            # Ring buffer implementation
 │   ├── 09-json-parser/            # JSON parser (bidirectional)
-│   ├── hello/                     # Basic hello world
-│   └── test-string-methods/       # String method tests
+│   ├── 10-lox/                    # Placeholder
+│   ├── 11-std/                    # Standard library demos
+│   ├── 12-snake/                  # Console Snake game
+│   ├── 13-winforms/               # Windows Forms interop
+│   ├── 14-chip-8/                 # CHIP-8 emulator
+│   ├── 15-psp-demo/               # PlayStation Portable target
+│   └── 16-pixel-editor/           # Pixel editor: 4 modules over the std/ui toolkit
+│
+├── std/                           # Standard library, shipped beside the compiler
+│   ├── ui/                        # UI toolkit: shapes, themes, icons, layout, WinForms boundary
+│   └── README.md                  # Module list and the rules for adding one
+│
+├── tests/std/                     # The standard library's own suite, written in ProLang
+├── tools/install-app.ps1          # Installs a compiled ProLang application for the current user
+├── install.ps1                    # Installs the compiler as the `prolang` command
 │
 └── .claude/                       # Claude Code configuration
     ├── launch.json                # Dev server launch configs
@@ -175,6 +188,10 @@ dotnet run --project src/ProLang/ProLang.csproj -- [OPTIONS] <SOURCE-FILES>
 | `-o PATH` | Output assembly path | `-o output.dll` |
 | `-m NAME` | Module name | `-m MyModule` |
 | `-r PATH` | Reference assembly | `-r System.Core.dll` |
+| `--target=KIND` | Subsystem: `library` (default), `console`, `winexe` | `--target=winexe` |
+| `--framework=NAME` | Shared framework, or `windowsdesktop` | `--framework=windowsdesktop` |
+| `--apphost` | Also write a native launcher beside the assembly | `--apphost` |
+| `--icon=PATH` | Embed an `.ico` in the launcher. Implies `--apphost` | `--icon=bin/app.ico` |
 | `-d, --disassemble` | Print the lowered IR | `-d` |
 | `--msil=PATH` | Print an MSIL listing for a compiled assembly | `--msil=out.dll` |
 | `--emit-c` | Transpile to C99 | `--emit-c` |
@@ -210,6 +227,45 @@ dotnet run --project src/ProLang/ProLang.csproj -- myfile.prl \
   -r "C:\Program Files\dotnet\packs\Microsoft.NETCore.App.Ref\10.0.0\ref\net10.0\System.Core.dll" \
   -o myapp.dll
 ```
+
+#### Building a distributable application
+
+`--apphost` writes a native launcher beside the assembly, so the program runs as `app.exe` rather
+than `dotnet app.dll`. It is a byte-patched copy of the .NET SDK's apphost template
+(`src/ProLang/Compiler/AppHost.cs`), and it carries the subsystem across — which is what actually
+suppresses the console window for a GUI program, since `dotnet` is itself a console application.
+
+```bash
+prolang app.prl --target=winexe --apphost -o bin/app.dll     # windowed
+prolang tool.prl --target=console --apphost -o bin/tool.dll  # console
+```
+
+A failure to write a launcher is a warning, not an error: the assembly is still a complete program.
+
+`--icon` embeds a multi-resolution `.ico` into the launcher as Win32 resources
+(`src/ProLang/Compiler/IconEmbedder.cs`), which is what Explorer, the taskbar and Start Menu
+shortcuts read. `ui/chrome` can draw the file — see `examples/16-pixel-editor/makeicon.prl` — so an
+icon is generated from source rather than committed. The icon a *running window* shows is separate
+and is set with `chrome_window_icon`.
+
+Two things about the embedding are worth knowing before touching it. The `.ico` is taken apart:
+each image becomes an `RT_ICON` and the file's directory is rewritten as an `RT_GROUP_ICON` whose
+entries are **14 bytes**, not the file's 16, because a 2-byte resource id replaces a 4-byte offset.
+Getting that wrong does not fail — the executable is valid and Windows silently shows the generic
+icon. `IconEmbedderTests` compares the group byte for byte for that reason.
+
+### Installing
+
+`install.ps1` installs the compiler for the current user and puts `prolang` on PATH;
+`tools/install-app.ps1` installs a program built with it, with a Start Menu entry for a windowed
+one or a PATH entry for a command-line one. Both take `-Uninstall`. The compiler is also packable
+as a .NET global tool (`dotnet pack`, then `dotnet tool install --global --add-source`).
+
+Whatever installs the compiler must bring `std/`, `runtime/` and `lib/` with it — they sit beside
+the executable and the compiler does not work without them. `runtime/` and `lib/` are produced by
+`AfterTargets` steps in `ProLang.csproj` that copy into the build output rather than declaring
+project items, so `dotnet publish` does **not** pick them up on its own; `install.ps1` copies them
+explicitly and the `.csproj` names them explicitly for packing.
 
 ---
 
@@ -527,6 +583,35 @@ func main() {
 - ❌ **No global statements** - Code must be in functions
 - ✅ **Functions, types, and structs** - Libraries define reusable components
 
+### The shared standard library
+
+Modules under `std/` ship beside the compiler and are imported **by name, without an extension**:
+
+```prolang
+import "util"        // std/util.prl
+import "ui/shape"    // std/ui/shape.prl
+```
+
+An extensionless import resolves against the `std/` directory next to the compiler executable
+(`ProLangCompilation.cs`, the "Try the std/ directory" branch), so it works from any directory and
+needs no relative path. A path **with** an extension — `import "tools.prl"` — resolves relative to
+the importing file, which is how an application's own modules stay separate from the library's.
+
+`std/README.md` is the module list. The rules when adding one:
+
+- Give it a prefix nothing else uses. ProLang has **one flat global namespace** across every
+  imported file, so a collision is a compile error and, worse, an unresolved name can silently bind
+  to an arbitrary .NET method instead.
+- Put tests in `tests/std/`, import them from `tests/std/run_tests.prl`, and classify **both** files
+  in `src/ProLang.Tests/Infrastructure/TestCorpus.cs`. Files under `std/` are not scanned by the
+  corpus, so that suite is their only coverage.
+- Anything that imports `winforms` belongs in `ui/chrome`. The whole import graph compiles into one
+  assembly, so a single edge to the shim makes a test suite need the Windows Desktop runtime pack
+  and stop being runnable under `dotnet test`.
+- New library files must be under `std/**/*.prl` to be picked up by the `Content` glob in
+  `src/ProLang/ProLang.csproj`, which is what copies them beside the compiler and packs them into
+  the `dotnet tool` package.
+
 ---
 
 ## Troubleshooting
@@ -648,11 +733,13 @@ let result = add(3, 5)
 ### Control Flow
 
 ```prolang
-// if-else
+// if / elif / else. `else if` is accepted as a synonym for `elif`.
 if(x > 0) {
     print("positive")
+} elif(x < 0) {
+    print("negative")
 } else {
-    print("non-positive")
+    print("zero")
 }
 
 // while loop
@@ -661,35 +748,76 @@ while(i < 10) {
     i = i + 1
 }
 
-// for loop
-for(i = 0 to 10) {
+// for loop — the bounds are INCLUSIVE at both ends, so this prints 0 through 10
+for(let i = 0 to 10) {
     print(i)
 }
 ```
+
+There is no `match`, `switch`, `do`/`while`, or foreach. A multi-way branch is an `if`/`elif`
+chain, which — with no closures or function values in the language — is also how callbacks and
+dispatch tables are expressed.
 
 ### Structs
 
 ```prolang
 struct Point {
-    x: int,
-    y: int
+    x: int;
+    y: int;
 }
 
-let p = Point { x: 10, y: 20 }
-print(p.x)  // 10
+func main() {
+    let p: Point = Point { x: 10, y: 20 }
+    print(p.x)  // 10
+    p.x = 30    // fields are assignable
+
+    // Arrays of structs, nested structs, and assignment through either, all work.
+    let points: array<Point> = array_new(2)
+    points[0] = Point { x: 1, y: 2 }
+    points[0].x = 99
+}
 ```
+
+> **Structs are .NET value types**, so passing one to a function passes a *copy*: assigning to a
+> scalar field of a parameter is invisible to the caller. An `array<T>` field is a reference to a
+> real array, so writes *through* it are visible — that is the mutation channel the language has.
+> The repo's convention for everything else is to return a new struct, as `std/dynarray.prl` does.
 
 ### Collections
 
 ```prolang
-// Arrays
+// Arrays are fixed-length. `length()` is the only method they have — there is no push or pop.
 let arr: array<int> = [1, 2, 3]
-arr.push(4)
+let zeroed: array<int> = array_new(16)
+print(arr.length())
+
+// Growable collections are written in ProLang: see std/dynarray.prl for DynArray<T>, and
+// examples/16-pixel-editor/intstack.prl for a fixed-capacity stack.
 
 // Maps/Objects
 let map: map<string, any> = { "name": "Alice", "age": 30 }
 let name = map["name"]
 ```
+
+> `map<K, V>` is thinly exercised — two uses in the whole repository. Prefer `array<T>`.
+
+### Assertions
+
+```prolang
+import "test"
+
+func main() {
+    assert(1 + 1 == 2, "arithmetic works")
+}
+```
+
+`assert` ends the program with a non-zero exit code and the message on stderr. It flushes the
+`print()` buffer first, so the output leading up to a failure is not lost — without that, a
+failing assert would discard everything the program had printed, since `print()` is only flushed
+after `main()` returns.
+
+This is what makes a test suite written in ProLang a real gate. `examples/16-pixel-editor/tests/`
+is a worked example: 295 checks across ten modules, run by `dotnet test` through the corpus.
 
 ### String Methods
 

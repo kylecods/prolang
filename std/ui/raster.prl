@@ -1,0 +1,324 @@
+/*
+ * Pixel editor — rasterisers
+ *
+ * Draws primitives into a Document. Pure prolang; exercised by tests/test_raster.prl.
+ *
+ * Every function takes a `touched` array and a `count`, and returns the new count. Each pixel
+ * written has its flat index appended, which is what lets a shape tool rubber-band cheaply: to
+ * erase the previous preview the caller restores just the recorded pixels instead of repainting
+ * the whole canvas. Redrawing everything on each mouse-move is O(width x height) per event, and
+ * at 256x256 that is 65,536 writes for a line that touched forty pixels.
+ *
+ * Callers that do not want the log pass a zero-length array; raster_plot checks the bound, so the
+ * recording simply does not happen.
+ */
+
+import "array"
+import "ui/document"
+import "util"
+
+/*
+ * Sets one pixel and records its index.
+ *
+ * Every rasteriser goes through here so the recording rule lives in one place. Out-of-bounds
+ * pixels are dropped and not recorded — restoring one later would write outside the buffer.
+ */
+func raster_plot(doc: Document, x: int, y: int, colour: int, touched: array<int>, count: int) : int {
+    let index: int = doc_index(doc, x, y)
+
+    if (index < 0) {
+        return count
+    }
+
+    doc.pixels[index] = colour
+
+    if (count < touched.length()) {
+        touched[count] = index
+        return count + 1
+    }
+
+    return count
+}
+
+/*
+ * Restores pixels recorded in `touched` from `source` back into `target`.
+ *
+ * This is the erase half of the preview cycle, and the reason the log exists.
+ */
+func raster_restore(target: Document, source: Document, touched: array<int>, count: int) : void {
+    let limit: int = min(count, touched.length())
+    let i: int = 0
+
+    while (i < limit) {
+        let index: int = touched[i]
+
+        if (index >= 0 && index < doc_pixel_count(target)) {
+            target.pixels[index] = source.pixels[index]
+        }
+
+        i = i + 1
+    }
+}
+
+// ── Brush ────────────────────────────────────────────────────────────────────
+
+/*
+ * A filled square of side `size`, centred on (x, y).
+ *
+ * The origin is offset by half the size so that even sizes grow down and right rather than
+ * jumping a pixel as the size changes.
+ */
+func raster_brush(doc: Document, x: int, y: int, size: int, colour: int, touched: array<int>, count: int) : int {
+    let side: int = size
+    if (side < 1) {
+        side = 1
+    }
+
+    let half: int = side / 2
+    let total: int = count
+
+    let dy: int = 0
+    while (dy < side) {
+        let dx: int = 0
+        while (dx < side) {
+            total = raster_plot(doc, (x - half) + dx, (y - half) + dy, colour, touched, total)
+            dx = dx + 1
+        }
+        dy = dy + 1
+    }
+
+    return total
+}
+
+// ── Lines ────────────────────────────────────────────────────────────────────
+
+/*
+ * Bresenham's line algorithm, stamping the brush at every step.
+ *
+ * The integer-error form is used rather than anything involving division, so the line is exactly
+ * reproducible: the same endpoints always paint the same pixels.
+ *
+ * The endpoints are put into a canonical order first, which plain Bresenham does not do. Where
+ * the error term lands exactly on a tie, the algorithm resolves it in the direction of travel, so
+ * running it from B to A can step at a different pixel than running it from A to B — the two
+ * lines differ by a pixel at some slopes. Ordering the endpoints first makes the pixel set depend
+ * only on which two points were given, which is what makes the shape stable while a line is being
+ * rubber-banded back and forth.
+ */
+func raster_line(doc: Document, x0: int, y0: int, x1: int, y1: int, size: int, colour: int, touched: array<int>, count: int) : int {
+    let ax: int = x0
+    let ay: int = y0
+    let bx: int = x1
+    let by: int = y1
+
+    // Lexicographic order on (x, y): swap when the second point sorts before the first.
+    if (bx < ax || (bx == ax && by < ay)) {
+        ax = x1
+        ay = y1
+        bx = x0
+        by = y0
+    }
+
+    let dx: int = util_abs(bx - ax)
+    let dy: int = util_abs(by - ay)
+    let stepX: int = util_sign(bx - ax)
+    let stepY: int = util_sign(by - ay)
+
+    let x: int = ax
+    let y: int = ay
+    let error: int = dx - dy
+    let total: int = count
+
+    let drawing: bool = true
+    while (drawing) {
+        total = raster_brush(doc, x, y, size, colour, touched, total)
+
+        if (x == bx && y == by) {
+            drawing = false
+        } else {
+            // Doubling the error before comparing keeps the whole test in integers.
+            let doubled: int = error * 2
+
+            if (doubled > (0 - dy)) {
+                error = error - dy
+                x = x + stepX
+            }
+
+            if (doubled < dx) {
+                error = error + dx
+                y = y + stepY
+            }
+        }
+    }
+
+    return total
+}
+
+// ── Rectangles ───────────────────────────────────────────────────────────────
+
+/*
+ * A rectangle outline through two opposite corners.
+ *
+ * Corners are normalised so a drag in any direction produces the same shape as the opposite drag.
+ */
+func raster_rect(doc: Document, x0: int, y0: int, x1: int, y1: int, size: int, colour: int, touched: array<int>, count: int) : int {
+    let left: int = min(x0, x1)
+    let right: int = max(x0, x1)
+    let top: int = min(y0, y1)
+    let bottom: int = max(y0, y1)
+
+    let total: int = count
+    total = raster_line(doc, left, top, right, top, size, colour, touched, total)
+    total = raster_line(doc, left, bottom, right, bottom, size, colour, touched, total)
+    total = raster_line(doc, left, top, left, bottom, size, colour, touched, total)
+    total = raster_line(doc, right, top, right, bottom, size, colour, touched, total)
+
+    return total
+}
+
+// A solid rectangle through two opposite corners.
+func raster_rect_filled(doc: Document, x0: int, y0: int, x1: int, y1: int, colour: int, touched: array<int>, count: int) : int {
+    let left: int = min(x0, x1)
+    let right: int = max(x0, x1)
+    let top: int = min(y0, y1)
+    let bottom: int = max(y0, y1)
+
+    let total: int = count
+
+    let y: int = top
+    while (y <= bottom) {
+        let x: int = left
+        while (x <= right) {
+            total = raster_plot(doc, x, y, colour, touched, total)
+            x = x + 1
+        }
+        y = y + 1
+    }
+
+    return total
+}
+
+// ── Ellipses ─────────────────────────────────────────────────────────────────
+
+/*
+ * An ellipse outline inscribed in the rectangle through two opposite corners.
+ *
+ * This is the midpoint algorithm over both arcs, plotting the four mirror images of each point.
+ * It works in the ellipse's own coordinates and offsets by the centre at plot time, so an even
+ * width or height still produces a symmetric shape rather than one biased a pixel to one side.
+ */
+func raster_ellipse(doc: Document, x0: int, y0: int, x1: int, y1: int, size: int, colour: int, touched: array<int>, count: int) : int {
+    let left: int = min(x0, x1)
+    let right: int = max(x0, x1)
+    let top: int = min(y0, y1)
+    let bottom: int = max(y0, y1)
+
+    let radiusX: int = (right - left) / 2
+    let radiusY: int = (bottom - top) / 2
+    let centreX: int = left + radiusX
+    let centreY: int = top + radiusY
+
+    let total: int = count
+
+    if (radiusX == 0 || radiusY == 0) {
+        // Degenerate to the bounding line, which is what a one-pixel-tall drag should draw.
+        return raster_line(doc, left, top, right, bottom, size, colour, touched, total)
+    }
+
+    let rxSquared: int = radiusX * radiusX
+    let rySquared: int = radiusY * radiusY
+
+    let x: int = 0
+    let y: int = radiusY
+    let decision: int = rySquared - (rxSquared * radiusY) + (rxSquared / 4)
+
+    // First arc: while the tangent is shallower than 45 degrees, x advances every step.
+    while ((rySquared * x) < (rxSquared * y)) {
+        total = raster_ellipse_points(doc, centreX, centreY, x, y, size, colour, touched, total)
+
+        if (decision < 0) {
+            decision = decision + (rySquared * ((2 * x) + 3))
+        } else {
+            decision = decision + (rySquared * ((2 * x) + 3)) + (rxSquared * (2 - (2 * y)))
+            y = y - 1
+        }
+
+        x = x + 1
+    }
+
+    // Second arc: y advances every step.
+    decision = (rySquared * ((x * x) + x)) + (rxSquared * ((y - 1) * (y - 1))) - (rxSquared * rySquared)
+
+    while (y >= 0) {
+        total = raster_ellipse_points(doc, centreX, centreY, x, y, size, colour, touched, total)
+
+        if (decision > 0) {
+            decision = decision + (rxSquared * (3 - (2 * y)))
+        } else {
+            decision = decision + (rySquared * ((2 * x) + 2)) + (rxSquared * (3 - (2 * y)))
+            x = x + 1
+        }
+
+        y = y - 1
+    }
+
+    return total
+}
+
+// Plots the four mirror images of one ellipse point.
+func raster_ellipse_points(doc: Document, centreX: int, centreY: int, x: int, y: int, size: int, colour: int, touched: array<int>, count: int) : int {
+    let total: int = count
+    total = raster_brush(doc, centreX + x, centreY + y, size, colour, touched, total)
+    total = raster_brush(doc, centreX - x, centreY + y, size, colour, touched, total)
+    total = raster_brush(doc, centreX + x, centreY - y, size, colour, touched, total)
+    total = raster_brush(doc, centreX - x, centreY - y, size, colour, touched, total)
+    return total
+}
+
+/*
+ * A solid ellipse inscribed in the rectangle through two opposite corners.
+ *
+ * Filled by testing each pixel of the bounding box against the ellipse equation rather than by
+ * scan-converting the outline. It is the slower method and the one that cannot leave gaps, and
+ * the shape is only rasterised once per drag.
+ */
+func raster_ellipse_filled(doc: Document, x0: int, y0: int, x1: int, y1: int, colour: int, touched: array<int>, count: int) : int {
+    let left: int = min(x0, x1)
+    let right: int = max(x0, x1)
+    let top: int = min(y0, y1)
+    let bottom: int = max(y0, y1)
+
+    let radiusX: int = (right - left) / 2
+    let radiusY: int = (bottom - top) / 2
+    let centreX: int = left + radiusX
+    let centreY: int = top + radiusY
+
+    let total: int = count
+
+    if (radiusX == 0 || radiusY == 0) {
+        return raster_rect_filled(doc, left, top, right, bottom, colour, touched, total)
+    }
+
+    let rxSquared: int = radiusX * radiusX
+    let rySquared: int = radiusY * radiusY
+    let limit: int = rxSquared * rySquared
+
+    let y: int = top
+    while (y <= bottom) {
+        let x: int = left
+        while (x <= right) {
+            let dx: int = x - centreX
+            let dy: int = y - centreY
+
+            // (dx/rx)^2 + (dy/ry)^2 <= 1, multiplied through by rx^2 ry^2 to stay in integers.
+            if (((dx * dx * rySquared) + (dy * dy * rxSquared)) <= limit) {
+                total = raster_plot(doc, x, y, colour, touched, total)
+            }
+
+            x = x + 1
+        }
+        y = y + 1
+    }
+
+    return total
+}

@@ -1,0 +1,92 @@
+/*
+ * Pixel editor tests — palette.prl
+ */
+
+import "testing"
+import "ui/palette"
+import "ui/color"
+
+func test_palette_run() : TestRun {
+    let r: TestRun = t_new()
+
+    r = t_eq_int(r, "palette size", palette_count(), 16)
+
+    // Every entry must be opaque and distinct; a transparent swatch would paint nothing and a
+    // duplicate would be an unreachable slot.
+    let opaque: int = 0
+    let i: int = 0
+    while (i < palette_count()) {
+        if (color_a(palette_colour(i)) == 255) {
+            opaque = opaque + 1
+        }
+        i = i + 1
+    }
+    r = t_eq_int(r, "every swatch is opaque", opaque, 16)
+
+    let duplicates: int = 0
+    let a: int = 0
+    while (a < palette_count()) {
+        let b: int = a + 1
+        while (b < palette_count()) {
+            if (palette_colour(a) == palette_colour(b)) {
+                duplicates = duplicates + 1
+            }
+            b = b + 1
+        }
+        a = a + 1
+    }
+    r = t_eq_int(r, "no duplicate swatches", duplicates, 0)
+
+    // An index outside the palette is transparent rather than an arbitrary colour.
+    r = t_eq_int(r, "index past the end is transparent", palette_colour(16), 0)
+    r = t_eq_int(r, "negative index is transparent", palette_colour(0 - 1), 0)
+    r = t_eq_str(r, "index past the end has no name", palette_name(16), "none")
+    r = t_eq_str(r, "first swatch is named", palette_name(0), "black")
+
+    // ── Strip geometry ───────────────────────────────────────────────────────
+    // An 8-wide strip of 20-pixel cells: two rows of eight.
+    r = t_eq_int(r, "rows for 8 columns", palette_rows(8), 2)
+    r = t_eq_int(r, "rows for 16 columns", palette_rows(16), 1)
+    r = t_eq_int(r, "rows for 5 columns rounds up", palette_rows(5), 4)
+    r = t_eq_int(r, "rows for 0 columns", palette_rows(0), 0)
+
+    r = t_eq_int(r, "hit first swatch", palette_index_at(0, 0, 20, 8), 0)
+    r = t_eq_int(r, "hit within first swatch", palette_index_at(19, 19, 20, 8), 0)
+    r = t_eq_int(r, "hit second swatch", palette_index_at(20, 0, 20, 8), 1)
+    r = t_eq_int(r, "hit second row", palette_index_at(0, 20, 20, 8), 8)
+    r = t_eq_int(r, "hit last swatch", palette_index_at(140, 20, 20, 8), 15)
+
+    // The bounds test has to come before the division: a negative coordinate divides toward zero
+    // into column 0, so without it a click just left of the strip would select its first entry.
+    r = t_eq_int(r, "negative x misses", palette_index_at(0 - 1, 0, 20, 8), 0 - 1)
+    r = t_eq_int(r, "negative y misses", palette_index_at(0, 0 - 1, 20, 8), 0 - 1)
+    r = t_eq_int(r, "past the last column misses", palette_index_at(160, 0, 20, 8), 0 - 1)
+    r = t_eq_int(r, "past the last row misses", palette_index_at(0, 40, 20, 8), 0 - 1)
+
+    r = t_eq_int(r, "x of first swatch", palette_x(0, 20, 8), 0)
+    r = t_eq_int(r, "x of second swatch", palette_x(1, 20, 8), 20)
+    r = t_eq_int(r, "x wraps at the row end", palette_x(8, 20, 8), 0)
+    r = t_eq_int(r, "y of first row", palette_y(0, 20, 8), 0)
+    r = t_eq_int(r, "y of second row", palette_y(8, 20, 8), 20)
+
+    // Position and hit-testing must agree, or the selection outline lands on the wrong swatch.
+    let mismatches: int = 0
+    let k: int = 0
+    while (k < palette_count()) {
+        let x: int = palette_x(k, 20, 8)
+        let y: int = palette_y(k, 20, 8)
+        if (palette_index_at(x, y, 20, 8) != k) {
+            mismatches = mismatches + 1
+        }
+        k = k + 1
+    }
+    r = t_eq_int(r, "layout and hit-testing agree", mismatches, 0)
+
+    // The outline has to flip with the swatch's brightness or it vanishes on half the palette.
+    r = t_eq_int(r, "dark swatch gets a light outline",
+                 palette_outline_for(color_rgb(0, 0, 0)), color_rgb(255, 255, 255))
+    r = t_eq_int(r, "light swatch gets a dark outline",
+                 palette_outline_for(color_rgb(255, 255, 255)), color_rgb(0, 0, 0))
+
+    return r
+}

@@ -45,12 +45,24 @@ namespace ProLang.Compiler
 
         private TypeDefinition _typeDefinition;
 
+        private readonly EmitOptions _options;
+
         private static readonly string[] stringArray = ["System.String"];
 
-        private Emitter(string moduleName, string[] references)
+        /// <summary>Maps the compiler's target kind onto Cecil's.</summary>
+        private static ModuleKind ToModuleKind(EmitTargetKind kind) => kind switch
         {
+            EmitTargetKind.ConsoleApplication => ModuleKind.Console,
+            EmitTargetKind.WindowsApplication => ModuleKind.Windows,
+            _ => ModuleKind.Dll,
+        };
+
+        private Emitter(string moduleName, string[] references, EmitOptions options)
+        {
+            _options = options;
+
             var assemblyName = new AssemblyNameDefinition(moduleName, new Version(1, 0));
-            _assemblyDefinition = AssemblyDefinition.CreateAssembly(assemblyName, moduleName, ModuleKind.Dll);
+            _assemblyDefinition = AssemblyDefinition.CreateAssembly(assemblyName, moduleName, ToModuleKind(options.TargetKind));
 
             _references = new ReferenceResolver(_assemblyDefinition.MainModule, _diagnostics);
             _interop = new InteropEmitter(_references);
@@ -108,14 +120,14 @@ namespace ProLang.Compiler
                 ? definition
                 : _types.EmitStruct(structSymbol);
 
-        public static ImmutableArray<Diagnostic> Emit(BoundProgram program, string moduleName, string[] references, string outputPath)
+        public static ImmutableArray<Diagnostic> Emit(BoundProgram program, string moduleName, string[] references, string outputPath, EmitOptions? options = null)
         {
             if (program.Diagnostics.Any())
             {
                 return program.Diagnostics;
             }
 
-            var emitter = new Emitter(moduleName, references);
+            var emitter = new Emitter(moduleName, references, options ?? EmitOptions.Default);
 
             return emitter.Emit(program, outputPath);
         }
@@ -125,14 +137,14 @@ namespace ProLang.Compiler
         /// disk I/O does not sit inside the measured region and temp files are not required.
         /// No <c>.runtimeconfig.json</c> is produced — there is no path to derive it from.
         /// </summary>
-        public static ImmutableArray<Diagnostic> Emit(BoundProgram program, string moduleName, string[] references, Stream outputStream)
+        public static ImmutableArray<Diagnostic> Emit(BoundProgram program, string moduleName, string[] references, Stream outputStream, EmitOptions? options = null)
         {
             if (program.Diagnostics.Any())
             {
                 return program.Diagnostics;
             }
 
-            var emitter = new Emitter(moduleName, references);
+            var emitter = new Emitter(moduleName, references, options ?? EmitOptions.Default);
 
             return emitter.Emit(program, outputStream, runtimeConfigPath: null);
         }
@@ -237,28 +249,76 @@ namespace ProLang.Compiler
 
             if (program.MainFunction != null)
             {
-                _assemblyDefinition.EntryPoint = _methods[program.MainFunction];
+                var entryPoint = _methods[program.MainFunction];
+                _assemblyDefinition.EntryPoint = entryPoint;
+                ApplyApartmentState(entryPoint);
             }
+        }
+
+        /// <summary>
+        /// Marks the entry point <c>[STAThread]</c> for programs that will use Windows Desktop.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The CLR reads this attribute off the entry point and sets the main thread's COM
+        /// apartment before calling it. Without it the thread is MTA, and the Windows *common*
+        /// dialogs — open file, save file, folder browse — are COM objects
+        /// (<c>IFileDialog</c>) that require STA. Calling one from an MTA thread does not throw:
+        /// it disables the owner window and never returns, so the program looks frozen while
+        /// still pumping messages. Ordinary <see cref="System.Windows.Forms.Form.ShowDialog()"/>
+        /// and <c>MessageBox</c> are unaffected, which makes the failure look specific to the
+        /// file commands rather than to the apartment.
+        /// </para>
+        /// <para>
+        /// Applied when the program targets the windows subsystem or asks for the Windows Desktop
+        /// framework — the two ways of saying "this is a GUI program". Console programs are left
+        /// MTA, which is the .NET default and what any threading they do will expect.
+        /// </para>
+        /// <para>
+        /// A missing <c>STAThreadAttribute</c> is not fatal. It is only reachable when the BCL
+        /// reference set is incomplete, and the program still runs — the file dialogs are what
+        /// stop working, which is no worse than before this existed.
+        /// </para>
+        /// </remarks>
+        private void ApplyApartmentState(MethodDefinition entryPoint)
+        {
+            var wantsSingleThreadedApartment =
+                _options.TargetKind == EmitTargetKind.WindowsApplication
+                || _options.FrameworkName == EmitOptions.WindowsDesktopFrameworkName;
+
+            if (!wantsSingleThreadedApartment)
+            {
+                return;
+            }
+
+            var constructor = _references.ResolveMethod("System.STAThreadAttribute", ".ctor", []);
+
+            if (constructor == null)
+            {
+                return;
+            }
+
+            entryPoint.CustomAttributes.Add(new CustomAttribute(constructor));
         }
 
         /// <summary>
         /// Writes the <c>.runtimeconfig.json</c> that lets <c>dotnet &lt;output&gt;.dll</c> resolve a
         /// shared framework. A null path means the caller does not want one (stream emit).
         /// </summary>
-        private static void WriteRuntimeConfig(string? runtimeConfigPath)
+        private void WriteRuntimeConfig(string? runtimeConfigPath)
         {
             if (runtimeConfigPath == null)
             {
                 return;
             }
 
-            var runtimeConfig = """
+            var runtimeConfig = $$"""
                 {
                   "runtimeOptions": {
                     "tfm": "net10.0",
                     "framework": {
-                      "name": "Microsoft.NETCore.App",
-                      "version": "10.0.0"
+                      "name": "{{_options.FrameworkName}}",
+                      "version": "{{_options.FrameworkVersion}}"
                     }
                   }
                 }
@@ -664,7 +724,20 @@ namespace ProLang.Compiler
                 case "System.Double":
                     scope.IL.Emit(OpCodes.Stelem_R8); break;
                 default:
-                    scope.IL.Emit(OpCodes.Stelem_Ref); break;
+                    // stelem.ref stores an *object reference* and is invalid for a value type.
+                    // Using it for a struct element produced IL that passed every check the
+                    // compiler makes — the evaluation stack stays balanced, so
+                    // AssemblyValidityTests could not see it — and then killed the runtime with
+                    // "Internal CLR error" the first time the JIT reached the method.
+                    if (IsValueTypeElement(elementType))
+                    {
+                        scope.IL.Emit(OpCodes.Stelem_Any, elementType);
+                    }
+                    else
+                    {
+                        scope.IL.Emit(OpCodes.Stelem_Ref);
+                    }
+                    break;
             }
         }
 
@@ -694,7 +767,48 @@ namespace ProLang.Compiler
                 case "System.Double":
                     scope.IL.Emit(OpCodes.Ldelem_R8); break;
                 default:
-                    scope.IL.Emit(OpCodes.Ldelem_Ref); break;
+                    // See EmitStelemForType: ldelem.ref is invalid for a value-type element.
+                    if (IsValueTypeElement(elementType))
+                    {
+                        scope.IL.Emit(OpCodes.Ldelem_Any, elementType);
+                    }
+                    else
+                    {
+                        scope.IL.Emit(OpCodes.Ldelem_Ref);
+                    }
+                    break;
+            }
+        }
+
+        /// <summary>
+        /// Whether an array element needs the typed <c>ldelem</c>/<c>stelem</c> form.
+        /// </summary>
+        /// <remarks>
+        /// Reference elements keep the <c>.ref</c> opcodes they have always used, so the IL for
+        /// <c>array&lt;string&gt;</c> and friends is unchanged. Only the case that was broken
+        /// moves.
+        /// <para>
+        /// The flag is read from the reference first because a struct declared in the program
+        /// being compiled is a <see cref="TypeDefinition"/> and carries it directly.
+        /// <see cref="TypeReference.Resolve"/> is the fallback for an imported type, and is
+        /// allowed to fail: a type that cannot be resolved is treated as a reference type, which
+        /// is what the emitter assumed for every non-primitive before this.
+        /// </para>
+        /// </remarks>
+        private static bool IsValueTypeElement(TypeReference elementType)
+        {
+            if (elementType.IsValueType)
+            {
+                return true;
+            }
+
+            try
+            {
+                return elementType.Resolve()?.IsValueType ?? false;
+            }
+            catch (AssemblyResolutionException)
+            {
+                return false;
             }
         }
 
@@ -1297,36 +1411,92 @@ namespace ProLang.Compiler
             var fieldRef = new FieldReference(node.FieldName, fieldType);
             fieldRef.DeclaringType = typeRef;
 
-            if (node.Expression is BoundVariableExpression varExpr)
+            // A struct is a value type, so the receiver has to be an *address*. Pushing it by
+            // value and storing into that — which is what this did for everything except a bare
+            // local or parameter — writes into a copy on the evaluation stack that is then
+            // thrown away. `arr[i].f = x` and `a.b.c = x` both compiled and silently did nothing.
+            if (!TryEmitStructAddress(scope, node.Expression))
             {
-                VariableDefinition? varDef = null;
-                if (varExpr.Variable is ParameterSymbol paramSym)
-                {
-                    scope.IL.Emit(OpCodes.Ldarga, scope.Method.Parameters[paramSym.Ordinal]);
-                }
-                else
-                {
-                    varDef = scope.GetLocal(varExpr.Variable);
-                    scope.IL.Emit(OpCodes.Ldloca, varDef);
-                }
-
-                EmitExpression(scope, node.Value);
-                scope.IL.Emit(OpCodes.Dup);
-
-                var tempVar = scope.DeclareTemporary(fieldType);
-                scope.IL.Emit(OpCodes.Stloc, tempVar);
-
-                scope.IL.Emit(OpCodes.Stfld, fieldRef);
-
-                scope.IL.Emit(OpCodes.Ldloc, tempVar);
+                _diagnostics.ReportCannotAssignToTemporaryStructField(node.FieldName);
+                return;
             }
-            else
+
+            EmitExpression(scope, node.Value);
+
+            // The assignment is an expression, so the assigned value has to be left behind. It is
+            // stashed rather than duplicated under the address, because stfld wants the value on
+            // top of the receiver and a dup would put it in the wrong order.
+            scope.IL.Emit(OpCodes.Dup);
+            var assignedValue = scope.DeclareTemporary(fieldType);
+            scope.IL.Emit(OpCodes.Stloc, assignedValue);
+
+            scope.IL.Emit(OpCodes.Stfld, fieldRef);
+            scope.IL.Emit(OpCodes.Ldloc, assignedValue);
+        }
+
+        /// <summary>
+        /// Pushes the address of a struct-typed storage location.
+        /// </summary>
+        /// <returns>
+        /// False when <paramref name="expression"/> has no storage location — the result of a
+        /// call, for instance — in which case nothing has been emitted.
+        /// </returns>
+        /// <remarks>
+        /// Recursive so that a chain such as <c>outer.inner.leaf = x</c> resolves to
+        /// <c>ldloca outer; ldflda inner; stfld leaf</c>: each step narrows the address rather
+        /// than copying the struct out of the one before it.
+        /// </remarks>
+        private bool TryEmitStructAddress(MethodBodyScope scope, BoundExpression expression)
+        {
+            switch (expression)
             {
-                EmitExpression(scope, node.Expression);
-                scope.IL.Emit(OpCodes.Dup);
-                EmitExpression(scope, node.Value);
-                scope.IL.Emit(OpCodes.Stfld, fieldRef);
+                case BoundVariableExpression variable:
+                    if (variable.Variable is ParameterSymbol parameter)
+                    {
+                        scope.IL.Emit(OpCodes.Ldarga, scope.Method.Parameters[parameter.Ordinal]);
+                    }
+                    else
+                    {
+                        scope.IL.Emit(OpCodes.Ldloca, scope.GetLocal(variable.Variable));
+                    }
+
+                    return true;
+
+                // ldelema yields the address of the element in the array itself, so the write
+                // lands in the array rather than in a copy of the element.
+                case BoundIndexExpression index when index.Expression.Type.Name == "array":
+                    var elementType = index.Expression.Type.TypeArguments.Length > 0
+                        ? GetTypeReference(index.Expression.Type.TypeArguments[0])
+                        : GetCachedType("System.Object");
+
+                    EmitExpression(scope, index.Expression);
+                    EmitExpression(scope, index.Index);
+                    scope.IL.Emit(OpCodes.Ldelema, elementType);
+                    return true;
+
+                case BoundFieldAccessExpression field when field.Expression.Type is StructSymbol:
+                    if (!TryEmitStructAddress(scope, field.Expression))
+                    {
+                        return false;
+                    }
+
+                    scope.IL.Emit(OpCodes.Ldflda, MakeFieldReference(field.Expression.Type, field.FieldName, field.Field.Type));
+                    return true;
+
+                default:
+                    return false;
             }
+        }
+
+        /// <summary>Builds a reference to a field of a ProLang struct.</summary>
+        private FieldReference MakeFieldReference(TypeSymbol ownerType, string fieldName, TypeSymbol fieldType)
+        {
+            var typeDefinition = ResolveStructDefinition((StructSymbol)ownerType);
+
+            return new FieldReference(fieldName, GetTypeReference(fieldType))
+            {
+                DeclaringType = _assemblyDefinition.MainModule.ImportReference(typeDefinition),
+            };
         }
     }
 }

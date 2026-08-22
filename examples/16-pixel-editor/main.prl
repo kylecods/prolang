@@ -1,0 +1,37 @@
+/*
+ * ProLang Pixel Editor
+ *
+ * The entry point, and the single file the compiler needs to be given: `import` is transitive, so
+ * naming this one pulls in the other ten modules.
+ *
+ *   dotnet run --project src/ProLang/ProLang.csproj -- \
+ *     examples/16-pixel-editor/main.prl --target=winexe -o bin/pixel-editor.dll
+ *   dotnet bin/pixel-editor.dll
+ *
+ * Or build everything with examples/16-pixel-editor/build.ps1.
+ *
+ * Module layout, in dependency order. Everything above render.prl is pure prolang with no
+ * reference to Windows Forms, which is what lets tests/run_tests.prl cover it — the test program
+ * compiles the whole import graph into one assembly, so a single edge to the shim would make the
+ * suite need the Windows Desktop runtime pack.
+ *
+ *   util.prl        integer helpers the standard library does not have
+ *   color.prl       ARGB packing
+ *   document.prl    the image: a flat pixel buffer and its size
+ *   intstack.prl    an explicit stack, for the flood fill
+ *   raster.prl      lines, rectangles, ellipses, brushes
+ *   fill.prl        flood fill
+ *   history.prl     undo and redo, as a ring of whole-image snapshots
+ *   palette.prl     the sixteen colours and the swatch strip
+ *   view.prl        zoom and pan arithmetic
+ *   tools.prl       the press / drag / release state machine
+ *   render.prl      the boundary: hands model state to the shim
+ *   app.prl         window construction and the event loop
+ */
+
+import "app.prl"
+
+func main()
+{
+    app_run()
+}

@@ -1,0 +1,47 @@
+/*
+ * Pixel editor tests — util.prl
+ */
+
+import "testing"
+import "util"
+
+func test_util_run() : TestRun {
+    let r: TestRun = t_new()
+
+    r = t_eq_int(r, "abs positive", util_abs(7), 7)
+    r = t_eq_int(r, "abs negative", util_abs(0 - 7), 7)
+    r = t_eq_int(r, "abs zero", util_abs(0), 0)
+
+    r = t_eq_int(r, "sign positive", util_sign(42), 1)
+    r = t_eq_int(r, "sign negative", util_sign(0 - 42), 0 - 1)
+    r = t_eq_int(r, "sign zero", util_sign(0), 0)
+
+    r = t_eq_int(r, "clamp below", util_clamp(0 - 5, 0, 10), 0)
+    r = t_eq_int(r, "clamp above", util_clamp(15, 0, 10), 10)
+    r = t_eq_int(r, "clamp inside", util_clamp(5, 0, 10), 5)
+    r = t_eq_int(r, "clamp on low edge", util_clamp(0, 0, 10), 0)
+    r = t_eq_int(r, "clamp on high edge", util_clamp(10, 0, 10), 10)
+
+    // Floor division is the reason view.prl maps screen coordinates correctly at the left and
+    // top edges. Truncating division would give 0 for all three negative cases below, putting
+    // the pixel left of the canvas into column 0.
+    r = t_eq_int(r, "floor_div exact", util_floor_div(8, 4), 2)
+    r = t_eq_int(r, "floor_div rounds down", util_floor_div(9, 4), 2)
+    r = t_eq_int(r, "floor_div negative", util_floor_div(0 - 1, 4), 0 - 1)
+    r = t_eq_int(r, "floor_div negative exact", util_floor_div(0 - 8, 4), 0 - 2)
+    r = t_eq_int(r, "floor_div negative rounds down", util_floor_div(0 - 9, 4), 0 - 3)
+    r = t_eq_int(r, "floor_div by zero", util_floor_div(5, 0), 0)
+
+    r = t_eq_str(r, "pad shorter", util_pad_left("9", 3), "  9")
+    r = t_eq_str(r, "pad exact", util_pad_left("123", 3), "123")
+    r = t_eq_str(r, "pad longer", util_pad_left("1234", 3), "1234")
+
+    r = t_eq_int(r, "parse simple", util_parse_int("42", 0 - 1), 42)
+    r = t_eq_int(r, "parse zero", util_parse_int("0", 0 - 1), 0)
+    r = t_eq_int(r, "parse leading zero", util_parse_int("007", 0 - 1), 7)
+    r = t_eq_int(r, "parse empty falls back", util_parse_int("", 0 - 1), 0 - 1)
+    r = t_eq_int(r, "parse junk falls back", util_parse_int("12a", 0 - 1), 0 - 1)
+    r = t_eq_int(r, "parse negative falls back", util_parse_int("-5", 0 - 1), 0 - 1)
+
+    return r
+}

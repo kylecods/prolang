@@ -1,0 +1,160 @@
+/*
+ * Pixel editor — the colour palette
+ *
+ * A fixed sixteen-colour palette and the geometry of the swatch strip. Pure prolang; exercised by
+ * tests/test_palette.prl.
+ *
+ * The colours are the DawnBringer 16 ramp, a well-known palette chosen for pixel art because its
+ * entries stay distinguishable from one another at small sizes and cover a usable spread of hue
+ * and value. An arbitrary set of primaries does not.
+ */
+
+import "ui/color"
+import "util"
+import "ui/document"
+import "ui/raster"
+
+func palette_count() : int {
+    return 16
+}
+
+/*
+ * The colour at `index`, or transparent for an index outside the palette.
+ *
+ * A lookup chain rather than an array because prolang has no module-level state: an array would
+ * have to be rebuilt on every call, or threaded through every caller as a parameter.
+ */
+func palette_colour(index: int) : int {
+    if (index == 0)  { return color_rgb(20, 12, 28) }
+    if (index == 1)  { return color_rgb(68, 36, 52) }
+    if (index == 2)  { return color_rgb(48, 52, 109) }
+    if (index == 3)  { return color_rgb(78, 74, 78) }
+    if (index == 4)  { return color_rgb(133, 76, 48) }
+    if (index == 5)  { return color_rgb(52, 101, 36) }
+    if (index == 6)  { return color_rgb(208, 70, 72) }
+    if (index == 7)  { return color_rgb(117, 113, 97) }
+    if (index == 8)  { return color_rgb(89, 125, 206) }
+    if (index == 9)  { return color_rgb(210, 125, 44) }
+    if (index == 10) { return color_rgb(133, 149, 161) }
+    if (index == 11) { return color_rgb(109, 170, 44) }
+    if (index == 12) { return color_rgb(210, 170, 153) }
+    if (index == 13) { return color_rgb(109, 194, 202) }
+    if (index == 14) { return color_rgb(218, 212, 94) }
+    if (index == 15) { return color_rgb(222, 238, 214) }
+    return 0
+}
+
+// A readable name for the status bar.
+func palette_name(index: int) : string {
+    if (index == 0)  { return "black" }
+    if (index == 1)  { return "maroon" }
+    if (index == 2)  { return "navy" }
+    if (index == 3)  { return "slate" }
+    if (index == 4)  { return "brown" }
+    if (index == 5)  { return "forest" }
+    if (index == 6)  { return "red" }
+    if (index == 7)  { return "olive" }
+    if (index == 8)  { return "blue" }
+    if (index == 9)  { return "orange" }
+    if (index == 10) { return "steel" }
+    if (index == 11) { return "green" }
+    if (index == 12) { return "sand" }
+    if (index == 13) { return "cyan" }
+    if (index == 14) { return "yellow" }
+    if (index == 15) { return "white" }
+    return "none"
+}
+
+// ── Swatch strip geometry ────────────────────────────────────────────────────
+//
+// The strip is a grid of `columns` swatches per row, each `cell` pixels square. These functions
+// are pure arithmetic so the layout can be tested without constructing a window.
+
+/*
+ * Which swatch covers a point in the strip, or -1 for a point in no swatch.
+ *
+ * The bounds test happens before the division: without it a negative coordinate divides toward
+ * zero into column 0 and a click just left of the strip selects its first entry.
+ */
+func palette_index_at(x: int, y: int, cell: int, columns: int) : int {
+    if (x < 0 || y < 0 || cell < 1 || columns < 1) {
+        return 0 - 1
+    }
+
+    let column: int = x / cell
+    let row: int = y / cell
+
+    if (column >= columns) {
+        return 0 - 1
+    }
+
+    let index: int = (row * columns) + column
+
+    if (index >= palette_count()) {
+        return 0 - 1
+    }
+
+    return index
+}
+
+// Left edge of a swatch within the strip.
+func palette_x(index: int, cell: int, columns: int) : int {
+    return (index % columns) * cell
+}
+
+// Top edge of a swatch within the strip.
+func palette_y(index: int, cell: int, columns: int) : int {
+    return (index / columns) * cell
+}
+
+// How many rows the strip occupies, rounding up for a partly filled last row.
+func palette_rows(columns: int) : int {
+    if (columns < 1) {
+        return 0
+    }
+    return ((palette_count() + columns) - 1) / columns
+}
+
+/*
+ * An outline colour that stays visible against `swatch`.
+ *
+ * A fixed outline vanishes against half of any reasonable palette — white on the pale entries,
+ * black on the dark ones — so it is chosen from the swatch's brightness instead.
+ */
+func palette_outline_for(swatch: int) : int {
+    if (color_luma(swatch) > 127) {
+        return color_rgb(0, 0, 0)
+    }
+    return color_rgb(255, 255, 255)
+}
+
+// ── Drawing ──────────────────────────────────────────────────────────────────
+
+/*
+ * Paints the swatch strip into `strip`, ringing the selected entry.
+ *
+ * Takes a Document rather than calling the shim so the strip is drawn by the same rasterisers as
+ * the image and can be checked by tests without a window. render.prl only has to blit the result.
+ */
+func palette_draw(strip: Document, cell: int, columns: int, selected: int) : void {
+    let log: array<int> = array_new(0)
+
+    doc_fill(strip, color_rgb(40, 40, 44))
+
+    let i: int = 0
+    while (i < palette_count()) {
+        let x: int = palette_x(i, cell, columns)
+        let y: int = palette_y(i, cell, columns)
+        let swatch: int = palette_colour(i)
+
+        // Inset by one so the swatches read as separate tiles rather than one continuous band.
+        raster_rect_filled(strip, x + 1, y + 1, (x + cell) - 2, (y + cell) - 2, swatch, log, 0)
+
+        if (i == selected) {
+            raster_rect(strip, x, y, (x + cell) - 1, (y + cell) - 1, 1,
+                        palette_outline_for(swatch), log, 0)
+        }
+
+        i = i + 1
+    }
+}

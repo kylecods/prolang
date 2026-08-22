@@ -1,0 +1,844 @@
+/*
+ * Pixel editor — the application
+ *
+ * Builds the window and runs the event loop.
+ *
+ * Windows Forms raises events by calling a delegate, and prolang has no delegates, lambdas or
+ * function values of any kind. So the shim owns every handler: they push a flattened record onto
+ * a queue, and this loop pulls from it. What would be a callback in C# is an `elif` arm here.
+ *
+ * The same constraint explains the shape of the state. prolang structs are .NET value types, so
+ * there is no App struct holding the document, history and view together — they are locals of
+ * app_run, passed to whatever needs them, and reassigned from the value each helper returns.
+ *
+ * Control handles are kept in `array<int>`s rather than named locals wherever the interface has a
+ * row of similar things. An array is a reference, so a helper can fill one in and the caller sees
+ * the result — the only mutable channel the language offers — and it makes restyling every button
+ * on a theme change a loop instead of thirty lines.
+ */
+
+import "io"
+import "array"
+import "winforms"
+import "ui/document"
+import "ui/color"
+import "ui/palette"
+import "ui/view"
+import "tools.prl"
+import "ui/history"
+import "ui/chrome"
+import "render.prl"
+import "ui/theme"
+import "ui/icons"
+import "ui/layout"
+import "appicon.prl"
+import "util"
+
+// Event kinds, matching PrlEventKind in std/WinFormsHelper/EventQueue.cs.
+enum Ev {
+    NONE,
+    MOUSE_DOWN,
+    MOUSE_MOVE,
+    MOUSE_UP,
+    WHEEL,
+    KEY_DOWN,
+    KEY_UP,
+    MOUSE_LEAVE,
+    RESIZE,
+    QUIT,
+    COMMAND
+}
+
+/*
+ * Toolbar command tags.
+ *
+ * Tool buttons use TOOL_BASE + the tool's own value, so the loop decodes a tool button with one
+ * subtraction instead of nine comparisons.
+ */
+enum Cmd {
+    TOOL_BASE = 100,
+    NEW = 200,
+    OPEN = 201,
+    SAVE = 202,
+    UNDO = 203,
+    REDO = 204,
+    CLEAR = 205,
+    ZOOM_IN = 206,
+    ZOOM_OUT = 207,
+    ZOOM_FIT = 208,
+    SIZE_DOWN = 209,
+    SIZE_UP = 210,
+    THEME = 211
+}
+
+// Virtual key codes, from System.Windows.Forms.Keys.
+enum Key {
+    ESCAPE = 27,
+    E = 69,
+    F = 70,
+    I = 73,
+    L = 76,
+    N = 78,
+    O = 79,
+    P = 80,
+    R = 82,
+    S = 83,
+    T = 84,
+    Y = 89,
+    Z = 90,
+    MINUS = 189,
+    PLUS = 187
+}
+
+// Modifier bits, matching CurrentModifiers in the shim.
+enum Mod {
+    SHIFT = 1,
+    CONTROL = 2,
+    ALT = 4
+}
+
+// ── Layout ───────────────────────────────────────────────────────────────────
+
+/*
+ * Sizes live in layout.prl, as functions of the display's scaling factor. What is left here is
+ * the handful of numbers that are not sizes at all.
+ */
+func app_palette_columns() : int { return 16 }
+
+func app_default_width() : int  { return 64 }
+func app_default_height() : int { return 64 }
+func app_undo_slots() : int     { return 24 }
+
+// How many buttons the toolbars hold in total: nine tools plus thirteen actions.
+func app_button_count() : int { return 22 }
+
+// Hairline rules: one edging each bar, one under the tools, and one between each toolbar group.
+func app_divider_count() : int { return 5 }
+
+// ── Entry point ──────────────────────────────────────────────────────────────
+
+func app_run() : void
+{
+    WinFormsHelper.InitApplication()
+
+    /*
+     * Nothing below is a fixed number of pixels.
+     *
+     * The scaling factor is what the display is configured for — 150 on a 150% laptop screen — and
+     * every size comes from it through layout.prl. The usable client area is the screen minus the
+     * taskbar and the window's own frame, which is what stops the editor opening taller than the
+     * display it is on.
+     *
+     * The scaling factor is read once, because it cannot change (see InitApplication). The window
+     * size is not: it is only the size to *open* at, and app_place_controls runs again from the new
+     * client size every time the window is resized or maximised.
+     */
+    let scale: int = layout_clamp_scale(WinFormsHelper.GetDpiScalePercent())
+    let gap: int = layout_gap(scale)
+    let cell: int = layout_palette_cell(scale)
+    let columns: int = app_palette_columns()
+    let stripW: int = cell * columns
+    let stripH: int = cell * palette_rows(columns)
+
+    let canvasW: int = layout_canvas_width(scale, WinFormsHelper.GetUsableClientWidth())
+    let canvasH: int = layout_canvas_height(scale, WinFormsHelper.GetUsableClientHeight(), stripH)
+
+    let contentX: int = layout_content_x(scale)
+    let contentY: int = layout_content_y(scale)
+
+    let formW: int = layout_window_width(scale, canvasW)
+    let formH: int = layout_window_height(scale, canvasH, stripH)
+
+    let form: int = WinFormsHelper.CreateForm("ProLang Pixel Editor", formW, formH)
+
+    // ── Chrome ───────────────────────────────────────────────────────────────
+    // The rules are children of the bars they edge, not of the form. Windows Forms adds each new
+    // control to the *back* of the z-order, so anything placed on the form after a bar would be
+    // covered by it — which is also why the toolbar buttons below are parented to the bars.
+    let topBar: int = WinFormsHelper.CreatePanel(0, 0, formW, layout_topbar(scale))
+    let leftBar: int = WinFormsHelper.CreatePanel(0, layout_topbar(scale), layout_leftbar(scale),
+                                                  formH - layout_topbar(scale))
+
+    WinFormsHelper.AddControl(form, topBar)
+    WinFormsHelper.AddControl(form, leftBar)
+
+    // ── Canvas, palette, status ──────────────────────────────────────────────
+    let canvas: int = WinFormsHelper.CreateCanvas(contentX, contentY, canvasW, canvasH)
+
+    let paletteY: int = contentY + canvasH + gap
+    let swatch: int = WinFormsHelper.CreatePanel(contentX, paletteY, stripH, stripH)
+    let strip: int = WinFormsHelper.CreateCanvas(contentX + stripH + gap, paletteY, stripW, stripH)
+
+    let status: int = WinFormsHelper.CreateLabel("", contentX, paletteY + stripH + gap,
+                                                 canvasW, layout_status(scale))
+
+    WinFormsHelper.AddControl(form, canvas)
+    WinFormsHelper.AddControl(form, swatch)
+    WinFormsHelper.AddControl(form, strip)
+    WinFormsHelper.AddControl(form, status)
+
+    WinFormsHelper.SetBorderStyle(swatch, 1)
+
+    // Point sizes are already in physical units, so the one number here that is not scaled by
+    // hand is the one Windows scales itself.
+    WinFormsHelper.SetFont(status, "Consolas", layout_status_font(), false)
+    WinFormsHelper.SetCrosshairCursor(canvas, true)
+    WinFormsHelper.SetHandCursor(strip, true)
+
+    // ── Toolbars ─────────────────────────────────────────────────────────────
+    // Handles are collected so a theme change can restyle every one in a loop. Index 0..8 are the
+    // tools, in tool order; the rest are actions.
+    let buttons: array<int> = array_new(app_button_count())
+    let iconOf: array<int> = array_new(app_button_count())
+    let dividers: array<int> = array_new(app_divider_count())
+
+    WinFormsHelper.BeginLayout(form)
+    app_build_toolbars(topBar, leftBar, buttons, iconOf, dividers, formW, formH, scale)
+    WinFormsHelper.EndLayout(form)
+
+    // ── Model ────────────────────────────────────────────────────────────────
+    let doc: Document = doc_new(app_default_width(), app_default_height(), color_rgb(255, 255, 255))
+    let preview: Document = doc_clone(doc)
+    let swatches: Document = doc_new(stripW, stripH, 0)
+
+    // Sized to the whole image so a shape covering the canvas can still be rewound exactly.
+    let touched: array<int> = array_new(doc_pixel_count(doc))
+
+    let history: History = hist_reset(hist_new(doc.width, doc.height, app_undo_slots()), doc)
+    let stroke: Stroke = stroke_new(Tool.PENCIL, palette_colour(0), 1)
+    let view: View = view_centre(view_new(view_fit_zoom(doc.width, doc.height, canvasW, canvasH)),
+                                 doc.width, doc.height, canvasW, canvasH)
+
+    let image: int = WinFormsHelper.CreateBitmap(doc.width, doc.height)
+    let stripImage: int = WinFormsHelper.CreateBitmap(stripW, stripH)
+
+    WinFormsHelper.CanvasSetBitmap(canvas, image)
+    WinFormsHelper.CanvasSetBitmap(strip, stripImage)
+
+    // ── Theme ────────────────────────────────────────────────────────────────
+    let icons: array<int> = array_new(icon_count())
+    let activeTheme: int = Theme.MIDNIGHT
+
+    app_apply_theme(activeTheme, scale, form, topBar, leftBar, canvas, status, swatch,
+                    buttons, iconOf, dividers, icons, stroke.tool)
+
+    WinFormsHelper.EnableMouseInput(canvas)
+    WinFormsHelper.EnableMouseInput(strip)
+    WinFormsHelper.EnableKeyInput(form)
+    WinFormsHelper.EnableResizeInput(form)
+
+    // Below this the canvas stops being worth drawing in, or the palette runs off the edge, so
+    // the window refuses to go there. Capped by what the screen can give, so the minimum is
+    // never one the user has no way to satisfy.
+    WinFormsHelper.SetMinimumClientSize(
+        form,
+        layout_min_width(scale, stripH + gap + stripW, WinFormsHelper.GetUsableClientWidth()),
+        layout_min_height(scale, stripH, WinFormsHelper.GetUsableClientHeight()))
+
+    render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+    chrome_palette(strip, stripImage, swatches, cell, columns, 0)
+    WinFormsHelper.SetBackColor(swatch, stroke.colour)
+    WinFormsHelper.Show(form)
+
+    // ── Loop ─────────────────────────────────────────────────────────────────
+    let ev: array<int> = array_new(8)
+    let cursorX: int = 0 - 1
+    let cursorY: int = 0 - 1
+    let dirty: bool = false
+    let selected: int = 0
+    let running: bool = true
+
+    while (running) {
+        let kind: int = WinFormsHelper.WaitEventInto(ev, 16)
+
+        if (kind == Ev.NONE) {
+            // Idle: the wait already yielded, so there is nothing to do.
+        } elif (kind == Ev.QUIT) {
+            running = false
+        } elif (kind == Ev.RESIZE) {
+            /*
+             * The window changed size, so everything is placed again from what it now has.
+             *
+             * Only the form's own resizes are acted on. The canvas reports its resizes too, and
+             * since the canvas is resized by this very branch, acting on those as well would have
+             * the layout drive itself.
+             *
+             * The image is re-centred in the canvas afterwards, keeping the zoom. Merely clamping
+             * the pan leaves it against whichever edge it was already near, so maximising the
+             * window opens a band of empty backdrop on one side and pushes the artwork into the
+             * other — the drawing ends up further from the middle than before it was made bigger.
+             */
+            if (ev[7] == form) {
+                canvasW = layout_canvas_width_for(scale, ev[0])
+                canvasH = layout_canvas_height_for(scale, ev[1], stripH)
+
+                app_place_controls(scale, form, topBar, leftBar, canvas, swatch, strip, status,
+                                   buttons, dividers, ev[0], ev[1], canvasW, canvasH, stripW, stripH)
+
+                view = view_centre(view, doc.width, doc.height, canvasW, canvasH)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            }
+        } elif (kind == Ev.MOUSE_DOWN) {
+            if (ev[7] == strip) {
+                let picked: int = palette_index_at(ev[0], ev[1], cell, columns)
+                if (picked >= 0) {
+                    selected = picked
+                    stroke = stroke_with_colour(stroke, palette_colour(picked))
+                    chrome_palette(strip, stripImage, swatches, cell, columns, selected)
+                    WinFormsHelper.SetBackColor(swatch, stroke.colour)
+                }
+            } else {
+                let x: int = view_to_image_x(view, ev[0])
+                let y: int = view_to_image_y(view, ev[1])
+
+                // Right-clicking erases, which is what every editor does and saves a trip to
+                // the toolbar for the commonest correction.
+                let held: Stroke = stroke
+                if ((ev[2] & 2) != 0) {
+                    held = stroke_with_tool(stroke, Tool.ERASER)
+                }
+
+                held = tool_press(held, doc, preview, touched, x, y)
+
+                // The picker reports a colour rather than changing the image.
+                if (held.picked >= 0) {
+                    held = stroke_with_colour(held, held.picked)
+                    WinFormsHelper.SetBackColor(swatch, held.colour)
+                }
+
+                stroke = stroke_with_tool(held, stroke.tool)
+                stroke = stroke_with_colour(stroke, held.colour)
+
+                // stroke_with_tool clears the drag, so an in-progress one is restored here.
+                if (held.active) {
+                    stroke = held
+                }
+
+                if (held.commit) {
+                    history = hist_commit(history, doc)
+                    dirty = true
+                }
+
+                cursorX = x
+                cursorY = y
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            }
+        } elif (kind == Ev.MOUSE_MOVE) {
+            if (ev[7] != strip) {
+                cursorX = view_to_image_x(view, ev[0])
+                cursorY = view_to_image_y(view, ev[1])
+
+                if (stroke.active) {
+                    stroke = tool_drag(stroke, doc, preview, touched, cursorX, cursorY)
+                    render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+                }
+            }
+        } elif (kind == Ev.MOUSE_UP) {
+            if (stroke.active) {
+                let x: int = view_to_image_x(view, ev[0])
+                let y: int = view_to_image_y(view, ev[1])
+
+                stroke = tool_release(stroke, doc, preview, touched, x, y)
+
+                if (stroke.commit) {
+                    history = hist_commit(history, doc)
+                    dirty = true
+                }
+
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            }
+        } elif (kind == Ev.MOUSE_LEAVE) {
+            // A drag that leaves the canvas is abandoned rather than left half-drawn with no way
+            // to finish it, since the button release will never arrive.
+            if (stroke.active) {
+                stroke = tool_cancel(stroke, doc, preview, touched)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            }
+            cursorX = 0 - 1
+            cursorY = 0 - 1
+        } elif (kind == Ev.WHEEL) {
+            view = view_zoom_to(view, app_wheel_zoom(view, ev[4]), ev[0], ev[1])
+            view = view_clamp_pan(view, doc.width, doc.height, canvasW, canvasH)
+            render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+        } elif (kind == Ev.KEY_DOWN) {
+            let tool: int = app_tool_for_key(ev[3])
+
+            if (tool >= 0) {
+                stroke = stroke_with_tool(stroke, tool)
+                app_mark_selected_tool(buttons, activeTheme, stroke.tool)
+            } elif (ev[3] == Key.ESCAPE) {
+                if (stroke.active) {
+                    stroke = tool_cancel(stroke, doc, preview, touched)
+                    render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+                }
+            } elif (ev[3] == Key.T) {
+                activeTheme = theme_next(activeTheme)
+                app_apply_theme(activeTheme, scale, form, topBar, leftBar, canvas, status, swatch,
+                                buttons, iconOf, dividers, icons, stroke.tool)
+                chrome_palette(strip, stripImage, swatches, cell, columns, selected)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            } elif (ev[3] == Key.Z && (ev[5] & Mod.CONTROL) != 0) {
+                history = hist_undo(history, doc)
+                doc_copy_into(doc, preview)
+                dirty = true
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            } elif (ev[3] == Key.Y && (ev[5] & Mod.CONTROL) != 0) {
+                history = hist_redo(history, doc)
+                doc_copy_into(doc, preview)
+                dirty = true
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            } elif (ev[3] == Key.PLUS) {
+                view = view_zoom_in(view, canvasW / 2, canvasH / 2)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            } elif (ev[3] == Key.MINUS) {
+                view = view_zoom_out(view, canvasW / 2, canvasH / 2)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            }
+        } elif (kind == Ev.COMMAND) {
+            let tag: int = ev[6]
+
+            if (tag >= Cmd.TOOL_BASE && tag < (Cmd.TOOL_BASE + tool_count())) {
+                stroke = stroke_with_tool(stroke, tag - Cmd.TOOL_BASE)
+                app_mark_selected_tool(buttons, activeTheme, stroke.tool)
+            } elif (tag == Cmd.THEME) {
+                activeTheme = theme_next(activeTheme)
+                app_apply_theme(activeTheme, scale, form, topBar, leftBar, canvas, status, swatch,
+                                buttons, iconOf, dividers, icons, stroke.tool)
+                chrome_palette(strip, stripImage, swatches, cell, columns, selected)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            } elif (tag == Cmd.UNDO) {
+                history = hist_undo(history, doc)
+                doc_copy_into(doc, preview)
+                dirty = true
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            } elif (tag == Cmd.REDO) {
+                history = hist_redo(history, doc)
+                doc_copy_into(doc, preview)
+                dirty = true
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            } elif (tag == Cmd.CLEAR) {
+                doc_fill(doc, color_rgb(255, 255, 255))
+                doc_copy_into(doc, preview)
+                history = hist_commit(history, doc)
+                dirty = true
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            } elif (tag == Cmd.ZOOM_IN) {
+                view = view_zoom_in(view, canvasW / 2, canvasH / 2)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            } elif (tag == Cmd.ZOOM_OUT) {
+                view = view_zoom_out(view, canvasW / 2, canvasH / 2)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            } elif (tag == Cmd.ZOOM_FIT) {
+                view = view_centre(view_new(view_fit_zoom(doc.width, doc.height, canvasW, canvasH)),
+                                   doc.width, doc.height, canvasW, canvasH)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            } elif (tag == Cmd.SIZE_UP) {
+                stroke = stroke_with_size(stroke, stroke.size + 1)
+            } elif (tag == Cmd.SIZE_DOWN) {
+                stroke = stroke_with_size(stroke, stroke.size - 1)
+            } elif (tag == Cmd.SAVE) {
+                dirty = app_save(doc, image)
+            } elif (tag == Cmd.NEW || tag == Cmd.OPEN) {
+                if (app_may_discard(dirty)) {
+                    let replacement: Document = doc_new(1, 1, 0)
+
+                    if (tag == Cmd.NEW) {
+                        replacement = app_new_document()
+                    } else {
+                        replacement = app_open_document(doc)
+                    }
+
+                    // A different size invalidates every buffer sized from the old one.
+                    doc = replacement
+                    preview = doc_clone(doc)
+
+                    // Bound to a typed local first: array_new returns an untyped `array`, and it
+                    // is the declaration's type annotation that pins the element type. A bare
+                    // reassignment has nothing to infer from and fails to convert.
+                    let resized: array<int> = array_new(doc_pixel_count(doc))
+                    touched = resized
+
+                    history = hist_reset(hist_new(doc.width, doc.height, app_undo_slots()), doc)
+                    stroke = stroke_with_tool(stroke, stroke.tool)
+                    dirty = false
+
+                    WinFormsHelper.DisposeBitmap(image)
+                    image = WinFormsHelper.CreateBitmap(doc.width, doc.height)
+                    WinFormsHelper.CanvasSetBitmap(canvas, image)
+
+                    view = view_centre(view_new(view_fit_zoom(doc.width, doc.height, canvasW, canvasH)),
+                                       doc.width, doc.height, canvasW, canvasH)
+                    render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+                }
+            }
+        }
+
+        WinFormsHelper.SetText(status, render_status(stroke, view, doc, cursorX, cursorY, dirty)
+                                       + "  " + theme_name(activeTheme))
+    }
+
+    chrome_free_icons(icons)
+    WinFormsHelper.DisposeBitmap(image)
+    WinFormsHelper.DisposeBitmap(stripImage)
+}
+
+// ── Toolbars ─────────────────────────────────────────────────────────────────
+
+/*
+ * Lays out both toolbars, filling `buttons` with handles and `iconOf` with the icon each one
+ * shows.
+ *
+ * The two arrays are parallel and indexed the same way — tools first, in tool order, then
+ * actions. Keeping the icon id alongside the handle is what lets a theme change re-apply the
+ * right picture to each button without rediscovering the layout.
+ */
+func app_build_toolbars(topBar: int, leftBar: int, buttons: array<int>, iconOf: array<int>,
+                        dividers: array<int>, formW: int, formH: int, scale: int) : void {
+    let size: int = layout_button(scale)
+    let gap: int = layout_gap(scale)
+    let group: int = layout_group_gap(scale)
+    let rule: int = layout_divider(scale)
+    let topbar: int = layout_topbar(scale)
+
+    // The distance from one button to the next within a group, which is the only spacing the
+    // positions below need: every button in a bar is the same size.
+    let step: int = size + layout_button_gap(scale)
+
+    // The rules edging each bar, parented to the bar so they sit in front of it.
+    dividers[0] = chrome_add_divider(topBar, 0, topbar - rule, formW, rule)
+    dividers[1] = chrome_add_divider(leftBar, layout_leftbar(scale) - rule, 0, rule, formH - topbar)
+
+    // ── Left: tools, in a two-column grid ────────────────────────────────────
+    // Coordinates are relative to the bar, which is the control they are parented to.
+    let columns: int = layout_tool_columns()
+    let tool: int = 0
+
+    while (tool < tool_count()) {
+        let x: int = gap + ((tool % columns) * step)
+        let y: int = gap + ((tool / columns) * step)
+
+        buttons[tool] = chrome_add_button(leftBar, x, y, size, size,
+                                       Cmd.TOOL_BASE + tool, tool_name(tool))
+        iconOf[tool] = tool_icon(tool)
+        tool = tool + 1
+    }
+
+    // Brush size, below the tools and separated from them by a rule.
+    let toolRows: int = (tool_count() + columns - 1) / columns
+    let sizeRowY: int = gap + (toolRows * step) + group
+
+    dividers[2] = chrome_add_divider(leftBar, gap, sizeRowY - (group / 2), step + size, rule)
+
+    buttons[9] = chrome_add_button(leftBar, gap, sizeRowY, size, size, Cmd.SIZE_DOWN, "Smaller brush")
+    iconOf[9] = Icon.SIZE_DOWN
+    buttons[10] = chrome_add_button(leftBar, gap + step, sizeRowY, size, size, Cmd.SIZE_UP, "Larger brush")
+    iconOf[10] = Icon.SIZE_UP
+
+    // ── Top: file, edit, view, theme ─────────────────────────────────────────
+    // A rule stands between each group, inset from the button's full height so it reads as a
+    // separator rather than as another edge of the bar.
+    let y: int = (topbar - size) / 2
+    let inset: int = size / 5
+    let x: int = gap
+
+    buttons[11] = chrome_add_button(topBar, x, y, size, size, Cmd.NEW, "New image")
+    iconOf[11] = Icon.NEW
+    x = x + step
+    buttons[12] = chrome_add_button(topBar, x, y, size, size, Cmd.OPEN, "Open a PNG")
+    iconOf[12] = Icon.OPEN
+    x = x + step
+    buttons[13] = chrome_add_button(topBar, x, y, size, size, Cmd.SAVE, "Save as PNG")
+    iconOf[13] = Icon.SAVE
+
+    x = x + size + group
+    dividers[3] = chrome_add_divider(topBar, x, y + inset, rule, size - (inset * 2))
+    x = x + group
+
+    buttons[14] = chrome_add_button(topBar, x, y, size, size, Cmd.UNDO, "Undo (Ctrl+Z)")
+    iconOf[14] = Icon.UNDO
+    x = x + step
+    buttons[15] = chrome_add_button(topBar, x, y, size, size, Cmd.REDO, "Redo (Ctrl+Y)")
+    iconOf[15] = Icon.REDO
+    x = x + step
+    buttons[16] = chrome_add_button(topBar, x, y, size, size, Cmd.CLEAR, "Clear the canvas")
+    iconOf[16] = Icon.CLEAR
+
+    x = x + size + group
+    dividers[4] = chrome_add_divider(topBar, x, y + inset, rule, size - (inset * 2))
+    x = x + group
+
+    buttons[17] = chrome_add_button(topBar, x, y, size, size, Cmd.ZOOM_OUT, "Zoom out (-)")
+    iconOf[17] = Icon.ZOOM_OUT
+    x = x + step
+    buttons[18] = chrome_add_button(topBar, x, y, size, size, Cmd.ZOOM_IN, "Zoom in (+)")
+    iconOf[18] = Icon.ZOOM_IN
+    x = x + step
+    buttons[19] = chrome_add_button(topBar, x, y, size, size, Cmd.ZOOM_FIT, "Fit to window")
+    iconOf[19] = Icon.ZOOM_FIT
+
+    // Theme sits on the right, away from the commands, because it changes appearance not content.
+    buttons[20] = chrome_add_button(topBar, formW - size - gap, y, size, size, Cmd.THEME, "Change theme (T)")
+    iconOf[20] = Icon.THEME
+
+    // One unused slot keeps app_button_count a round number and leaves room for the next command.
+    buttons[21] = buttons[20]
+    iconOf[21] = Icon.THEME
+}
+
+/*
+ * Places every control whose position or size depends on the window's.
+ *
+ * Called once when the window is built and again on every resize, which is what makes the editor
+ * follow a window being dragged or maximised. Windows Forms can do this itself through docking and
+ * anchoring, but those are properties, and interop cannot assign to a property — so the layout is
+ * arithmetic here instead, which is no loss: it is the same arithmetic layout.prl already does,
+ * and having one expression of where things go beats having two that must agree.
+ *
+ * Everything else keeps the position it was built with. A toolbar button sits at a fixed offset
+ * inside its bar, and the bar is what moves.
+ */
+func app_place_controls(scale: int, form: int, topBar: int, leftBar: int, canvas: int,
+                        swatch: int, strip: int, status: int, buttons: array<int>,
+                        dividers: array<int>, clientW: int, clientH: int,
+                        canvasW: int, canvasH: int, stripW: int, stripH: int) : void {
+    let gap: int = layout_gap(scale)
+    let rule: int = layout_divider(scale)
+    let topbar: int = layout_topbar(scale)
+    let leftbar: int = layout_leftbar(scale)
+    let size: int = layout_button(scale)
+
+    let contentX: int = layout_content_x(scale)
+    let contentY: int = layout_content_y(scale)
+    let paletteY: int = contentY + canvasH + gap
+
+    // One layout pass for the lot. Without this every SetBounds below is a separate pass, and the
+    // intermediate states are visible as tearing while a window is being dragged.
+    WinFormsHelper.BeginLayout(form)
+
+    WinFormsHelper.SetBounds(topBar, 0, 0, clientW, topbar)
+    WinFormsHelper.SetBounds(leftBar, 0, topbar, leftbar, clientH - topbar)
+
+    // The rules edging the bars span them, so each follows the bar it is on.
+    WinFormsHelper.SetBounds(dividers[0], 0, topbar - rule, clientW, rule)
+    WinFormsHelper.SetBounds(dividers[1], leftbar - rule, 0, rule, clientH - topbar)
+
+    // The theme button is the only one held against the right edge rather than packed from the
+    // left, because it is not one of the commands.
+    WinFormsHelper.SetBounds(buttons[20], clientW - size - gap, (topbar - size) / 2, size, size)
+
+    WinFormsHelper.SetBounds(canvas, contentX, contentY, canvasW, canvasH)
+    WinFormsHelper.SetBounds(swatch, contentX, paletteY, stripH, stripH)
+    WinFormsHelper.SetBounds(strip, contentX + stripH + gap, paletteY, stripW, stripH)
+    WinFormsHelper.SetBounds(status, contentX, paletteY + stripH + gap, canvasW, layout_status(scale))
+
+    WinFormsHelper.EndLayout(form)
+}
+
+// ── Theme ────────────────────────────────────────────────────────────────────
+
+/*
+ * Repaints the whole interface in a theme, rebuilding the icons in its colours.
+ *
+ * Icons are redrawn rather than recoloured in place: they are drawn from theme colours to begin
+ * with, so a theme switch is another pass over the same drawing code. The old bitmaps are
+ * released first — they are GDI handles, and a few dozen leaked per switch would accumulate.
+ */
+func app_apply_theme(activeTheme: int, scale: int, form: int, topBar: int, leftBar: int, canvas: int,
+                     status: int, swatch: int, buttons: array<int>, iconOf: array<int>,
+                     dividers: array<int>, icons: array<int>, selectedTool: int) : void {
+    WinFormsHelper.BeginLayout(form)
+
+    WinFormsHelper.SetBackColor(form, theme_background(activeTheme))
+    chrome_style_surface(topBar, activeTheme)
+    chrome_style_surface(leftBar, activeTheme)
+
+    WinFormsHelper.SetBackColor(canvas, theme_canvas_backdrop(activeTheme))
+    WinFormsHelper.SetBackColor(status, theme_background(activeTheme))
+    WinFormsHelper.SetForeColor(status, theme_text_dim(activeTheme))
+    WinFormsHelper.SetForeColor(swatch, theme_border(activeTheme))
+
+    let d: int = 0
+    while (d < app_divider_count()) {
+        chrome_style_divider(dividers[d], activeTheme)
+        d = d + 1
+    }
+
+    chrome_free_icons(icons)
+    chrome_build_icons(icons, activeTheme, layout_icon(scale), layout_supersample())
+
+    app_apply_window_icon(form, activeTheme)
+
+    let i: int = 0
+    while (i < app_button_count()) {
+        let button: int = buttons[i]
+
+        if (button != 0) {
+            WinFormsHelper.SetButtonImage(button, icons[iconOf[i]])
+            chrome_style_button(button, activeTheme, i < tool_count() && i == selectedTool)
+        }
+
+        i = i + 1
+    }
+
+    WinFormsHelper.EndLayout(form)
+}
+
+/*
+ * Draws the program's icon and gives it to the window.
+ *
+ * This is the icon the title bar, the taskbar button and Alt-Tab show, and it is a different thing
+ * from the one inside pixel-editor.exe — that one belongs to the file and is what Explorer and the
+ * Start Menu display. A program that sets only one of them looks finished in half the places it
+ * appears, so both are drawn from the same appicon.prl.
+ *
+ * It is rebuilt on every theme change, which the embedded one cannot be: that is fixed at build
+ * time, and this is not.
+ */
+func app_apply_window_icon(form: int, activeTheme: int) : void {
+    let sizes: array<int> = chrome_window_icon_sizes()
+    let bitmaps: array<int> = array_new(sizes.length())
+    let scale: int = layout_supersample()
+
+    let i: int = 0
+    while (i < sizes.length()) {
+        let oversized: Document = doc_new(sizes[i] * scale, sizes[i] * scale, 0)
+
+        appicon_draw(oversized,
+                     theme_background(activeTheme),
+                     theme_text_dim(activeTheme),
+                     theme_accent(activeTheme))
+
+        bitmaps[i] = chrome_bitmap_downsampled(oversized, sizes[i], scale)
+        i = i + 1
+    }
+
+    chrome_window_icon(form, bitmaps)
+
+    // The shim copies the images into an icon of its own, so these have served their purpose.
+    // They are GDI handles, and a theme change that leaked four of them every time would add up.
+    chrome_free_bitmaps(bitmaps)
+}
+
+// Moves the selected highlight to the active tool, leaving every other button unstyled.
+func app_mark_selected_tool(buttons: array<int>, activeTheme: int, selectedTool: int) : void {
+    let i: int = 0
+    while (i < tool_count()) {
+        chrome_style_button(buttons[i], activeTheme, i == selectedTool)
+        i = i + 1
+    }
+}
+
+// ── Input mapping ────────────────────────────────────────────────────────────
+
+// The tool a single-letter shortcut selects, or -1 when the key is not a tool shortcut.
+func app_tool_for_key(key: int) : int {
+    if (key == Key.P) { return Tool.PENCIL }
+    if (key == Key.E) { return Tool.ERASER }
+    if (key == Key.F) { return Tool.FILL }
+    if (key == Key.L) { return Tool.LINE }
+    if (key == Key.R) { return Tool.RECT }
+    if (key == Key.O) { return Tool.ELLIPSE }
+    if (key == Key.I) { return Tool.PICKER }
+    return 0 - 1
+}
+
+/*
+ * The zoom a wheel notch should move to.
+ *
+ * Doubling per notch rather than adding one: the useful range runs from 1x to 32x, and stepping
+ * linearly would take thirty notches to cross it.
+ */
+func app_wheel_zoom(view: View, delta: int) : int {
+    if (delta > 0) {
+        return view.zoom * 2
+    }
+    if (delta < 0) {
+        return view.zoom / 2
+    }
+    return view.zoom
+}
+
+// ── File commands ────────────────────────────────────────────────────────────
+
+/*
+ * Asks before discarding unsaved work.
+ *
+ * Returns true when there is nothing to lose or the user said to go ahead.
+ */
+func app_may_discard(dirty: bool) : bool {
+    if (!dirty) {
+        return true
+    }
+
+    return WinFormsHelper.MessageBoxYesNoCancel(
+        "Discard unsaved changes?", "ProLang Pixel Editor") == 1
+}
+
+/*
+ * Prompts for a size and returns a blank white document.
+ *
+ * The size comes back through InputInt rather than InputDialog because prolang has no
+ * string-to-number conversion — there is no rule from string to int, so `int(text)` does not
+ * compile — and the clamping belongs with the prompt rather than at the call site.
+ */
+func app_new_document() : Document {
+    let width: int = WinFormsHelper.InputInt("Width in pixels:", "New image", app_default_width(), 1, 512)
+    let height: int = WinFormsHelper.InputInt("Height in pixels:", "New image", app_default_height(), 1, 512)
+
+    return doc_new(width, height, color_rgb(255, 255, 255))
+}
+
+/*
+ * Loads a PNG, or returns `current` unchanged when the dialog is cancelled or the file is
+ * unreadable.
+ */
+func app_open_document(current: Document) : Document {
+    let path: string = WinFormsHelper.ShowOpenFileDialog("Open image", "PNG images|*.png|All files|*.*")
+
+    if (path == "") {
+        return current
+    }
+
+    let loaded: int = WinFormsHelper.LoadBitmapPng(path)
+
+    if (loaded < 0) {
+        WinFormsHelper.MessageBoxShow("Could not read " + path, "Open failed")
+        return current
+    }
+
+    let width: int = WinFormsHelper.GetBitmapWidth(loaded)
+    let height: int = WinFormsHelper.GetBitmapHeight(loaded)
+    let opened: Document = doc_new(width, height, 0)
+
+    // The shim fills the buffer this program allocated, so the pixels never cross the boundary
+    // as a return value.
+    WinFormsHelper.GetPixels(loaded, opened.pixels, width, height)
+    WinFormsHelper.DisposeBitmap(loaded)
+
+    return opened
+}
+
+/*
+ * Writes the image to a PNG the user chooses.
+ *
+ * Returns the document's new dirty state: false once it has been written, and unchanged when the
+ * dialog was cancelled or the write failed.
+ */
+func app_save(doc: Document, image: int) : bool {
+    let path: string = WinFormsHelper.ShowSaveFileDialog("Save image", "PNG images|*.png", "untitled.png")
+
+    if (path == "") {
+        return true
+    }
+
+    // The canvas bitmap already holds the current image, but it is refreshed here so a save is
+    // never one repaint behind what is on screen.
+    chrome_blit(image, doc)
+
+    if (!WinFormsHelper.SaveBitmapPng(image, path)) {
+        WinFormsHelper.MessageBoxShow("Could not write " + path, "Save failed")
+        return true
+    }
+
+    return false
+}

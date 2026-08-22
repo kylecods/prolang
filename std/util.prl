@@ -1,0 +1,105 @@
+/*
+ * Pixel editor — small integer helpers
+ *
+ * prolang's standard library is about twenty-five functions; `min` and `max` are in it, these are
+ * not. Everything here is pure and has no dependencies, so every other module can use it.
+ */
+
+import "math"
+
+// Absolute value. prolang's unary minus is defined for `int` only, which is all this is used on.
+func util_abs(value: int) : int {
+    if (value < 0) {
+        return 0 - value
+    }
+    return value
+}
+
+// -1, 0 or 1 according to the sign of `value`. Used for the step direction in line drawing.
+func util_sign(value: int) : int {
+    if (value > 0) {
+        return 1
+    }
+    if (value < 0) {
+        return 0 - 1
+    }
+    return 0
+}
+
+// Constrains `value` to the inclusive range low..high.
+func util_clamp(value: int, low: int, high: int) : int {
+    if (value < low) {
+        return low
+    }
+    if (value > high) {
+        return high
+    }
+    return value
+}
+
+/*
+ * Integer division that rounds toward negative infinity rather than toward zero.
+ *
+ * Screen-to-image mapping needs this. prolang's `/` truncates, so a screen coordinate one pixel
+ * left of the image origin divides to 0 — the same cell as the origin itself — and a stroke that
+ * starts just outside the canvas paints inside it. Rounding down gives -1, which is correctly
+ * rejected as out of bounds.
+ */
+func util_floor_div(numerator: int, denominator: int) : int {
+    if (denominator == 0) {
+        return 0
+    }
+
+    let quotient: int = numerator / denominator
+
+    if ((numerator % denominator) != 0 && ((numerator < 0) != (denominator < 0))) {
+        return quotient - 1
+    }
+
+    return quotient
+}
+
+/*
+ * Left-pads `text` with spaces to `width` characters.
+ *
+ * The status bar redraws on every mouse move; without padding, a coordinate going from "10" to
+ * "9" leaves the stale digit behind.
+ */
+func util_pad_left(text: string, width: int) : string {
+    let padded: string = text
+    while (padded.length() < width) {
+        padded = " " + padded
+    }
+    return padded
+}
+
+/*
+ * Parses a non-negative decimal integer, returning `fallback` for anything malformed.
+ *
+ * prolang has no string-to-number conversion of any kind — `int(someString)` is a compile error,
+ * because the conversion classifier has no rule from string to int — so this is written out.
+ */
+func util_parse_int(text: string, fallback: int) : int {
+    let length: int = text.length()
+
+    if (length == 0) {
+        return fallback
+    }
+
+    let digits: string = "0123456789"
+    let total: int = 0
+    let i: int = 0
+
+    while (i < length) {
+        let digit: int = digits.indexOf(text.charAt(i))
+
+        if (digit < 0) {
+            return fallback
+        }
+
+        total = (total * 10) + digit
+        i = i + 1
+    }
+
+    return total
+}

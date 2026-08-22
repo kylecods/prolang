@@ -7,6 +7,45 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <!--
+    Packaged as a .NET global tool, so `dotnet tool install` is an alternative to install.ps1 for
+    anyone who would rather not have a script edit their PATH. Both deliver the same thing; the
+    script exists as well because it needs no package feed and works offline from a clone.
+
+    These properties only affect `dotnet pack`. An ordinary build is unchanged.
+  -->
+  <PropertyGroup>
+    <PackAsTool>true</PackAsTool>
+    <ToolCommandName>prolang</ToolCommandName>
+    <PackageId>ProLang.Compiler</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>ProLang</Authors>
+    <Description>The ProLang compiler: compiles .prl to .NET assemblies, C99, or a native launcher.</Description>
+    <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\artifacts\nupkg</PackageOutputPath>
+  </PropertyGroup>
+
+  <!--
+    What the tool package must carry beyond the compiler itself.
+
+    runtime\ and lib\ are produced by the AfterTargets steps at the bottom of this file, which copy
+    into the build output rather than declaring project items — so the packaging machinery cannot
+    see them and they are named here explicitly. The paths are the ones those targets write to.
+
+    Without runtime\, an installed tool compiles programs that cannot start: ProLang.Runtime.dll is
+    copied next to every emitted assembly and is what print() calls into.
+  -->
+  <ItemGroup>
+    <None Include="$(OutputPath)runtime\ProLang.Runtime.dll"
+          Pack="true"
+          PackagePath="tools\$(TargetFramework)\any\runtime\"
+          Visible="false" />
+    <None Include="$(OutputPath)lib\*.dll"
+          Pack="true"
+          PackagePath="tools\$(TargetFramework)\any\lib\"
+          Visible="false"
+          Condition="'$(OS)' == 'Windows_NT'" />
+  </ItemGroup>
+
   <ItemGroup>
     <PackageReference Include="Mono.Cecil" Version="0.11.6" />
     <PackageReference Include="Mono.Options" Version="6.12.0.148" />
@@ -22,10 +61,20 @@
     <InternalsVisibleTo Include="ProLang.Benchmarks" />
   </ItemGroup>
 
+  <!--
+    The prolang standard library, shipped beside the compiler.
+
+    ProLangCompilation resolves an extensionless `import "ui/shape"` against the std\ directory
+    next to the compiler executable, so this copy is what makes the library importable at all —
+    and %(RecursiveDir) is what keeps `ui\` a directory rather than flattening it into std\.
+    Packing them as content is also what puts the library inside the `dotnet tool` package.
+  -->
   <ItemGroup>
-    <Content Include="..\..\std\*.prl">
+    <Content Include="..\..\std\**\*.prl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-      <Link>std\%(Filename)%(Extension)</Link>
+      <Link>std\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <Pack>true</Pack>
+      <PackagePath>tools\$(TargetFramework)\any\std\%(RecursiveDir)</PackagePath>
     </Content>
   </ItemGroup>
 
