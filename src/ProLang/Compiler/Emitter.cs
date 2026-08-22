@@ -27,6 +27,7 @@ namespace ProLang.Compiler
         private readonly InteropEmitter _interop;
 
         private readonly MethodReference _stringConcatReference;
+        private MethodReference? _stringConcatStringsReference;
 
         // Entry points into ProLang.Runtime.Output, which buffers print() and flushes at exit.
         private MethodReference? _outputInitMethod;
@@ -778,15 +779,7 @@ namespace ProLang.Compiler
 
             if (toType == TypeSymbol.String)
             {
-                // Box value types before calling ToString()
-                if (IsValueType(fromType))
-                    scope.IL.Emit(OpCodes.Box, GetTypeReference(fromType));
-
-                if (fromType != TypeSymbol.String)
-                {
-                    var toStringMethod = GetTypeReference(TypeSymbol.Any).Resolve().Methods.First(m => m.Name == "ToString" && m.Parameters.Count == 0);
-                    scope.IL.Emit(OpCodes.Callvirt, _assemblyDefinition.MainModule.ImportReference(toStringMethod));
-                }
+                EmitStringConversion(scope, fromType);
             }
             else if (fromType == TypeSymbol.Any || toType == TypeSymbol.Any)
             {
@@ -799,6 +792,96 @@ namespace ProLang.Compiler
             {
                 scope.IL.Emit(NumericConvOpCode(toType));
             }
+        }
+
+        /// <summary>
+        /// Converts the value on top of the stack to a string, without boxing where possible.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <c>string(x)</c> used to compile to <c>box</c> plus a virtual
+        /// <c>Object::ToString()</c>, allocating once per conversion. That was 72% of all boxing
+        /// in the compiled corpus and a per-iteration allocation in any loop that formats a
+        /// number, even though the operand's type is statically known right here.
+        /// </para>
+        /// <para>
+        /// Each overload calls the same <c>ToString()</c> the virtual dispatch would have
+        /// reached, so the resulting text is unchanged.
+        /// </para>
+        /// </remarks>
+        private void EmitStringConversion(MethodBodyScope scope, TypeSymbol fromType)
+        {
+            if (fromType == TypeSymbol.String)
+            {
+                return;
+            }
+
+            var parameterType = RuntimeOverloadParameter(fromType);
+
+            // A struct or anything else without a dedicated overload still goes through object.
+            if (parameterType == null)
+            {
+                if (IsValueType(fromType))
+                {
+                    scope.IL.Emit(OpCodes.Box, GetTypeReference(fromType));
+                }
+
+                parameterType = "System.Object";
+            }
+
+            var from = ResolveMethod(RuntimeLibrary.StringOps, "From", [parameterType]);
+
+            if (from == null)
+            {
+                // ResolveMethod reported the failure; emitting a partial sequence here would
+                // leave the operand stranded on the stack.
+                return;
+            }
+
+            scope.IL.Emit(OpCodes.Call, from);
+        }
+
+        /// <summary>
+        /// The metadata name of the runtime overload parameter that takes <paramref name="type"/>
+        /// without boxing, or <see langword="null"/> if there is no such overload.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// The IL evaluation stack has no types narrower than <c>int32</c>, so <c>int8</c>,
+        /// <c>uint8</c>, <c>int16</c>, and <c>uint16</c> are already sitting there as <c>int32</c>
+        /// and can call the <c>int</c> overload directly. Their values survive: the signed types
+        /// are sign-extended and the unsigned ones zero-extended when loaded.
+        /// </para>
+        /// <para>
+        /// <c>uint32</c> cannot share that overload — the bit pattern is the same but
+        /// <c>int32</c> would render anything above 2^31 as negative. <c>float32</c> likewise
+        /// keeps its own overload, because <c>Single.ToString()</c> and
+        /// <c>Double.ToString()</c> disagree on the same value.
+        /// </para>
+        /// </remarks>
+        private static string? RuntimeOverloadParameter(TypeSymbol type)
+        {
+            if (type is EnumSymbol)
+            {
+                // Enums are erased to int32.
+                return "System.Int32";
+            }
+
+            if (type == TypeSymbol.Int || type == TypeSymbol.Int8 || type == TypeSymbol.Int16
+                || type == TypeSymbol.UInt8 || type == TypeSymbol.UInt16)
+            {
+                return "System.Int32";
+            }
+
+            if (type == TypeSymbol.UInt32) return "System.UInt32";
+            if (type == TypeSymbol.Int64) return "System.Int64";
+            if (type == TypeSymbol.UInt64) return "System.UInt64";
+            if (type == TypeSymbol.Bool) return "System.Boolean";
+            if (type == TypeSymbol.Float32) return "System.Single";
+            if (type == TypeSymbol.Float64 || type == TypeSymbol.Float) return "System.Double";
+            if (type == TypeSymbol.String) return "System.String";
+
+            return null;
         }
 
         private static OpCode NumericConvOpCode(TypeSymbol to)
@@ -870,24 +953,18 @@ namespace ProLang.Compiler
         /// </remarks>
         private void EmitCallExpression(MethodBodyScope scope, BoundCallExpression node)
         {
+            // print() is handled before its argument is emitted, because choosing a non-boxing
+            // overload means emitting the argument's *underlying* value rather than the
+            // converted-to-any one the binder produced.
+            if (node.Function == BuiltInFunctions.Print)
+            {
+                EmitPrint(scope, node.Arguments[0]);
+                return;
+            }
+
             foreach (var argument in node.Arguments)
             {
                 EmitExpression(scope, argument);
-            }
-
-            // print() is the one builtin that cannot live in the registry: it routes through
-            // output-collection infrastructure that is synthesised into the assembly being
-            // emitted, so its target does not exist until EmitOutputHelpers has run.
-            if (node.Function == BuiltInFunctions.Print)
-            {
-                if (_outputAppendMethod == null)
-                {
-                    throw new InvalidOperationException(
-                        "Output infrastructure must be emitted before any call to print().");
-                }
-
-                scope.IL.Emit(OpCodes.Call, _outputAppendMethod);
-                return;
             }
 
             if (IntrinsicRegistry.TryGetEmitter(node.Function, out var intrinsic))
@@ -915,6 +992,71 @@ namespace ProLang.Compiler
 
 
         /// <summary>
+        /// Emits a <c>print</c> call, choosing an overload that does not box.
+        /// </summary>
+        /// <remarks>
+        /// <para>
+        /// <c>print</c> declares its parameter as <c>any</c>, so the binder wraps every argument
+        /// in a conversion to <see cref="object"/>. Emitting that conversion literally boxes each
+        /// value. Looking through it recovers the static type, which was never actually lost, and
+        /// lets a typed <c>Output.Write</c> overload take the value directly.
+        /// </para>
+        /// <para>
+        /// This mirrors what the C backend has always done — see <c>CEmitter.UnwrapAny</c>, whose
+        /// comment describes the same insight.
+        /// </para>
+        /// </remarks>
+        private void EmitPrint(MethodBodyScope scope, BoundExpression argument)
+        {
+            if (_outputAppendMethod == null)
+            {
+                throw new InvalidOperationException(
+                    "Output infrastructure must be resolved before any call to print().");
+            }
+
+            var value = UnwrapConversionToAny(argument);
+            var parameterType = RuntimeOverloadParameter(value.Type);
+
+            if (parameterType == null)
+            {
+                // No typed overload — emit the original argument, boxing included, and take the
+                // object overload resolved during setup.
+                EmitExpression(scope, argument);
+                scope.IL.Emit(OpCodes.Call, _outputAppendMethod);
+
+                return;
+            }
+
+            var write = ResolveMethod(RuntimeLibrary.Output, "Write", [parameterType]);
+
+            if (write == null)
+            {
+                return;
+            }
+
+            EmitExpression(scope, value);
+            scope.IL.Emit(OpCodes.Call, write);
+        }
+
+        /// <summary>
+        /// Looks through conversions the binder inserted purely to satisfy an <c>any</c>
+        /// parameter, recovering the expression's real static type.
+        /// </summary>
+        /// <remarks>
+        /// Only conversions whose target is <c>any</c> are unwrapped. A conversion that changes
+        /// the value — a numeric widening, or a cast the program wrote — is left alone.
+        /// </remarks>
+        private static BoundExpression UnwrapConversionToAny(BoundExpression expression)
+        {
+            while (expression is BoundConversionExpression conversion && conversion.Type == TypeSymbol.Any)
+            {
+                expression = conversion.Expression;
+            }
+
+            return expression;
+        }
+
+        /// <summary>
         /// Boxes the value just emitted if <c>String.Concat(object, object)</c> would otherwise
         /// receive an unboxed value type.
         /// </summary>
@@ -925,10 +1067,18 @@ namespace ProLang.Compiler
         /// passed a raw value where a reference was required, producing IL that fails
         /// verification. Strings are already references and must not be boxed.
         /// </remarks>
-        private void BoxForStringConcat(MethodBodyScope scope, TypeSymbol operandType)
+        private void CoerceForStringConcat(MethodBodyScope scope, TypeSymbol operandType)
         {
             if (operandType == TypeSymbol.String)
             {
+                return;
+            }
+
+            // A statically known type converts to string without boxing, which also lets the
+            // concatenation itself use Concat(string, string) rather than the object overload.
+            if (RuntimeOverloadParameter(operandType) != null)
+            {
+                EmitStringConversion(scope, operandType);
                 return;
             }
 
@@ -940,28 +1090,53 @@ namespace ProLang.Compiler
             }
         }
 
+        /// <summary>
+        /// Whether both operands of a string concatenation can be converted to <c>string</c>
+        /// without boxing, allowing <c>Concat(string, string)</c> instead of the object overload.
+        /// </summary>
+        /// <summary>
+        /// <c>String.Concat(string, string)</c>, resolved once and reused.
+        /// </summary>
+        /// <remarks>
+        /// Preferred over the <c>object</c> overload wherever both operands are already strings:
+        /// it skips the boxing and also the runtime <c>ToString</c> dispatch <c>Concat</c> would
+        /// otherwise perform on each argument.
+        /// </remarks>
+        private MethodReference StringConcatOfStrings() =>
+            _stringConcatStringsReference ??=
+                ResolveMethod("System.String", "Concat", ["System.String", "System.String"])
+                ?? _stringConcatReference;
+
+        private bool CanConcatAsStrings(BoundBinaryExpression node) =>
+            (node.Left.Type == TypeSymbol.String || RuntimeOverloadParameter(node.Left.Type) != null)
+            && (node.Right.Type == TypeSymbol.String || RuntimeOverloadParameter(node.Right.Type) != null);
+
         private void EmitBinaryExpression(MethodBodyScope scope, BoundBinaryExpression node)
         {
             var isStringConcatenation =
                 node.Op.Kind == BoundBinaryOperatorKind.Addition && node.Op.Type == TypeSymbol.String;
 
+            // When both sides can become strings without boxing, each is converted in place and
+            // the concatenation takes Concat(string, string) — no allocation beyond the result.
+            var concatAsStrings = isStringConcatenation && CanConcatAsStrings(node);
+
             EmitExpression(scope, node.Left);
             if (isStringConcatenation)
             {
-                BoxForStringConcat(scope, node.Left.Type);
+                CoerceForStringConcat(scope, node.Left.Type);
             }
 
             EmitExpression(scope, node.Right);
             if (isStringConcatenation)
             {
-                BoxForStringConcat(scope, node.Right.Type);
+                CoerceForStringConcat(scope, node.Right.Type);
             }
 
             if (node.Op.Kind == BoundBinaryOperatorKind.Addition)
             {
                 if (node.Op.Type == TypeSymbol.String)
                 {
-                    scope.IL.Emit(OpCodes.Call, _stringConcatReference);
+                    scope.IL.Emit(OpCodes.Call, concatAsStrings ? StringConcatOfStrings() : _stringConcatReference);
                 }
                 else
                 {
