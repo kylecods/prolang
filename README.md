@@ -48,6 +48,7 @@ dotnet hello.dll
 | `--msil=PATH` | Print an MSIL listing for a compiled assembly |
 | `--emit-c` | Transpile to C99 |
 | `--emit-psp` | Transpile to C99 targeting the PSP, with a build makefile |
+| `--emit-csharp` | Render the lowered program as C# for inspection |
 | `--c-output=PATH` | Override the transpiler output directory |
 | `-h`, `--help` | Show help |
 
@@ -75,6 +76,9 @@ programs including a JSON parser, a CHIP-8 emulator, and a Snake game.
 | .NET assembly | *(default)* | `ProLang.Runtime.dll`, deployed beside the output |
 | C99 | `--emit-c` | `native/*.h`, emitted alongside the generated C |
 | PlayStation Portable | `--emit-psp` | `native/*.h` plus a `Makefile.psp` for the pspdev toolchain |
+
+`--emit-csharp` is not a target — it renders the lowered program as readable C# so codegen can be
+inspected without reading IL. See [the .NET backend](docs/architecture/dotnet-backend.md).
 
 ## Repository layout
 
@@ -106,6 +110,8 @@ PROLANG_UPDATE_SNAPSHOTS=1 dotnet test src/ProLang.Tests/ProLang.Tests.csproj -c
 ## Documentation
 
 - [The .NET backend](docs/architecture/dotnet-backend.md) — how source becomes an assembly
+- [Boxing in the .NET backend](docs/architecture/boxing.md) — where it comes from and how to remove it
+- [.NET interop](docs/architecture/dotnet-interop.md) — referencing assemblies and calling into .NET
 - [Adding a builtin](docs/contributing/adding-a-builtin.md)
 - [Performance baseline](docs/perf/baseline-2026-08-15.md)
 - [AGENTS.md](AGENTS.md) — language reference and PSP toolchain setup

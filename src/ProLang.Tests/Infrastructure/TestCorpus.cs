@@ -90,6 +90,11 @@ internal static class TestCorpus
         new("examples/13-winforms/05_color_demo.prl", CorpusKind.CompileOnly, "See 01_hello_world."),
         new("examples/13-winforms/06_native_enum.prl", CorpusKind.CompileOnly, "See 01_hello_world."),
         new("examples/13-winforms/07_paint_demo.prl", CorpusKind.CompileOnly, "See 01_hello_world."),
+        new("examples/05-dotnet-interop-assembly-loading/05_dotnet_interop.prl", CorpusKind.CompileOnly,
+            "Prints a freshly generated Guid, so its output is not reproducible. Needs "
+            + "test_lib/CSharpFibonacci.csproj built, which ProLang.Tests.csproj does."),
+        new("examples/05-dotnet-interop-assembly-loading/csharp_fibonacci.prl", CorpusKind.CompileOnly,
+            "Declares the interop reference and has no main()."),
         new("tests/cast-error-test.prl", CorpusKind.CompileOnly,
             "Negative test: compiles, then throws an InvalidCastException at runtime by design."),
         new("tests/cast-invalid.prl", CorpusKind.CompileOnly,
@@ -128,10 +133,6 @@ internal static class TestCorpus
             "PSP target: psp_* builtins have no .NET implementation. Use --emit-psp."),
         new("examples/15-psp-demo/psp_chip8.prl", CorpusKind.KnownBroken,
             "PSP target: see psp_demo.prl."),
-        new("examples/05-dotnet-interop-assembly-loading/05_dotnet_interop.prl", CorpusKind.KnownBroken,
-            "Needs test_lib/CSharpFibonacci.dll to be built and referenced first."),
-        new("examples/05-dotnet-interop-assembly-loading/csharp_fibonacci.prl", CorpusKind.KnownBroken,
-            "Needs test_lib/CSharpFibonacci.dll to be built and referenced first."),
         new("examples/09-json-parser/json-file-utils.prl", CorpusKind.KnownBroken,
             "Depends on symbols defined in json-parser.prl; must be compiled together with it."),
     ];

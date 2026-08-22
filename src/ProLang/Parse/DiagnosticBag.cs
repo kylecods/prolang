@@ -1,3 +1,4 @@
+using System.Text;
 using System.Collections;
 using Mono.Cecil;
 using ProLang.Symbols;
@@ -269,9 +270,91 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Report(default, message);
     }
 
+    /// <summary>
+    /// Reports a bound node the C# rendering backend does not know how to write out.
+    /// </summary>
+    /// <remarks>
+    /// Only <c>--emit-csharp</c> raises this. It means the debug rendering is incomplete for this
+    /// program, not that the program is wrong — the MSIL backend is unaffected.
+    /// </remarks>
+    public void ReportUnsupportedCSharpNode(string nodeKind)
+    {
+        var message = $"The C# rendering backend does not support '{nodeKind}' nodes. " +
+                      "The generated C# is incomplete; the compiled assembly is unaffected.";
+
+        Report(default, message);
+    }
+
+    /// <summary>
+    /// Reports an instance call on a .NET value type, which is not yet supported.
+    /// </summary>
+    /// <remarks>
+    /// Calling an instance method on a struct requires a managed pointer to it, which the bound
+    /// tree cannot currently express. Boxing instead compiles but returns wrong results, so this
+    /// is rejected rather than mis-emitted.
+    /// </remarks>
+    public void ReportValueTypeInstanceCallUnsupported(TextLocation location, string methodName, string typeName)
+    {
+        var message =
+            $"Cannot call instance method '{methodName}' on '{typeName}', which is a .NET value type. " +
+            $"Use a static member of '{typeName}', or string(value) to format it.";
+
+        Report(location, message);
+    }
+
     public void ReportInvalidAssignmentTarget(TextLocation location)
     {
         var message = "Invalid assignment target.";
+        Report(location, message);
+    }
+
+    /// <summary>
+    /// Reports a referenced .NET assembly that could not be located.
+    /// </summary>
+    /// <remarks>
+    /// Lists where the resolver looked and any similarly-named assemblies it passed on the way.
+    /// A reference failure is nearly always a typo, a path that assumes a build configuration, or
+    /// a project that has not been built — and which of the three it is only becomes obvious once
+    /// you can see the search.
+    /// </remarks>
+    public void ReportAssemblyNotFound(
+        TextLocation location,
+        string request,
+        IReadOnlyList<string> probedLocations,
+        IReadOnlyList<string> suggestions)
+    {
+        var message = new StringBuilder();
+        message.Append($"Could not find assembly '{request}'.");
+
+        if (suggestions.Count > 0)
+        {
+            message.Append($" Did you mean {string.Join(" or ", suggestions.Select(s => $"'{s}'"))}?");
+        }
+
+        if (probedLocations.Count > 0)
+        {
+            message.AppendLine();
+            message.Append("  Searched:");
+
+            foreach (var probed in probedLocations.Distinct(StringComparer.OrdinalIgnoreCase))
+            {
+                message.AppendLine();
+                message.Append($"    {probed}");
+            }
+        }
+
+        Report(location, message.ToString());
+    }
+
+    /// <summary>
+    /// Reports a referenced project that exists but has produced no build output.
+    /// </summary>
+    public void ReportProjectNotBuilt(TextLocation location, string projectPath)
+    {
+        var message =
+            $"The referenced project '{projectPath}' has no build output. " +
+            $"Build it first, for example: dotnet build \"{projectPath}\"";
+
         Report(location, message);
     }
 

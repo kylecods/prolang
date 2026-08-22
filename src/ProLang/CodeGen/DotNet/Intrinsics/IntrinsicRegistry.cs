@@ -28,88 +28,59 @@ namespace ProLang.CodeGen.DotNet.Intrinsics;
 /// </remarks>
 internal static class IntrinsicRegistry
 {
-    private static readonly Dictionary<FunctionSymbol, IntrinsicEmitter> Table = Build();
+    private static readonly Dictionary<FunctionSymbol, Intrinsic> Table = Build();
 
     /// <summary>
     /// Looks up the emitter for <paramref name="function"/>.
     /// </summary>
     /// <returns>True if <paramref name="function"/> is a builtin with a dedicated IL sequence.</returns>
-    public static bool TryGetEmitter(FunctionSymbol function, out IntrinsicEmitter emitter) =>
-        Table.TryGetValue(function, out emitter!);
+    public static bool TryGet(FunctionSymbol function, out Intrinsic intrinsic) =>
+        Table.TryGetValue(function, out intrinsic!);
 
-    private static Dictionary<FunctionSymbol, IntrinsicEmitter> Build() => new()
+    private static Dictionary<FunctionSymbol, Intrinsic> Build() => new()
     {
         // ── Console and input ────────────────────────────────────────────────────────────
         // All of these live in ProLang.Runtime.ConsoleOps, which handles output redirection in
         // ordinary C# rather than in six hand-rolled IL branches.
-        [BuiltInFunctions.ReadInput] = Call(RuntimeLibrary.ConsoleOps, "ReadInput"),
-        [BuiltInFunctions.ConsoleWrite] = Call(RuntimeLibrary.ConsoleOps, "Write", "System.String"),
-        [BuiltInFunctions.ConsoleSetCursor] = Call(RuntimeLibrary.ConsoleOps, "SetCursor", "System.Int32", "System.Int32"),
-        [BuiltInFunctions.ConsoleSetColor] = Call(RuntimeLibrary.ConsoleOps, "SetColor", "System.Int32"),
-        [BuiltInFunctions.ConsoleResetColor] = Call(RuntimeLibrary.ConsoleOps, "ResetColor"),
-        [BuiltInFunctions.ConsoleHideCursor] = Call(RuntimeLibrary.ConsoleOps, "HideCursor"),
-        [BuiltInFunctions.ConsoleKeyAvailable] = Call(RuntimeLibrary.ConsoleOps, "KeyAvailable"),
-        [BuiltInFunctions.ConsoleReadKey] = Call(RuntimeLibrary.ConsoleOps, "ReadKey"),
+        [BuiltInFunctions.ReadInput] = Intrinsic.Call(RuntimeLibrary.ConsoleOps, "ReadInput"),
+        [BuiltInFunctions.ConsoleWrite] = Intrinsic.Call(RuntimeLibrary.ConsoleOps, "Write", "System.String"),
+        [BuiltInFunctions.ConsoleSetCursor] = Intrinsic.Call(RuntimeLibrary.ConsoleOps, "SetCursor", "System.Int32", "System.Int32"),
+        [BuiltInFunctions.ConsoleSetColor] = Intrinsic.Call(RuntimeLibrary.ConsoleOps, "SetColor", "System.Int32"),
+        [BuiltInFunctions.ConsoleResetColor] = Intrinsic.Call(RuntimeLibrary.ConsoleOps, "ResetColor"),
+        [BuiltInFunctions.ConsoleHideCursor] = Intrinsic.Call(RuntimeLibrary.ConsoleOps, "HideCursor"),
+        [BuiltInFunctions.ConsoleKeyAvailable] = Intrinsic.Call(RuntimeLibrary.ConsoleOps, "KeyAvailable"),
+        [BuiltInFunctions.ConsoleReadKey] = Intrinsic.Call(RuntimeLibrary.ConsoleOps, "ReadKey"),
 
         // ── Math ─────────────────────────────────────────────────────────────────────────
         // Min and Max map exactly onto System.Math, so they stay direct calls; only Random
         // needed adapting.
-        [BuiltInFunctions.Min] = Call("System.Math", "Min", "System.Int32", "System.Int32"),
-        [BuiltInFunctions.Max] = Call("System.Math", "Max", "System.Int32", "System.Int32"),
-        [BuiltInFunctions.Random] = Call(RuntimeLibrary.MathOps, "Random", "System.Int32"),
+        [BuiltInFunctions.Min] = Intrinsic.Call("System.Math", "Min", "System.Int32", "System.Int32"),
+        [BuiltInFunctions.Max] = Intrinsic.Call("System.Math", "Max", "System.Int32", "System.Int32"),
+        [BuiltInFunctions.Random] = Intrinsic.Call(RuntimeLibrary.MathOps, "Random", "System.Int32"),
 
         // ── Strings ──────────────────────────────────────────────────────────────────────
         // length and indexOf map exactly onto System.String. charAt and substring do not —
         // ProLang has no char type and its end index is exclusive — so they are adapted.
-        [BuiltInFunctions.StringLength] = CallVirt("System.String", "get_Length"),
-        [BuiltInFunctions.StringIndexOf] = CallVirt("System.String", "IndexOf", "System.String"),
-        [BuiltInFunctions.StringCharAt] = Call(RuntimeLibrary.StringOps, "CharAt", "System.String", "System.Int32"),
-        [BuiltInFunctions.StringSubstring] = Call(RuntimeLibrary.StringOps, "Substring", "System.String", "System.Int32", "System.Int32"),
+        [BuiltInFunctions.StringLength] = Intrinsic.CallVirt("System.String", "get_Length"),
+        [BuiltInFunctions.StringIndexOf] = Intrinsic.CallVirt("System.String", "IndexOf", "System.String"),
+        [BuiltInFunctions.StringCharAt] = Intrinsic.Call(RuntimeLibrary.StringOps, "CharAt", "System.String", "System.Int32"),
+        [BuiltInFunctions.StringSubstring] = Intrinsic.Call(RuntimeLibrary.StringOps, "Substring", "System.String", "System.Int32", "System.Int32"),
 
         // ── Arrays ───────────────────────────────────────────────────────────────────────
-        [BuiltInFunctions.ArrayLength] = ctx =>
+        [BuiltInFunctions.ArrayLength] = Intrinsic.Inline(ctx =>
         {
             // The array is already on the stack. ldlen yields a native int, so narrow it.
             ctx.IL.Emit(OpCodes.Ldlen);
             ctx.IL.Emit(OpCodes.Conv_I4);
-        },
+        }),
 
         // ── File system ──────────────────────────────────────────────────────────────────
-        [BuiltInFunctions.FileExists] = Call("System.IO.File", "Exists", "System.String"),
-        [BuiltInFunctions.ReadFile] = Call("System.IO.File", "ReadAllText", "System.String"),
-        [BuiltInFunctions.ReadFileBytes] = Call("System.IO.File", "ReadAllBytes", "System.String"),
-        [BuiltInFunctions.WriteFile] = Call("System.IO.File", "WriteAllText", "System.String", "System.String"),
+        [BuiltInFunctions.FileExists] = Intrinsic.Call("System.IO.File", "Exists", "System.String"),
+        [BuiltInFunctions.ReadFile] = Intrinsic.Call("System.IO.File", "ReadAllText", "System.String"),
+        [BuiltInFunctions.ReadFileBytes] = Intrinsic.Call("System.IO.File", "ReadAllBytes", "System.String"),
+        [BuiltInFunctions.WriteFile] = Intrinsic.Call("System.IO.File", "WriteAllText", "System.String", "System.String"),
 
         // ── Threading ────────────────────────────────────────────────────────────────────
-        [BuiltInFunctions.ThreadSleep] = Call("System.Threading.Thread", "Sleep", "System.Int32"),
+        [BuiltInFunctions.ThreadSleep] = Intrinsic.Call("System.Threading.Thread", "Sleep", "System.Int32"),
     };
-
-    /// <summary>Emits a static call to a BCL method, with the arguments already on the stack.</summary>
-    private static IntrinsicEmitter Call(string typeName, string methodName, params string[] parameterTypeNames) =>
-        ctx => EmitCall(ctx, OpCodes.Call, typeName, methodName, parameterTypeNames);
-
-    /// <summary>Emits an instance call, with the receiver and arguments already on the stack.</summary>
-    private static IntrinsicEmitter CallVirt(string typeName, string methodName, params string[] parameterTypeNames) =>
-        ctx => EmitCall(ctx, OpCodes.Callvirt, typeName, methodName, parameterTypeNames);
-
-    private static void EmitCall(
-        IntrinsicContext ctx,
-        OpCode opCode,
-        string typeName,
-        string methodName,
-        string[] parameterTypeNames)
-    {
-        var method = ctx.Method(typeName, methodName, parameterTypeNames);
-
-        if (method == null)
-        {
-            // ResolveMethod has already reported the failure. Emitting nothing here would leave
-            // the arguments stranded on the evaluation stack and produce an assembly that only
-            // fails when the JIT reaches it, so the diagnostic is the whole response — the
-            // emitter must not go on to write this assembly.
-            return;
-        }
-
-        ctx.IL.Emit(opCode, method);
-    }
 }

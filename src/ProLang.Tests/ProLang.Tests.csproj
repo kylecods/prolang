@@ -25,6 +25,18 @@
   </ItemGroup>
 
   <!--
+    The interop example references a C# library by project. Building it here keeps the corpus
+    self-sufficient: without it, those two entries fail on a clean clone for a reason that has
+    nothing to do with the compiler.
+  -->
+  <ItemGroup>
+    <ProjectReference
+      Include="..\..\examples\05-dotnet-interop-assembly-loading\test_lib\CSharpFibonacci.csproj"
+      ReferenceOutputAssembly="false"
+      Private="false" />
+  </ItemGroup>
+
+  <!--
     Import resolution probes AppContext.BaseDirectory for std/ and lib/. std/*.prl arrives here
     as transitive Content from ProLang.csproj, but lib/WinFormsHelper.dll is produced by a
     post-build <Exec> into ProLang's own output, so it has to be copied across explicitly.

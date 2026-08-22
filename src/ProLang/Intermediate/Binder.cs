@@ -174,7 +174,7 @@ internal sealed class Binder
 
                 // Create __UserMain symbol with the same signature as main
                 // This internal symbol will be the actual implementation
-                userMainFunction = new FunctionSymbol("__UserMain", userMain.Parameters, userMain.Type, userMain.Declaration);
+                userMainFunction = new FunctionSymbol(SyntheticNames.UserMain, userMain.Parameters, userMain.Type, userMain.Declaration);
 
                 // Remove the user's "main" from the scope and replace with "__UserMain"
                 // We need to update the scope to use __UserMain instead
@@ -228,7 +228,7 @@ internal sealed class Binder
         {
             // Create synthetic __Main that will be the actual entry point
             // It takes string[] args from CLR but doesn't expose them to user
-            syntheticMainFunction = new FunctionSymbol("__Main", ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Void, null);
+            syntheticMainFunction = new FunctionSymbol(SyntheticNames.Main, ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Void, null);
 
             // Add synthetic __Main to scope and functions list
             binder._scope.TryDeclareFunction(syntheticMainFunction);
@@ -260,6 +260,11 @@ internal sealed class Binder
 
         var functionBodies = ImmutableDictionary.CreateBuilder<FunctionSymbol, BoundBlockStatement>();
 
+        // The same bodies before lowering, keeping if/while/for intact. Text backends emit from
+        // these so their output reads like the source rather than like a jump table; the MSIL
+        // emitter uses the lowered form. See BoundProgram.StructuredFunctions.
+        var structuredBodies = ImmutableDictionary.CreateBuilder<FunctionSymbol, BoundStatement>();
+
         // Shared registry for monomorphized generic function instantiations.
         // Keys are concrete function names; values are (symbol, lowered body).
         var sharedInstantiations = new Dictionary<string, (FunctionSymbol Symbol, BoundBlockStatement Body)>();
@@ -289,15 +294,17 @@ internal sealed class Binder
             }
 
             functionBodies.Add(function, loweredBody);
+            structuredBodies.Add(function, body);
 
             diagnostics.AddRange(binder.Diagnostics);
         }
 
         if (globalScope.MainFunction != null && globalScope.Statements.Any())
         {
-            var body = Lowerer.Lower(new BoundBlockStatement(globalScope.Statements));
+            var structured = new BoundBlockStatement(globalScope.Statements);
 
-            functionBodies.Add(globalScope.MainFunction, body);
+            functionBodies.Add(globalScope.MainFunction, Lowerer.Lower(structured));
+            structuredBodies.Add(globalScope.MainFunction, structured);
         }
         else if (globalScope.ScriptFunction != null)
         {
@@ -314,9 +321,10 @@ internal sealed class Binder
                 statements = statements.Add(new BoundReturnStatement(nullValue));
             }
 
-            var body = Lowerer.Lower(new BoundBlockStatement(statements));
+            var structured = new BoundBlockStatement(statements);
 
-            functionBodies.Add(globalScope.ScriptFunction, body);
+            functionBodies.Add(globalScope.ScriptFunction, Lowerer.Lower(structured));
+            structuredBodies.Add(globalScope.ScriptFunction, structured);
         }
 
         // Add all collected generic instantiations to the function bodies
@@ -326,7 +334,7 @@ internal sealed class Binder
                 functionBodies.Add(concreteSymbol, instBody);
         }
 
-        return new BoundProgram(previous, diagnostics.ToImmutable(), globalScope.MainFunction, globalScope.ScriptFunction, functionBodies.ToImmutable(), globalScope.StructTypes, globalScope.EnumTypes);
+        return new BoundProgram(previous, diagnostics.ToImmutable(), globalScope.MainFunction, globalScope.ScriptFunction, functionBodies.ToImmutable(), globalScope.StructTypes, globalScope.EnumTypes, structuredBodies.ToImmutable());
     }
 
     private void BindFunctionDeclaration(FunctionDeclarationSyntax syntax)
@@ -1192,6 +1200,18 @@ internal sealed class Binder
                 }
                 return new BoundEnumMemberExpression(enumSym, member);
             }
+
+            // A .NET static property or field read as `Type.Member`, e.g. DateTime.Now or
+            // String.Empty. DotNetInteropModule registers these as zero-argument functions named
+            // "Type.Member"; without this they fell through to variable binding and were
+            // reported as "Variable 'DateTime' does not exist", which named the wrong problem.
+            //
+            // A real variable of the same name wins, so a local cannot be shadowed by a .NET type.
+            if (!_scope.TryLookupVariable(candidateName, out _)
+                && TryBindDotNetStaticMember(candidateName, syntax.FieldName.Text) is { } staticMember)
+            {
+                return staticMember;
+            }
         }
 
         var expression = BindExpression(syntax.Expression);
@@ -1224,6 +1244,40 @@ internal sealed class Binder
         }
 
         return new BoundFieldAccessExpression(expression, fieldName, field);
+    }
+
+    /// <summary>
+    /// Binds a read of a .NET static property or field written as <c>Type.Member</c>.
+    /// </summary>
+    /// <returns>
+    /// A call to the member's accessor, or <see langword="null"/> if no such member exists —
+    /// in which case the caller carries on with ordinary field-access binding.
+    /// </returns>
+    /// <remarks>
+    /// Static properties and fields are exposed as zero-argument functions rather than as a
+    /// distinct symbol kind, because reading either compiles to a call or a field load with no
+    /// arguments. The emitter already distinguishes them: <c>InteropEmitter.EmitCall</c> checks
+    /// for a <c>MethodInfo</c> first, then a field, then a property getter.
+    /// </remarks>
+    private BoundExpression? TryBindDotNetStaticMember(string typeName, string memberName)
+    {
+        // Interop members are resolved through the assembly registry rather than the scope's
+        // function table, which only holds ProLang functions and builtins.
+        var member = ResolveDotNetStaticMethod(typeName, memberName, argumentCount: 0);
+
+        if (member == null)
+        {
+            return null;
+        }
+
+        // Only a member that takes no arguments can be read without a call. A method written
+        // without parentheses is a mistake, not a property read, and should keep reporting as one.
+        if (!member.Parameters.IsEmpty)
+        {
+            return null;
+        }
+
+        return new BoundCallExpression(member, ImmutableArray<BoundExpression>.Empty);
     }
 
     private BoundExpression BindCastExpression(CastExpressionSyntax syntax)
@@ -1541,7 +1595,19 @@ internal sealed class Binder
 
             if (!_scope.TryLookupVariable(typeName, out _))
             {
-                var dotNetFunc = ResolveDotNetStaticMethod(typeName, methodName);
+                // Construction is written Type.new(args), matching how the interop module
+                // registers constructors.
+                if (methodName == "new")
+                {
+                    var constructor = ResolveDotNetConstructor(typeName, syntax.Arguments.Count);
+
+                    if (constructor != null)
+                    {
+                        return BindDotNetFunctionCall(syntax, constructor, syntax.Arguments);
+                    }
+                }
+
+                var dotNetFunc = ResolveDotNetStaticMethod(typeName, methodName, syntax.Arguments.Count);
                 if (dotNetFunc != null)
                 {
                     return BindDotNetFunctionCall(syntax, dotNetFunc, syntax.Arguments);
@@ -1554,6 +1620,34 @@ internal sealed class Binder
 
         if (receiver.Type == TypeSymbol.Error)
         {
+            return new BoundErrorExpression();
+        }
+
+        // An instance call on a value whose .NET type is known. Values used to be typed `any`,
+        // which erased the type and left nothing to resolve the member against.
+        if (receiver.Type is DotNetTypeSymbol dotNetReceiver)
+        {
+            // A value-type receiver needs its *address* for the call, which the bound tree has no
+            // way to express — IL's `constrained.` prefix exists precisely for this. Boxing it
+            // instead produces IL that verifies and then reads the object header as if it were
+            // the struct's data, silently returning wrong answers. Refusing is the honest
+            // outcome until an address-of node exists.
+            if (dotNetReceiver.ClrType.IsValueType)
+            {
+                _diagnostics.ReportValueTypeInstanceCallUnsupported(
+                    syntax.MethodName.Location, methodName, dotNetReceiver.Name);
+
+                return new BoundErrorExpression();
+            }
+
+            var instanceMethod = ResolveDotNetInstanceMethod(dotNetReceiver.ClrType, methodName, syntax.Arguments.Count);
+
+            if (instanceMethod != null)
+            {
+                return BindDotNetInstanceCall(syntax, receiver, instanceMethod, syntax.Arguments);
+            }
+
+            _diagnostics.ReportUndefinedMethod(syntax.MethodName.Location, methodName, receiver.Type);
             return new BoundErrorExpression();
         }
 
@@ -1639,16 +1733,10 @@ internal sealed class Binder
             }
         }
 
-        // Handle .NET instance method calls on 'any' type
-        if (receiver.Type == TypeSymbol.Any)
-        {
-            var dotNetFunc = ResolveDotNetInstanceMethod(methodName);
-            if (dotNetFunc != null)
-            {
-                return BindDotNetInstanceMethodCall(syntax, receiver, dotNetFunc, syntax.Arguments);
-            }
-        }
-
+        // A receiver typed `any` has genuinely lost its .NET type — it came from a cast, a
+        // map<string, any>, or a parameter declared `any` — so there is nothing to resolve the
+        // member against. Values that came directly from .NET keep their type and are handled
+        // above as DotNetTypeSymbol.
         _diagnostics.ReportUndefinedMethod(syntax.MethodName.Location, methodName, receiver.Type);
         return new BoundErrorExpression();
     }
@@ -1656,7 +1744,7 @@ internal sealed class Binder
     /// <summary>
     /// Resolves a .NET static method by type name and method name.
     /// </summary>
-    private DotNetFunctionSymbol? ResolveDotNetStaticMethod(string typeName, string methodName)
+    private DotNetFunctionSymbol? ResolveDotNetStaticMethod(string typeName, string methodName, int argumentCount)
     {
         var registry = DotNetAssemblyRegistry.Instance;
 
@@ -1681,10 +1769,17 @@ internal sealed class Binder
         if (dotNetType == null)
             return null;
 
-        // First try to find a static method
-        var methods = registry.GetStaticMethods(dotNetType);
-        var matchingMethod = methods.FirstOrDefault(m =>
-            m.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase));
+        // First try to find a static method. Arity is part of the match: String.Concat has
+        // overloads from one to four arguments, and picking whichever came first in metadata
+        // order made `String.Concat("a", "b")` fail with "requires 1 arguments but was given 2".
+        var methods = registry.GetStaticMethods(dotNetType)
+            .Where(m => m.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        var matchingMethod = methods.FirstOrDefault(m => m.GetParameters().Length == argumentCount)
+            // No overload of the right arity — fall back to any, so the diagnostic reports the
+            // argument-count mismatch against a real signature rather than "method not found".
+            ?? methods.FirstOrDefault();
 
         if (matchingMethod != null)
             return DotNetFunctionSymbol.FromStaticMethod(matchingMethod);
@@ -1709,18 +1804,124 @@ internal sealed class Binder
     }
 
     /// <summary>
-    /// Resolves a .NET instance method (for 'any' type objects).
+    /// Resolves a constructor for <paramref name="typeName"/> taking <paramref name="argumentCount"/> arguments.
     /// </summary>
-    private DotNetFunctionSymbol? ResolveDotNetInstanceMethod(string methodName)
+    /// <remarks>
+    /// Matching is by arity. Overloaded constructors differing only in parameter types resolve to
+    /// whichever comes first, the same limitation the emitter has when converting a reflection
+    /// member into a Cecil reference.
+    /// </remarks>
+    private static DotNetFunctionSymbol? ResolveDotNetConstructor(string typeName, int argumentCount)
     {
-        // We don't know the actual type at bind time for 'any' types,
-        // so we create a placeholder that will be resolved at runtime
+        var type = FindDotNetType(typeName);
+
+        if (type == null)
+        {
+            return null;
+        }
+
+        var constructor = DotNetAssemblyRegistry.GetConstructors(type)
+            .FirstOrDefault(c => c.GetParameters().Length == argumentCount);
+
+        return constructor == null ? null : DotNetFunctionSymbol.FromConstructor(constructor);
+    }
+
+    /// <summary>
+    /// Resolves an instance method on a known .NET type.
+    /// </summary>
+    /// <remarks>
+    /// This used to return null unconditionally, with a comment that the type could not be known
+    /// at bind time — true while every .NET value was typed <c>any</c>, but no longer so now that
+    /// <see cref="DotNetTypeSymbol"/> carries it. Inherited members are included, so
+    /// <c>ToString</c> and friends resolve.
+    /// </remarks>
+    private static DotNetFunctionSymbol? ResolveDotNetInstanceMethod(Type receiverType, string methodName, int argumentCount)
+    {
+        var method = receiverType
+            .GetMethods(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+            .FirstOrDefault(m =>
+                m.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase)
+                && m.GetParameters().Length == argumentCount);
+
+        if (method != null)
+        {
+            return DotNetFunctionSymbol.FromInstanceMethod(method);
+        }
+
+        // A property read written as a call, e.g. sb.Length().
+        var property = receiverType
+            .GetProperties(System.Reflection.BindingFlags.Public | System.Reflection.BindingFlags.Instance)
+            .FirstOrDefault(p => p.Name.Equals(methodName, StringComparison.OrdinalIgnoreCase) && p.GetMethod != null);
+
+        return property == null || argumentCount != 0
+            ? null
+            : DotNetFunctionSymbol.FromInstanceMethod(property.GetMethod!);
+    }
+
+    /// <summary>
+    /// Finds a .NET type by simple or full name, trying the namespaces programs commonly use.
+    /// </summary>
+    private static Type? FindDotNetType(string typeName)
+    {
+        var registry = DotNetAssemblyRegistry.Instance;
+        var type = registry.FindType(typeName) ?? registry.FindTypeBySimpleName(typeName);
+
+        if (type != null)
+        {
+            return type;
+        }
+
+        foreach (var ns in new[] { "System", "System.Collections.Generic", "System.Text", "System.IO", "System.Linq" })
+        {
+            type = registry.FindTypeByNamespace(ns, typeName);
+
+            if (type != null)
+            {
+                return type;
+            }
+        }
+
         return null;
     }
 
     /// <summary>
     /// Binds a call to a .NET function.
     /// </summary>
+    /// <summary>
+    /// Binds an instance call on a value whose .NET type is known.
+    /// </summary>
+    /// <remarks>
+    /// The receiver becomes the first argument. <c>callvirt</c> expects it on the stack below the
+    /// arguments, and the emitter pushes a call's arguments in order, so putting it first there
+    /// produces exactly the right sequence without the emitter needing a separate notion of a
+    /// receiver.
+    /// </remarks>
+    private BoundExpression BindDotNetInstanceCall(
+        MethodCallExpressionSyntax syntax,
+        BoundExpression receiver,
+        DotNetFunctionSymbol method,
+        SeparatedSyntaxList<ExpressionSyntax> arguments)
+    {
+        if (arguments.Count != method.Parameters.Length)
+        {
+            _diagnostics.ReportWrongMethodArgumentCount(
+                syntax.MethodName.Location, method.Name, method.Parameters.Length, arguments.Count);
+
+            return new BoundErrorExpression();
+        }
+
+        var boundArguments = ImmutableArray.CreateBuilder<BoundExpression>(arguments.Count + 1);
+        boundArguments.Add(receiver);
+
+        for (var i = 0; i < arguments.Count; i++)
+        {
+            var argument = BindExpression(arguments[i]);
+            boundArguments.Add(BindConversion(arguments[i].Location, argument, method.Parameters[i].Type));
+        }
+
+        return new BoundCallExpression(method, boundArguments.ToImmutable());
+    }
+
     private BoundExpression BindDotNetFunctionCall(
         MethodCallExpressionSyntax syntax,
         DotNetFunctionSymbol function,
@@ -1877,12 +2078,18 @@ internal sealed class Binder
             return expression;
         }
 
-        if (type == TypeSymbol.Any)
+        // Conversions to and from `any` are always allowed without an explicit cast, because
+        // `any` carries no information to lose. A .NET value is System.Object at the IL level and
+        // was itself typed `any` until DotNetTypeSymbol existed, so it takes the same path —
+        // otherwise giving those values their real type would silently start rejecting programs
+        // that compiled before, such as `let g: string = Guid.NewGuid()`.
+        if (type == TypeSymbol.Any || type is DotNetTypeSymbol)
         {
             return new BoundConversionExpression(type, expression);
         }
 
-        if (expression.Type == TypeSymbol.Any){
+        if (expression.Type == TypeSymbol.Any || expression.Type is DotNetTypeSymbol)
+        {
             return new BoundConversionExpression(type, expression);
         }
 

@@ -18,13 +18,15 @@ namespace ProLang.CodeGen.DotNet.Intrinsics;
 /// </para>
 /// </remarks>
 internal sealed class IntrinsicContext(
-    ILProcessor il,
+    MethodBodyScope scope,
     ReferenceResolver references,
     DiagnosticBag diagnostics,
     Func<TypeSymbol, TypeReference> getTypeReference)
 {
+    private readonly MethodBodyScope _scope = scope;
+
     /// <summary>The IL stream for the method being emitted.</summary>
-    public ILProcessor IL { get; } = il;
+    public ILProcessor IL { get; } = scope.IL;
 
     /// <summary>Resolves BCL members.</summary>
     public ReferenceResolver References { get; } = references;
@@ -39,17 +41,12 @@ internal sealed class IntrinsicContext(
     /// Declares a scratch local in the method being emitted.
     /// </summary>
     /// <remarks>
-    /// Some builtins need to reorder or stash stack values — <c>substring</c> converts an
-    /// exclusive end index into a length, and <c>random</c> has to get the receiver underneath an
-    /// already-pushed argument. Each call site currently gets its own local.
+    /// No builtin needs one today. The three that did — <c>substring</c>, <c>random</c>, and
+    /// <c>readKey</c> — each allocated one or two locals at *every* call site to reorder stack
+    /// values; they now live in <c>ProLang.Runtime</c> as ordinary C#, where the problem does not
+    /// arise. This remains for a future builtin that genuinely cannot be expressed as a call.
     /// </remarks>
-    public VariableDefinition DeclareTemp(TypeReference type)
-    {
-        var local = new VariableDefinition(type);
-        IL.Body.Variables.Add(local);
-
-        return local;
-    }
+    public VariableDefinition DeclareTemp(TypeReference type) => _scope.DeclareTemporary(type);
 
     /// <summary>
     /// Resolves a method, reporting a diagnostic if it is missing.

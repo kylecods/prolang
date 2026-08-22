@@ -28,10 +28,39 @@ public static class Output
     /// Appends one <c>print()</c> call's value, followed by a newline.
     /// </summary>
     /// <param name="value">
-    /// Any ProLang value. <c>any</c> is <see cref="object"/> at the IL level, so this accepts
-    /// everything and formats via <see cref="Convert.ToString(object?)"/>.
+    /// A value whose type is only known at runtime. <c>any</c> is <see cref="object"/> at the IL
+    /// level, so this accepts everything.
     /// </param>
+    /// <remarks>
+    /// The typed overloads below exist so the emitter can avoid boxing when the argument's type
+    /// is statically known. <c>print</c> declares its parameter as <c>any</c>, so before they
+    /// existed every <c>print(someInt)</c> allocated.
+    /// </remarks>
     public static void Write(object? value) => Buffer.AppendLine(Convert.ToString(value));
+
+    /// <summary>Appends a string directly, with no conversion.</summary>
+    public static void Write(string? value) => Buffer.AppendLine(value);
+
+    /// <inheritdoc cref="Write(object?)"/>
+    public static void Write(int value) => Buffer.AppendLine(value.ToString());
+
+    /// <inheritdoc cref="Write(object?)"/>
+    public static void Write(uint value) => Buffer.AppendLine(value.ToString());
+
+    /// <inheritdoc cref="Write(object?)"/>
+    public static void Write(long value) => Buffer.AppendLine(value.ToString());
+
+    /// <inheritdoc cref="Write(object?)"/>
+    public static void Write(ulong value) => Buffer.AppendLine(value.ToString());
+
+    /// <inheritdoc cref="Write(object?)"/>
+    public static void Write(bool value) => Buffer.AppendLine(value.ToString());
+
+    /// <inheritdoc cref="Write(object?)"/>
+    public static void Write(float value) => Buffer.AppendLine(value.ToString());
+
+    /// <inheritdoc cref="Write(object?)"/>
+    public static void Write(double value) => Buffer.AppendLine(value.ToString());
 
     /// <summary>Writes everything buffered so far to stdout and empties the buffer.</summary>
     /// <remarks>
