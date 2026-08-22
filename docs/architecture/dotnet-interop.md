@@ -102,7 +102,64 @@ Nothing special is required — an ordinary class library:
 </Project>
 ```
 
-Only `public static` members are callable today.
+## Calling members
+
+| Member kind | Syntax | |
+|---|---|---|
+| Static method | `Math.Abs(x)` | ✅ |
+| Static property | `DateTime.Now` | ✅ |
+| Static field | `String.Empty` | ✅ |
+| Constructor | `Random.new()` | ✅ |
+| Instance method | `r.Next(100)` | ✅ on reference types |
+| Instance method on a struct | `g.Equals(g)` | ❌ diagnostic — see below |
+
+```prolang
+import "io"
+import "dotnet:System"
+
+func main() {
+    print(string(Math.Abs(0 - 7)))       // static method
+    print(string(DateTime.Now))          // static property
+    print(String.Empty)                  // static field
+    print(String.Concat("Pro", "Lang"))  // overload chosen by arity
+
+    let r = Random.new()                 // constructor
+    print(string(r.Next(100)))           // instance method on the result
+}
+```
+
+**Let the type be inferred.** `let r = Random.new()` keeps the .NET type, which is what makes
+`r.Next(100)` resolvable. Writing `let r: any = Random.new()` erases it deliberately, and instance
+calls then fail — `any` carries nothing to resolve a member name against.
+
+That inference works because a .NET value now has a `DotNetTypeSymbol` carrying its
+`System.Type`, rather than collapsing to `any`. It is still `System.Object` at the IL level, and
+converts wherever `any` does, so nothing that compiled before stopped compiling.
+
+### Instance methods on value types are rejected
+
+Calling an instance method on a struct — `Guid`, `DateTime`, `TimeSpan` — reports:
+
+```
+Cannot call instance method 'Equals' on 'Guid', which is a .NET value type.
+Use a static member of 'Guid', or string(value) to format it.
+```
+
+The call needs a *managed pointer* to the struct, which is what IL's `constrained.` prefix is for
+and which the bound tree cannot currently express. Boxing the receiver instead produces IL that
+passes verification and then reads the object header as though it were the struct's data —
+`g.Equals(g)` returned `False`. Refusing is better than being silently wrong; lifting it needs an
+address-of node in the bound tree.
+
+Static members cover most of what these types are used for, and `string(value)` formats them.
+
+### Overloads
+
+Static methods and constructors are matched by name **and argument count**, so
+`String.Concat("a", "b")` picks the two-argument overload. Overloads differing only in parameter
+*types* at the same arity still resolve to whichever appears first in metadata order.
+
+Only `public` members are callable.
 
 > **A trap worth knowing about.** `examples/Directory.Build.targets` replaces `CoreCompile` so
 > MSBuild can build `.prlproj` projects. That import is now conditioned on the project extension.

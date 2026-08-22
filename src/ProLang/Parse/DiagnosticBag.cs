@@ -285,6 +285,23 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Report(default, message);
     }
 
+    /// <summary>
+    /// Reports an instance call on a .NET value type, which is not yet supported.
+    /// </summary>
+    /// <remarks>
+    /// Calling an instance method on a struct requires a managed pointer to it, which the bound
+    /// tree cannot currently express. Boxing instead compiles but returns wrong results, so this
+    /// is rejected rather than mis-emitted.
+    /// </remarks>
+    public void ReportValueTypeInstanceCallUnsupported(TextLocation location, string methodName, string typeName)
+    {
+        var message =
+            $"Cannot call instance method '{methodName}' on '{typeName}', which is a .NET value type. " +
+            $"Use a static member of '{typeName}', or string(value) to format it.";
+
+        Report(location, message);
+    }
+
     public void ReportInvalidAssignmentTarget(TextLocation location)
     {
         var message = "Invalid assignment target.";

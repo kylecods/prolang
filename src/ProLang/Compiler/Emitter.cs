@@ -151,6 +151,16 @@ namespace ProLang.Compiler
                 return _diagnostics.ToImmutableArray();
             }
 
+            // Create the output directory rather than failing with a DirectoryNotFoundException
+            // stack trace. `-o bin/app.dll` into a directory that does not exist yet is an
+            // ordinary thing to write, not a mistake.
+            var outputDirectory = Path.GetDirectoryName(Path.GetFullPath(outputPath));
+
+            if (!string.IsNullOrEmpty(outputDirectory))
+            {
+                Directory.CreateDirectory(outputDirectory);
+            }
+
             _assemblyDefinition.Write(outputPath);
             WriteRuntimeConfig(Path.ChangeExtension(outputPath, ".runtimeconfig.json"));
 
@@ -701,9 +711,9 @@ namespace ProLang.Compiler
             }
             else if (fromType == TypeSymbol.Any || toType == TypeSymbol.Any)
             {
-                if (toType == TypeSymbol.Any && IsValueType(fromType))
+                if (toType == TypeSymbol.Any && IsEmittedAsValueType(fromType))
                     scope.IL.Emit(OpCodes.Box, GetTypeReference(fromType));
-                else if (fromType == TypeSymbol.Any && IsValueType(toType))
+                else if (fromType == TypeSymbol.Any && IsEmittedAsValueType(toType))
                     scope.IL.Emit(OpCodes.Unbox_Any, GetTypeReference(toType));
             }
             else if (IsNumericType(fromType) && IsNumericType(toType))
@@ -739,7 +749,7 @@ namespace ProLang.Compiler
             // A struct or anything else without a dedicated overload still goes through object.
             if (parameterType == null)
             {
-                if (IsValueType(fromType))
+                if (IsEmittedAsValueType(fromType))
                 {
                     scope.IL.Emit(OpCodes.Box, GetTypeReference(fromType));
                 }
@@ -778,6 +788,18 @@ namespace ProLang.Compiler
             type == TypeSymbol.Int    || type == TypeSymbol.Int8   || type == TypeSymbol.Int16  || type == TypeSymbol.Int64  ||
             type == TypeSymbol.UInt8  || type == TypeSymbol.UInt16 || type == TypeSymbol.UInt32 || type == TypeSymbol.UInt64 ||
             type == TypeSymbol.Float32 || type == TypeSymbol.Float64 || type == TypeSymbol.Float;
+
+        /// <summary>
+        /// Whether <paramref name="type"/> is emitted as a value type, and so needs boxing to
+        /// reach anything typed <see cref="object"/>.
+        /// </summary>
+        /// <remarks>
+        /// The test is on the emitted Cecil type rather than on a list of ProLang type names.
+        /// An enumerated list cannot know about types that come from .NET — a
+        /// <c>DotNetTypeSymbol</c> for <c>System.Guid</c> is a value type and must be boxed,
+        /// but one for <c>StringBuilder</c> must not be.
+        /// </remarks>
+        private bool IsEmittedAsValueType(TypeSymbol type) => GetTypeReference(type).IsValueType;
 
         private static bool IsValueType(TypeSymbol type) =>
             type == TypeSymbol.Int    || type == TypeSymbol.Bool   ||

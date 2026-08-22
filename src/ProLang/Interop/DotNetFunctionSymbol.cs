@@ -31,6 +31,28 @@ public sealed class DotNetFunctionSymbol : FunctionSymbol
     /// <summary>
     /// Creates a DotNetFunctionSymbol from a static .NET method.
     /// </summary>
+    /// <summary>
+    /// Creates a symbol for an instance method or property getter.
+    /// </summary>
+    /// <remarks>
+    /// The receiver is not a parameter — it is pushed by the caller before the arguments, the
+    /// same shape a <c>callvirt</c> expects.
+    /// </remarks>
+    public static DotNetFunctionSymbol FromInstanceMethod(MethodInfo method)
+    {
+        var parameters = CreateParameters(method.GetParameters());
+        var returnType = DotNetTypeMapper.MapToProLangType(method.ReturnType);
+
+        return new DotNetFunctionSymbol(
+            method.Name,
+            parameters,
+            returnType,
+            method,
+            null,
+            method.DeclaringType!,
+            isStatic: false);
+    }
+
     public static DotNetFunctionSymbol FromStaticMethod(MethodInfo method)
     {
         var parameters = CreateParameters(method.GetParameters());

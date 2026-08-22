@@ -95,8 +95,22 @@ public static class DotNetTypeMapper
             return TypeSymbol.Map.WithArgs(keyType, valueType);
         }
 
-        // Everything else maps to 'any'
-        return TypeSymbol.Any;
+        // System.Object is exactly what ProLang means by `any`, so it must map to the symbol the
+        // rest of the compiler tests for by reference. Letting it become a DotNetTypeSymbol broke
+        // boxing: EmitConversionExpression boxes when the target is TypeSymbol.Any, and a
+        // distinct symbol for the same type silently failed that check.
+        if (dotNetType == typeof(object))
+        {
+            return TypeSymbol.Any;
+        }
+
+        // Anything else keeps its .NET identity rather than collapsing to 'any'.
+        //
+        // Returning TypeSymbol.Any here was what made instance calls impossible to bind: the
+        // binder saw only "object" and had nothing to resolve a member name against. A
+        // DotNetTypeSymbol is still System.Object-compatible everywhere 'any' is accepted, so
+        // this widens what can be expressed without narrowing what already worked.
+        return new DotNetTypeSymbol(dotNetType);
     }
 
     /// <summary>

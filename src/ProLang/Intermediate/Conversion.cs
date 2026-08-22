@@ -25,6 +25,16 @@ internal sealed class Conversion
         if (from == to)
             return Identity;
 
+        // A .NET value is System.Object at the IL level, so it converts wherever `any` does.
+        //
+        // Without this, giving .NET values their real type instead of `any` would have been a
+        // breaking change: `let g: string = Guid.NewGuid()` compiled before only because the
+        // result was typed `any`. Keeping the type has to add resolution, not remove conversions.
+        if (from is DotNetTypeSymbol || to is DotNetTypeSymbol)
+        {
+            return ClassifyDotNet(from, to);
+        }
+
         // Explicit casts to string (emitter handles Box + ToString)
         if (to == TypeSymbol.String &&
             (from == TypeSymbol.Int  || from == TypeSymbol.Bool  ||
@@ -66,6 +76,44 @@ internal sealed class Conversion
 
         // Explicit narrowing / cross-sign conversions between other numeric types
         if (IsNumeric(from) && IsNumeric(to)) return Explicit;
+
+        return None;
+    }
+
+    /// <summary>
+    /// Classifies a conversion where either side is a .NET type.
+    /// </summary>
+    /// <remarks>
+    /// These behave as <c>any</c> did, with one addition: between two .NET types the conversion
+    /// exists only when one is actually assignable to the other, so a <c>StringBuilder</c> cannot
+    /// silently flow into a parameter expecting a <c>Guid</c>.
+    /// </remarks>
+    private static Conversion ClassifyDotNet(TypeSymbol from, TypeSymbol to)
+    {
+        if (from is DotNetTypeSymbol fromDotNet && to is DotNetTypeSymbol toDotNet)
+        {
+            return fromDotNet.IsCompatibleWith(toDotNet) ? Implicit
+                : toDotNet.IsCompatibleWith(fromDotNet) ? Explicit
+                : None;
+        }
+
+        // Widening into `any` loses nothing — both are System.Object.
+        if (to == TypeSymbol.Any)
+        {
+            return Implicit;
+        }
+
+        // Out of `any` into a specific .NET type is a downcast, as it is for any other type.
+        if (from == TypeSymbol.Any)
+        {
+            return Explicit;
+        }
+
+        // Formatting a .NET value as text, the same explicit conversion `any` gets.
+        if (to == TypeSymbol.String)
+        {
+            return Explicit;
+        }
 
         return None;
     }

@@ -118,6 +118,16 @@ internal sealed class TypeEmitter
             return _module.ImportReference(definition);
         }
 
+        // A value obtained from .NET keeps its real type, so an instance call on it can be
+        // emitted against the right declaring type rather than against System.Object.
+        if (type is DotNetTypeSymbol dotNetType)
+        {
+            return _references.ResolveType(dotNetType.ClrType.FullName!)
+                // The type is not in the loaded reference set — the value still behaves as `any`
+                // does, which is what it was typed as before DotNetTypeSymbol existed.
+                ?? _references.GetRequiredType("System.Object");
+        }
+
         if (type.TypeArguments.Length > 0)
         {
             return type.Name switch
