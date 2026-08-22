@@ -1,0 +1,75 @@
+/*
+ * Regression: an array whose element type is a struct.
+ *
+ * The emitter used to fall through to stelem.ref / ldelem.ref for any element type it did not
+ * have a dedicated opcode for. Those two opcodes store and load an *object reference* and are
+ * invalid for a value type, so this program compiled, passed the IL stack-depth check — the stack
+ * stays balanced either way, which is why AssemblyValidityTests could not see it — and then
+ * killed the runtime with "Internal CLR error (0x80131506)" the moment the JIT reached main.
+ *
+ * Value-type elements now use the typed stelem/ldelem forms. Reference elements keep the .ref
+ * opcodes, so array<string> emits exactly what it always did.
+ */
+
+import "io"
+import "array"
+
+struct Point {
+    x: int;
+    y: int;
+}
+
+struct Wide {
+    a: int;
+    b: int;
+    c: int;
+    d: int;
+}
+
+func sum_x(points: array<Point>, count: int) : int {
+    let total: int = 0
+    let i: int = 0
+    while (i < count) {
+        let p: Point = points[i]
+        total = total + p.x
+        i = i + 1
+    }
+    return total
+}
+
+func main()
+{
+    let points: array<Point> = array_new(3)
+
+    points[0] = Point { x: 1, y: 2 }
+    points[1] = Point { x: 3, y: 4 }
+    points[2] = Point { x: 5, y: 6 }
+
+    print("len       = " + points.length())
+    print("points[0] = " + points[0].x + "," + points[0].y)
+    print("points[2] = " + points[2].x + "," + points[2].y)
+    print("sum of x  = " + sum_x(points, 3))
+
+    // An array literal of structs takes the same emission path.
+    let pair: array<Point> = [Point { x: 7, y: 8 }, Point { x: 9, y: 10 }]
+    print("literal   = " + pair[0].x + "," + pair[1].y)
+
+    // Reading an element into a local copies it, so writing to the copy must not touch the array.
+    let copy: Point = points[0]
+    copy.x = 100
+    print("copy      = " + copy.x)
+    print("original  = " + points[0].x)
+
+    // A struct larger than a machine word, to catch an element size assumption.
+    let wides: array<Wide> = array_new(2)
+    wides[0] = Wide { a: 1, b: 2, c: 3, d: 4 }
+    wides[1] = Wide { a: 5, b: 6, c: 7, d: 8 }
+    print("wide[0]   = " + wides[0].a + wides[0].b + wides[0].c + wides[0].d)
+    print("wide[1]   = " + wides[1].a + wides[1].b + wides[1].c + wides[1].d)
+
+    // Reference elements still work, which is the case that was never broken.
+    let names: array<string> = array_new(2)
+    names[0] = "first"
+    names[1] = "second"
+    print("names     = " + names[0] + "," + names[1])
+}

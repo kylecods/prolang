@@ -1,0 +1,157 @@
+/*
+ * Pixel editor — zoom and pan
+ *
+ * The mapping between screen coordinates and image coordinates. Pure arithmetic with no calls
+ * into the shim, which is the point: this is the code most likely to be subtly wrong, and keeping
+ * it free of Windows Forms means tests/test_view.prl can cover it exactly.
+ *
+ * The mapping is:
+ *
+ *     screen = (image - pan) * zoom
+ *     image  = floor(screen / zoom) + pan
+ *
+ * WinFormsHelper.CanvasSetView applies the same formula on the C# side. If the two ever disagree,
+ * the symptom is a brush that paints one pixel away from the cursor — which looks like a bug in
+ * the tool rather than in the coordinate transform.
+ */
+
+import "util.prl"
+
+struct View {
+    zoom: int;
+    panX: int;
+    panY: int;
+}
+
+// Zoom levels are integers so that one image pixel is always a whole number of screen pixels.
+func view_min_zoom() : int {
+    return 1
+}
+
+func view_max_zoom() : int {
+    return 32
+}
+
+// The zoom at which the pixel grid starts being drawn; below it the lines crowd out the image.
+func view_grid_threshold() : int {
+    return 4
+}
+
+func view_new(zoom: int) : View {
+    return View { zoom: util_clamp(zoom, view_min_zoom(), view_max_zoom()), panX: 0, panY: 0 }
+}
+
+// ── Transforms ───────────────────────────────────────────────────────────────
+
+/*
+ * The image column under a screen x, which may be outside the image.
+ *
+ * Floor division, not prolang's `/`. Truncating division maps the whole range -zoom+1..zoom-1
+ * onto column 0, so the column immediately left of the image would be indistinguishable from its
+ * first column and a stroke starting just off-canvas would paint on it.
+ */
+func view_to_image_x(view: View, screenX: int) : int {
+    return util_floor_div(screenX, view.zoom) + view.panX
+}
+
+func view_to_image_y(view: View, screenY: int) : int {
+    return util_floor_div(screenY, view.zoom) + view.panY
+}
+
+func view_to_screen_x(view: View, imageX: int) : int {
+    return (imageX - view.panX) * view.zoom
+}
+
+func view_to_screen_y(view: View, imageY: int) : int {
+    return (imageY - view.panY) * view.zoom
+}
+
+// ── Zoom ─────────────────────────────────────────────────────────────────────
+
+/*
+ * Changes zoom while keeping the image pixel under (anchorX, anchorY) in the same place.
+ *
+ * Zooming about the top-left instead is the easy version and is unpleasant to use: the area being
+ * worked on slides out of view every time the wheel turns. Anchoring at the cursor keeps it still.
+ */
+func view_zoom_to(view: View, zoom: int, anchorX: int, anchorY: int) : View {
+    let target: int = util_clamp(zoom, view_min_zoom(), view_max_zoom())
+
+    if (target == view.zoom) {
+        return view
+    }
+
+    // Which image pixel is under the anchor now; it must still be under it afterwards.
+    let imageX: int = view_to_image_x(view, anchorX)
+    let imageY: int = view_to_image_y(view, anchorY)
+
+    let panX: int = imageX - util_floor_div(anchorX, target)
+    let panY: int = imageY - util_floor_div(anchorY, target)
+
+    return View { zoom: target, panX: panX, panY: panY }
+}
+
+func view_zoom_in(view: View, anchorX: int, anchorY: int) : View {
+    return view_zoom_to(view, view.zoom * 2, anchorX, anchorY)
+}
+
+func view_zoom_out(view: View, anchorX: int, anchorY: int) : View {
+    return view_zoom_to(view, view.zoom / 2, anchorX, anchorY)
+}
+
+func view_show_grid(view: View) : bool {
+    return view.zoom >= view_grid_threshold()
+}
+
+// ── Pan ──────────────────────────────────────────────────────────────────────
+
+func view_pan_by(view: View, dx: int, dy: int) : View {
+    return View { zoom: view.zoom, panX: view.panX + dx, panY: view.panY + dy }
+}
+
+/*
+ * Keeps the image from being scrolled entirely off the canvas.
+ *
+ * The pan is allowed to run one screenful past each edge rather than being pinned to the image
+ * bounds, so there is room to work comfortably at the very edge of the canvas.
+ */
+func view_clamp_pan(view: View, imageWidth: int, imageHeight: int, canvasWidth: int, canvasHeight: int) : View {
+    let visibleX: int = util_floor_div(canvasWidth, view.zoom)
+    let visibleY: int = util_floor_div(canvasHeight, view.zoom)
+
+    let panX: int = util_clamp(view.panX, 0 - visibleX, imageWidth)
+    let panY: int = util_clamp(view.panY, 0 - visibleY, imageHeight)
+
+    return View { zoom: view.zoom, panX: panX, panY: panY }
+}
+
+/*
+ * Centres the image in a canvas of the given size.
+ *
+ * Used on new and open, so an image smaller than the canvas appears in the middle rather than
+ * tucked into the corner.
+ */
+func view_centre(view: View, imageWidth: int, imageHeight: int, canvasWidth: int, canvasHeight: int) : View {
+    let visibleX: int = util_floor_div(canvasWidth, view.zoom)
+    let visibleY: int = util_floor_div(canvasHeight, view.zoom)
+
+    return View {
+        zoom: view.zoom,
+        panX: 0 - ((visibleX - imageWidth) / 2),
+        panY: 0 - ((visibleY - imageHeight) / 2)
+    }
+}
+
+/*
+ * The largest zoom at which the whole image fits in the canvas, for a "fit" command.
+ */
+func view_fit_zoom(imageWidth: int, imageHeight: int, canvasWidth: int, canvasHeight: int) : int {
+    if (imageWidth < 1 || imageHeight < 1) {
+        return 1
+    }
+
+    let byWidth: int = canvasWidth / imageWidth
+    let byHeight: int = canvasHeight / imageHeight
+
+    return util_clamp(min(byWidth, byHeight), view_min_zoom(), view_max_zoom())
+}

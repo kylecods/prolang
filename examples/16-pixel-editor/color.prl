@@ -1,0 +1,101 @@
+/*
+ * Pixel editor — colour
+ *
+ * Packs and unpacks 32-bit ARGB values. Nothing here touches Windows Forms, so the whole module
+ * is exercised by tests/test_color.prl.
+ *
+ * A colour is one prolang int holding, from the top byte down, alpha, red, green and blue. That
+ * is the same layout System.Drawing.Color.ToArgb produces, so a packed value goes straight to the
+ * shim with no conversion.
+ *
+ * Values with alpha above 127 have the sign bit set and are therefore negative ints. That is
+ * correct and not worth avoiding: only the bit pattern matters, and every operation here masks
+ * the channel it reads.
+ */
+
+// ── Packing ──────────────────────────────────────────────────────────────────
+
+/*
+ * Builds a colour from four 0-255 channels. Channels are masked rather than validated, since
+ * prolang has no way to report an error and silently wrapping is better than a wrong colour that
+ * bleeds into the neighbouring channel.
+ *
+ * Every shift is parenthesised because prolang binds `&` more loosely than `<<`: written without
+ * them, `a & 255 << 24` groups as `a & (255 << 24)`.
+ */
+func color_argb(a: int, r: int, g: int, b: int) : int {
+    return ((a & 255) << 24) | ((r & 255) << 16) | ((g & 255) << 8) | (b & 255)
+}
+
+// Opaque colour from three channels.
+func color_rgb(r: int, g: int, b: int) : int {
+    return color_argb(255, r, g, b)
+}
+
+// ── Unpacking ────────────────────────────────────────────────────────────────
+
+func color_a(c: int) : int {
+    return (c >> 24) & 255
+}
+
+func color_r(c: int) : int {
+    return (c >> 16) & 255
+}
+
+func color_g(c: int) : int {
+    return (c >> 8) & 255
+}
+
+func color_b(c: int) : int {
+    return c & 255
+}
+
+// ── Queries ──────────────────────────────────────────────────────────────────
+
+func color_is_transparent(c: int) : bool {
+    return color_a(c) == 0
+}
+
+/*
+ * Replaces a colour's alpha, keeping its hue. Used to dim the preview a shape tool draws while
+ * the mouse is still down.
+ */
+func color_with_alpha(c: int, a: int) : int {
+    return color_argb(a, color_r(c), color_g(c), color_b(c))
+}
+
+/*
+ * Perceived brightness, 0-255, using the usual 30/59/11 luma weights.
+ *
+ * The palette strip uses it to decide whether the selection outline around a swatch should be
+ * black or white: a fixed outline colour disappears against half the palette.
+ */
+func color_luma(c: int) : int {
+    return ((color_r(c) * 30) + (color_g(c) * 59) + (color_b(c) * 11)) / 100
+}
+
+// ── Formatting ───────────────────────────────────────────────────────────────
+
+/*
+ * One hex digit for the low nibble of `value`.
+ *
+ * The digit table is bound to a local first because prolang only accepts a method call on a
+ * name — `"0123..".charAt(n)` on the literal itself is a parse error.
+ */
+func color_hex_digit(value: int) : string {
+    let digits: string = "0123456789ABCDEF"
+    return digits.charAt(value & 15)
+}
+
+// Two hex digits for one 0-255 channel.
+func color_hex_byte(value: int) : string {
+    return color_hex_digit(value >> 4) + color_hex_digit(value)
+}
+
+/*
+ * Formats a colour as `#RRGGBB` for the status bar. Alpha is deliberately omitted — it is not
+ * something the editor lets you set, and showing `#FF` on every colour is noise.
+ */
+func color_hex(c: int) : string {
+    return "#" + color_hex_byte(color_r(c)) + color_hex_byte(color_g(c)) + color_hex_byte(color_b(c))
+}

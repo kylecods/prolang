@@ -13,7 +13,7 @@ namespace WinFormsHelper;
 ///   prolang bool  <-> .NET bool  (enabled, visible flags)
 ///   prolang int   <-> System.Drawing.Color (ARGB packed int via Color.FromArgb / Color.ToArgb)
 /// </summary>
-public static class WinFormsHelper
+public static partial class WinFormsHelper
 {
     // ── Registry ──────────────────────────────────────────────────────────────
     private static readonly Dictionary<int, Control> _controls = [];
@@ -401,17 +401,14 @@ public static class WinFormsHelper
 
     /// <summary>Shows a MessageBox with OK button.</summary>
     public static void MessageBoxShow(string text, string title)
-        => MessageBox.Show(text, title);
+        => ShowMessage(text, title, MessageBoxButtons.OK);
 
     /// <summary>
     /// Shows a Yes/No MessageBox.
     /// Returns 1 for Yes, 0 for No (prolang int ↔ DialogResult, one-to-one mapping).
     /// </summary>
     public static int MessageBoxYesNo(string text, string title)
-    {
-        var result = MessageBox.Show(text, title, MessageBoxButtons.YesNo, MessageBoxIcon.Question);
-        return result == DialogResult.Yes ? 1 : 0;
-    }
+        => ShowMessage(text, title, MessageBoxButtons.YesNo) == DialogResult.Yes ? 1 : 0;
 
     /// <summary>
     /// Shows a simple input dialog. Returns the entered string, or "" if cancelled.

@@ -1,0 +1,225 @@
+/*
+ * Pixel editor — undo and redo
+ *
+ * Pure prolang; exercised by tests/test_history.prl.
+ *
+ * Snapshots are whole images, stored end to end in one flat array of capacity x width x height
+ * ints and used as a ring. The obvious representation — an array of buffers — is not available:
+ * `array<array<int>>` does not parse, because prolang lexes `>>` as a single shift token, and
+ * `array<SomeStruct>` emits invalid IL. One flat buffer sidesteps both and never reallocates.
+ *
+ * Two indices describe the state:
+ *
+ *   count   how many snapshots are live
+ *   cursor  which one the document currently matches
+ *
+ * Undo moves the cursor back and loads; redo moves it forward and loads. Committing after an undo
+ * discards everything above the cursor, which is what makes a new edit branch off the state you
+ * undid back to rather than being appended after a future you abandoned.
+ */
+
+import "array"
+import "math"
+import "document.prl"
+
+struct History {
+    cells:  array<int>;
+    slots:  int;
+    width:  int;
+    height: int;
+    start:  int;
+    count:  int;
+    cursor: int;
+}
+
+/*
+ * An empty history sized for `slots` snapshots of a width x height image.
+ *
+ * `slots` is clamped to at least two: with one slot there is nothing to go back to, and the
+ * arithmetic for dropping the oldest entry would run on every commit.
+ */
+func hist_new(width: int, height: int, slots: int) : History {
+    let capacity: int = max(slots, 2)
+    let cells: array<int> = array_new(capacity * width * height)
+
+    return History {
+        cells:  cells,
+        slots:  capacity,
+        width:  width,
+        height: height,
+        start:  0,
+        count:  0,
+        cursor: 0
+    }
+}
+
+// Ring slot holding logical entry `logical`.
+func hist_slot(history: History, logical: int) : int {
+    return (history.start + logical) % history.slots
+}
+
+// Offset into the flat buffer where ring slot `slot` begins.
+func hist_offset(history: History, slot: int) : int {
+    return slot * history.width * history.height
+}
+
+// ── Transfer ─────────────────────────────────────────────────────────────────
+
+// Copies the document into a ring slot.
+func hist_store(history: History, slot: int, doc: Document) : void {
+    let base: int = hist_offset(history, slot)
+    let count: int = history.width * history.height
+    let i: int = 0
+
+    while (i < count) {
+        history.cells[base + i] = doc.pixels[i]
+        i = i + 1
+    }
+}
+
+// Copies a ring slot back into the document, overwriting it.
+func hist_load(history: History, slot: int, doc: Document) : void {
+    let base: int = hist_offset(history, slot)
+    let count: int = history.width * history.height
+    let i: int = 0
+
+    while (i < count) {
+        doc.pixels[i] = history.cells[base + i]
+        i = i + 1
+    }
+}
+
+// ── State changes ────────────────────────────────────────────────────────────
+
+/*
+ * Discards every snapshot and records `doc` as the starting state.
+ *
+ * Called on new and on open. Without the initial snapshot the first undo would have nothing to
+ * return to and the first edit would be unrepeatable.
+ */
+func hist_reset(history: History, doc: Document) : History {
+    hist_store(history, 0, doc)
+
+    return History {
+        cells:  history.cells,
+        slots:  history.slots,
+        width:  history.width,
+        height: history.height,
+        start:  0,
+        count:  1,
+        cursor: 0
+    }
+}
+
+/*
+ * Records the document as a new snapshot.
+ *
+ * Two things happen in order, and getting either wrong produces a history that misbehaves only
+ * after a specific sequence:
+ *
+ *   1. The redo tail is dropped. `count` becomes `cursor + 1`, not `cursor` — the snapshot the
+ *      cursor points at is the current state and has to survive.
+ *   2. If that fills the ring, the oldest snapshot is forgotten by advancing `start`. `cursor`
+ *      must come down with it, because every logical index has just shifted by one; leaving it
+ *      alone makes the next undo jump two states back.
+ */
+func hist_commit(history: History, doc: Document) : History {
+    let start: int = history.start
+    let count: int = history.cursor + 1
+    let cursor: int = history.cursor
+
+    if (count >= history.slots) {
+        start = (start + 1) % history.slots
+        count = count - 1
+        cursor = cursor - 1
+    }
+
+    let staged: History = History {
+        cells:  history.cells,
+        slots:  history.slots,
+        width:  history.width,
+        height: history.height,
+        start:  start,
+        count:  count,
+        cursor: cursor
+    }
+
+    hist_store(staged, hist_slot(staged, count), doc)
+
+    return History {
+        cells:  staged.cells,
+        slots:  staged.slots,
+        width:  staged.width,
+        height: staged.height,
+        start:  staged.start,
+        count:  count + 1,
+        cursor: count
+    }
+}
+
+func hist_can_undo(history: History) : bool {
+    return history.cursor > 0
+}
+
+func hist_can_redo(history: History) : bool {
+    return history.cursor < (history.count - 1)
+}
+
+/*
+ * Steps back one snapshot and loads it into `doc`.
+ *
+ * Mutates the document *and* returns the updated history — the two halves of the state live in
+ * different places, and only the array contents survive a call by themselves.
+ */
+func hist_undo(history: History, doc: Document) : History {
+    if (!hist_can_undo(history)) {
+        return history
+    }
+
+    let cursor: int = history.cursor - 1
+
+    let moved: History = History {
+        cells:  history.cells,
+        slots:  history.slots,
+        width:  history.width,
+        height: history.height,
+        start:  history.start,
+        count:  history.count,
+        cursor: cursor
+    }
+
+    hist_load(moved, hist_slot(moved, cursor), doc)
+    return moved
+}
+
+// Steps forward one snapshot and loads it into `doc`.
+func hist_redo(history: History, doc: Document) : History {
+    if (!hist_can_redo(history)) {
+        return history
+    }
+
+    let cursor: int = history.cursor + 1
+
+    let moved: History = History {
+        cells:  history.cells,
+        slots:  history.slots,
+        width:  history.width,
+        height: history.height,
+        start:  history.start,
+        count:  history.count,
+        cursor: cursor
+    }
+
+    hist_load(moved, hist_slot(moved, cursor), doc)
+    return moved
+}
+
+// How many snapshots are live. Used by the tests.
+func hist_count(history: History) : int {
+    return history.count
+}
+
+// Which snapshot the document currently matches. Used by the tests.
+func hist_cursor(history: History) : int {
+    return history.cursor
+}

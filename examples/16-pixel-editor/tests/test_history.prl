@@ -1,0 +1,116 @@
+/*
+ * Pixel editor tests — history.prl
+ *
+ * The ring is the fiddliest part of the editor: it is only wrong after a specific sequence of
+ * commits, undos and further commits, so the cases below walk those sequences explicitly rather
+ * than checking each function in isolation.
+ */
+
+import "testing.prl"
+import "../history.prl"
+import "../document.prl"
+import "../color.prl"
+
+func test_history_run() : TestRun {
+    let r: TestRun = t_new()
+
+    let a: int = color_rgb(1, 0, 0)
+    let b: int = color_rgb(2, 0, 0)
+    let c: int = color_rgb(3, 0, 0)
+    let d: int = color_rgb(4, 0, 0)
+
+    // ── Basic undo and redo ──────────────────────────────────────────────────
+    let doc: Document = doc_new(2, 2, a)
+    let h: History = hist_new(2, 2, 8)
+
+    h = hist_reset(h, doc)
+    r = t_eq_int(r, "reset stores one snapshot", hist_count(h), 1)
+    r = t_eq_int(r, "reset puts the cursor at the start", hist_cursor(h), 0)
+    r = t_false(r, "nothing to undo yet", hist_can_undo(h))
+    r = t_false(r, "nothing to redo yet", hist_can_redo(h))
+
+    doc_fill(doc, b)
+    h = hist_commit(h, doc)
+    r = t_eq_int(r, "commit adds a snapshot", hist_count(h), 2)
+    r = t_eq_int(r, "commit advances the cursor", hist_cursor(h), 1)
+    r = t_true(r, "can undo after a commit", hist_can_undo(h))
+    r = t_false(r, "cannot redo after a commit", hist_can_redo(h))
+
+    h = hist_undo(h, doc)
+    r = t_eq_int(r, "undo restores the previous image", doc_get(doc, 0, 0), a)
+    r = t_eq_int(r, "undo moves the cursor back", hist_cursor(h), 0)
+    r = t_true(r, "can redo after an undo", hist_can_redo(h))
+
+    h = hist_redo(h, doc)
+    r = t_eq_int(r, "redo restores the later image", doc_get(doc, 0, 0), b)
+    r = t_eq_int(r, "redo moves the cursor forward", hist_cursor(h), 1)
+
+    // Undo and redo past the ends do nothing rather than wrapping.
+    h = hist_redo(h, doc)
+    r = t_eq_int(r, "redo past the end is a no-op", hist_cursor(h), 1)
+
+    h = hist_undo(h, doc)
+    h = hist_undo(h, doc)
+    r = t_eq_int(r, "undo past the start is a no-op", hist_cursor(h), 0)
+    r = t_eq_int(r, "image is still the first snapshot", doc_get(doc, 0, 0), a)
+
+    // ── Committing after an undo discards the redo tail ──────────────────────
+    // A new edit has to branch from the state you undid back to, not be appended after the
+    // future you abandoned.
+    let branchDoc: Document = doc_new(2, 2, a)
+    let branch: History = hist_reset(hist_new(2, 2, 8), branchDoc)
+
+    doc_fill(branchDoc, b)
+    branch = hist_commit(branch, branchDoc)
+    doc_fill(branchDoc, c)
+    branch = hist_commit(branch, branchDoc)
+    r = t_eq_int(r, "three snapshots recorded", hist_count(branch), 3)
+
+    branch = hist_undo(branch, branchDoc)
+    r = t_eq_int(r, "undone to the middle", branchDoc.pixels[0], b)
+    r = t_true(r, "redo is available before branching", hist_can_redo(branch))
+
+    doc_fill(branchDoc, d)
+    branch = hist_commit(branch, branchDoc)
+
+    // The `c` snapshot is gone. Truncating with `count = cursor` instead of `cursor + 1` would
+    // also have dropped `b`, the state the new edit was made from.
+    r = t_eq_int(r, "branching drops the redo tail", hist_count(branch), 3)
+    r = t_eq_int(r, "cursor is at the new tip", hist_cursor(branch), 2)
+    r = t_false(r, "nothing to redo after branching", hist_can_redo(branch))
+
+    branch = hist_undo(branch, branchDoc)
+    r = t_eq_int(r, "undo reaches the branch point", branchDoc.pixels[0], b)
+
+    // ── The ring drops the oldest entry when it is full ──────────────────────
+    // Three slots hold the reset plus two commits; the fourth commit must evict.
+    let ringDoc: Document = doc_new(2, 2, a)
+    let ring: History = hist_reset(hist_new(2, 2, 3), ringDoc)
+
+    doc_fill(ringDoc, b)
+    ring = hist_commit(ring, ringDoc)
+    doc_fill(ringDoc, c)
+    ring = hist_commit(ring, ringDoc)
+    r = t_eq_int(r, "ring is full", hist_count(ring), 3)
+    r = t_eq_int(r, "cursor at the tip of a full ring", hist_cursor(ring), 2)
+
+    doc_fill(ringDoc, d)
+    ring = hist_commit(ring, ringDoc)
+    r = t_eq_int(r, "ring stays at capacity", hist_count(ring), 3)
+    r = t_eq_int(r, "cursor stays at the tip", hist_cursor(ring), 2)
+
+    // `a` has been forgotten, so undoing twice reaches `b` and stops. If the cursor were not
+    // decremented alongside `start` when the oldest entry was dropped, the first undo would jump
+    // two states back and land on `b` immediately.
+    ring = hist_undo(ring, ringDoc)
+    r = t_eq_int(r, "first undo in a full ring", ringDoc.pixels[0], c)
+    ring = hist_undo(ring, ringDoc)
+    r = t_eq_int(r, "second undo in a full ring", ringDoc.pixels[0], b)
+    r = t_false(r, "cannot undo past the evicted entry", hist_can_undo(ring))
+
+    // A single slot would make every commit an eviction, so the capacity is floored at two.
+    let tiny: History = hist_new(2, 2, 1)
+    r = t_eq_int(r, "capacity is floored at two", tiny.slots, 2)
+
+    return r
+}

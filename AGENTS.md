@@ -111,15 +111,20 @@ prolang/
 ├── examples/                      # ProLang example programs
 │   ├── 01-syntax-types/           # Type system examples
 │   ├── 02-operators/              # Operator examples
-│   ├── 03-control-flow/           # If/loops/match
+│   ├── 03-control-flow/           # If/elif/else, loops
 │   ├── 04-functions/              # Function definitions
 │   ├── 05-dotnet-interop/         # .NET interop examples
 │   ├── 06-structs/                # Struct definitions
 │   ├── 07-strings/                # String operations
 │   ├── 08-ring-buffer/            # Ring buffer implementation
 │   ├── 09-json-parser/            # JSON parser (bidirectional)
-│   ├── hello/                     # Basic hello world
-│   └── test-string-methods/       # String method tests
+│   ├── 10-lox/                    # Placeholder
+│   ├── 11-std/                    # Standard library demos
+│   ├── 12-snake/                  # Console Snake game
+│   ├── 13-winforms/               # Windows Forms interop
+│   ├── 14-chip-8/                 # CHIP-8 emulator
+│   ├── 15-psp-demo/               # PlayStation Portable target
+│   └── 16-pixel-editor/           # Pixel editor: 12 modules + 295-check test suite
 │
 └── .claude/                       # Claude Code configuration
     ├── launch.json                # Dev server launch configs
@@ -175,6 +180,8 @@ dotnet run --project src/ProLang/ProLang.csproj -- [OPTIONS] <SOURCE-FILES>
 | `-o PATH` | Output assembly path | `-o output.dll` |
 | `-m NAME` | Module name | `-m MyModule` |
 | `-r PATH` | Reference assembly | `-r System.Core.dll` |
+| `--target=KIND` | Subsystem: `library` (default), `console`, `winexe` | `--target=winexe` |
+| `--framework=NAME` | Shared framework, or `windowsdesktop` | `--framework=windowsdesktop` |
 | `-d, --disassemble` | Print the lowered IR | `-d` |
 | `--msil=PATH` | Print an MSIL listing for a compiled assembly | `--msil=out.dll` |
 | `--emit-c` | Transpile to C99 | `--emit-c` |
@@ -648,11 +655,13 @@ let result = add(3, 5)
 ### Control Flow
 
 ```prolang
-// if-else
+// if / elif / else. `else if` is accepted as a synonym for `elif`.
 if(x > 0) {
     print("positive")
+} elif(x < 0) {
+    print("negative")
 } else {
-    print("non-positive")
+    print("zero")
 }
 
 // while loop
@@ -661,35 +670,76 @@ while(i < 10) {
     i = i + 1
 }
 
-// for loop
-for(i = 0 to 10) {
+// for loop — the bounds are INCLUSIVE at both ends, so this prints 0 through 10
+for(let i = 0 to 10) {
     print(i)
 }
 ```
+
+There is no `match`, `switch`, `do`/`while`, or foreach. A multi-way branch is an `if`/`elif`
+chain, which — with no closures or function values in the language — is also how callbacks and
+dispatch tables are expressed.
 
 ### Structs
 
 ```prolang
 struct Point {
-    x: int,
-    y: int
+    x: int;
+    y: int;
 }
 
-let p = Point { x: 10, y: 20 }
-print(p.x)  // 10
+func main() {
+    let p: Point = Point { x: 10, y: 20 }
+    print(p.x)  // 10
+    p.x = 30    // fields are assignable
+
+    // Arrays of structs, nested structs, and assignment through either, all work.
+    let points: array<Point> = array_new(2)
+    points[0] = Point { x: 1, y: 2 }
+    points[0].x = 99
+}
 ```
+
+> **Structs are .NET value types**, so passing one to a function passes a *copy*: assigning to a
+> scalar field of a parameter is invisible to the caller. An `array<T>` field is a reference to a
+> real array, so writes *through* it are visible — that is the mutation channel the language has.
+> The repo's convention for everything else is to return a new struct, as `std/dynarray.prl` does.
 
 ### Collections
 
 ```prolang
-// Arrays
+// Arrays are fixed-length. `length()` is the only method they have — there is no push or pop.
 let arr: array<int> = [1, 2, 3]
-arr.push(4)
+let zeroed: array<int> = array_new(16)
+print(arr.length())
+
+// Growable collections are written in ProLang: see std/dynarray.prl for DynArray<T>, and
+// examples/16-pixel-editor/intstack.prl for a fixed-capacity stack.
 
 // Maps/Objects
 let map: map<string, any> = { "name": "Alice", "age": 30 }
 let name = map["name"]
 ```
+
+> `map<K, V>` is thinly exercised — two uses in the whole repository. Prefer `array<T>`.
+
+### Assertions
+
+```prolang
+import "test"
+
+func main() {
+    assert(1 + 1 == 2, "arithmetic works")
+}
+```
+
+`assert` ends the program with a non-zero exit code and the message on stderr. It flushes the
+`print()` buffer first, so the output leading up to a failure is not lost — without that, a
+failing assert would discard everything the program had printed, since `print()` is only flushed
+after `main()` returns.
+
+This is what makes a test suite written in ProLang a real gate. `examples/16-pixel-editor/tests/`
+is a worked example: 295 checks across ten modules, run by `dotnet test` through the corpus.
 
 ### String Methods
 

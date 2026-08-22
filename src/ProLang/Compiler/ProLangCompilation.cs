@@ -642,7 +642,7 @@ public sealed class ProLangCompilation
         return emitDiagnostics;
     }
 
-    public ImmutableArray<Diagnostic> Emit(string moduleName, string[] references, string outputPath)
+    public ImmutableArray<Diagnostic> Emit(string moduleName, string[] references, string outputPath, EmitOptions? options = null)
     {
         var prepared = PrepareProgram();
 
@@ -651,7 +651,7 @@ public sealed class ProLangCompilation
             return prepared.Diagnostics;
         }
 
-        var emitDiagnostics = Emitter.Emit(prepared.Program!, moduleName, ResolvedReferences(references), outputPath);
+        var emitDiagnostics = Emitter.Emit(prepared.Program!, moduleName, ResolvedReferences(references), outputPath, options);
 
         // On success, copy any stdlib native assemblies (lib/ DLLs) next to the output
         // so the compiled program can resolve them at runtime without a manual deploy step.

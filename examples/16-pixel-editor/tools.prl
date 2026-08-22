@@ -1,0 +1,299 @@
+/*
+ * Pixel editor — tools
+ *
+ * The drag state machine. Pure prolang; exercised by tests/test_tools.prl.
+ *
+ * Tools fall into three shapes of behaviour, and the whole file is organised around them:
+ *
+ *   direct    pencil, eraser — paint into the document on press and on every drag step
+ *   shape     line, rectangle, ellipse — rubber-band a preview, commit on release
+ *   instant   fill, picker — act once on press, nothing on drag or release
+ *
+ * A shape drag never repaints the whole canvas. The rasterisers record the flat index of each
+ * pixel they touch, so the previous preview is undone by restoring exactly those pixels from the
+ * document. Redrawing everything on each mouse-move would be O(width x height) per event.
+ */
+
+import "array"
+import "document.prl"
+import "raster.prl"
+import "fill.prl"
+import "color.prl"
+
+enum Tool {
+    PENCIL,
+    ERASER,
+    FILL,
+    LINE,
+    RECT,
+    RECT_FILLED,
+    ELLIPSE,
+    ELLIPSE_FILLED,
+    PICKER
+}
+
+/*
+ * Everything a drag needs to carry.
+ *
+ * Scalars only, so it is safe to copy and return. prolang structs are .NET value types and a
+ * struct-typed field could not be assigned through — `outer.inner.field = x` writes to a
+ * temporary — so the document, preview and touch log are passed alongside as parameters instead.
+ */
+struct Stroke {
+    tool:    int;
+    colour:  int;
+    size:    int;
+    startX:  int;
+    startY:  int;
+    lastX:   int;
+    lastY:   int;
+    active:  bool;
+    commit:  bool;
+    picked:  int;
+    touched: int;
+}
+
+func stroke_new(tool: int, colour: int, size: int) : Stroke {
+    return Stroke {
+        tool:    tool,
+        colour:  colour,
+        size:    size,
+        startX:  0,
+        startY:  0,
+        lastX:   0,
+        lastY:   0,
+        active:  false,
+        commit:  false,
+        picked:  0 - 1,
+        touched: 0
+    }
+}
+
+// ── Classification ───────────────────────────────────────────────────────────
+
+// True for tools that rubber-band a preview between press and release.
+func tool_is_shape(tool: int) : bool {
+    return tool == Tool.LINE
+        || tool == Tool.RECT
+        || tool == Tool.RECT_FILLED
+        || tool == Tool.ELLIPSE
+        || tool == Tool.ELLIPSE_FILLED
+}
+
+// True for tools that paint continuously while the mouse moves.
+func tool_is_direct(tool: int) : bool {
+    return tool == Tool.PENCIL || tool == Tool.ERASER
+}
+
+// The colour a tool lays down. The eraser is a pencil that paints transparency.
+func tool_colour(tool: int, colour: int) : int {
+    if (tool == Tool.ERASER) {
+        return 0
+    }
+    return colour
+}
+
+func tool_name(tool: int) : string {
+    if (tool == Tool.PENCIL)         { return "pencil" }
+    if (tool == Tool.ERASER)         { return "eraser" }
+    if (tool == Tool.FILL)           { return "fill" }
+    if (tool == Tool.LINE)           { return "line" }
+    if (tool == Tool.RECT)           { return "rect" }
+    if (tool == Tool.RECT_FILLED)    { return "rect filled" }
+    if (tool == Tool.ELLIPSE)        { return "ellipse" }
+    if (tool == Tool.ELLIPSE_FILLED) { return "ellipse filled" }
+    if (tool == Tool.PICKER)         { return "picker" }
+    return "unknown"
+}
+
+func tool_count() : int {
+    return 9
+}
+
+// ── Drag lifecycle ───────────────────────────────────────────────────────────
+
+/*
+ * Mouse pressed at an image pixel.
+ *
+ * `doc` is the image; `preview` is the copy the canvas shows while a shape is being dragged;
+ * `touched` records which pixels the preview changed.
+ */
+func tool_press(stroke: Stroke, doc: Document, preview: Document, touched: array<int>, x: int, y: int) : Stroke {
+    let next: Stroke = Stroke {
+        tool:    stroke.tool,
+        colour:  stroke.colour,
+        size:    stroke.size,
+        startX:  x,
+        startY:  y,
+        lastX:   x,
+        lastY:   y,
+        active:  true,
+        commit:  false,
+        picked:  0 - 1,
+        touched: 0
+    }
+
+    if (next.tool == Tool.PICKER) {
+        // Reports the colour and changes nothing, so there is nothing to undo.
+        return Stroke {
+            tool: next.tool, colour: next.colour, size: next.size,
+            startX: x, startY: y, lastX: x, lastY: y,
+            active: false, commit: false, picked: doc_get(doc, x, y), touched: 0
+        }
+    }
+
+    if (next.tool == Tool.FILL) {
+        let changed: int = fill_flood(doc, x, y, next.colour)
+
+        return Stroke {
+            tool: next.tool, colour: next.colour, size: next.size,
+            startX: x, startY: y, lastX: x, lastY: y,
+            active: false, commit: changed > 0, picked: 0 - 1, touched: 0
+        }
+    }
+
+    if (tool_is_direct(next.tool)) {
+        raster_brush(doc, x, y, next.size, tool_colour(next.tool, next.colour), touched, 0)
+        return next
+    }
+
+    // A shape tool: start from a clean copy so the preview can be rewound to it.
+    doc_copy_into(doc, preview)
+    return next
+}
+
+/*
+ * Mouse moved to an image pixel with the button still down.
+ *
+ * A direct tool draws a line from the previous position rather than a dot at the current one:
+ * the mouse reports discrete positions and moving it quickly leaves gaps between them.
+ */
+func tool_drag(stroke: Stroke, doc: Document, preview: Document, touched: array<int>, x: int, y: int) : Stroke {
+    if (!stroke.active) {
+        return stroke
+    }
+
+    if (tool_is_direct(stroke.tool)) {
+        raster_line(doc, stroke.lastX, stroke.lastY, x, y, stroke.size,
+                    tool_colour(stroke.tool, stroke.colour), touched, 0)
+
+        return Stroke {
+            tool: stroke.tool, colour: stroke.colour, size: stroke.size,
+            startX: stroke.startX, startY: stroke.startY, lastX: x, lastY: y,
+            active: true, commit: false, picked: 0 - 1, touched: 0
+        }
+    }
+
+    if (!tool_is_shape(stroke.tool)) {
+        return stroke
+    }
+
+    // Rewind only the pixels the last preview changed, then draw the new one.
+    raster_restore(preview, doc, touched, stroke.touched)
+    let count: int = tool_draw_shape(stroke, preview, x, y, stroke.colour, touched, 0)
+
+    return Stroke {
+        tool: stroke.tool, colour: stroke.colour, size: stroke.size,
+        startX: stroke.startX, startY: stroke.startY, lastX: x, lastY: y,
+        active: true, commit: false, picked: 0 - 1, touched: count
+    }
+}
+
+/*
+ * Mouse released at an image pixel.
+ *
+ * A shape is drawn into the document for the first time here; until now it existed only in the
+ * preview. `commit` tells the caller to take an undo snapshot.
+ */
+func tool_release(stroke: Stroke, doc: Document, preview: Document, touched: array<int>, x: int, y: int) : Stroke {
+    if (!stroke.active) {
+        return stroke
+    }
+
+    if (tool_is_shape(stroke.tool)) {
+        tool_draw_shape(stroke, doc, x, y, stroke.colour, touched, 0)
+        doc_copy_into(doc, preview)
+    }
+
+    return Stroke {
+        tool: stroke.tool, colour: stroke.colour, size: stroke.size,
+        startX: stroke.startX, startY: stroke.startY, lastX: x, lastY: y,
+        active: false, commit: true, picked: 0 - 1, touched: 0
+    }
+}
+
+/*
+ * Rasterises the stroke's shape from its start point to (x, y).
+ *
+ * Shared by the preview pass and the commit pass so the committed shape is always exactly the one
+ * that was on screen — computing them separately is how a shape ends up landing a pixel away from
+ * where it was previewed.
+ */
+func tool_draw_shape(stroke: Stroke, target: Document, x: int, y: int, colour: int, touched: array<int>, count: int) : int {
+    if (stroke.tool == Tool.LINE) {
+        return raster_line(target, stroke.startX, stroke.startY, x, y, stroke.size, colour, touched, count)
+    }
+
+    if (stroke.tool == Tool.RECT) {
+        return raster_rect(target, stroke.startX, stroke.startY, x, y, stroke.size, colour, touched, count)
+    }
+
+    if (stroke.tool == Tool.RECT_FILLED) {
+        return raster_rect_filled(target, stroke.startX, stroke.startY, x, y, colour, touched, count)
+    }
+
+    if (stroke.tool == Tool.ELLIPSE) {
+        return raster_ellipse(target, stroke.startX, stroke.startY, x, y, stroke.size, colour, touched, count)
+    }
+
+    if (stroke.tool == Tool.ELLIPSE_FILLED) {
+        return raster_ellipse_filled(target, stroke.startX, stroke.startY, x, y, colour, touched, count)
+    }
+
+    return count
+}
+
+/*
+ * Abandons an in-progress drag, discarding any preview.
+ *
+ * Used when the pointer leaves the canvas mid-stroke, so a shape is not left half-drawn on screen
+ * with no way to finish or cancel it.
+ */
+func tool_cancel(stroke: Stroke, doc: Document, preview: Document, touched: array<int>) : Stroke {
+    if (stroke.active && tool_is_shape(stroke.tool)) {
+        raster_restore(preview, doc, touched, stroke.touched)
+    }
+
+    return Stroke {
+        tool: stroke.tool, colour: stroke.colour, size: stroke.size,
+        startX: stroke.startX, startY: stroke.startY, lastX: stroke.lastX, lastY: stroke.lastY,
+        active: false, commit: false, picked: 0 - 1, touched: 0
+    }
+}
+
+// Returns the stroke with a different tool selected, ending any drag in progress.
+func stroke_with_tool(stroke: Stroke, tool: int) : Stroke {
+    return Stroke {
+        tool: tool, colour: stroke.colour, size: stroke.size,
+        startX: stroke.startX, startY: stroke.startY, lastX: stroke.lastX, lastY: stroke.lastY,
+        active: false, commit: false, picked: 0 - 1, touched: 0
+    }
+}
+
+// Returns the stroke with a different colour selected.
+func stroke_with_colour(stroke: Stroke, colour: int) : Stroke {
+    return Stroke {
+        tool: stroke.tool, colour: colour, size: stroke.size,
+        startX: stroke.startX, startY: stroke.startY, lastX: stroke.lastX, lastY: stroke.lastY,
+        active: stroke.active, commit: false, picked: 0 - 1, touched: stroke.touched
+    }
+}
+
+// Returns the stroke with a different brush size, clamped to something usable.
+func stroke_with_size(stroke: Stroke, size: int) : Stroke {
+    return Stroke {
+        tool: stroke.tool, colour: stroke.colour, size: util_clamp(size, 1, 16),
+        startX: stroke.startX, startY: stroke.startY, lastX: stroke.lastX, lastY: stroke.lastY,
+        active: stroke.active, commit: false, picked: 0 - 1, touched: stroke.touched
+    }
+}

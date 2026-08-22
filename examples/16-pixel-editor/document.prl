@@ -1,0 +1,170 @@
+/*
+ * Pixel editor — the image being edited
+ *
+ * A Document is a flat row-major buffer of packed ARGB values plus its dimensions. Pure prolang;
+ * exercised by tests/test_document.prl.
+ *
+ * Why the buffer is flat, and why the struct holds no other struct:
+ *
+ *   - `array<array<int>>` does not parse at all: prolang lexes `>>` as a single shift token.
+ *   - `array<SomeStruct>` compiles but emits invalid IL — element access falls through to the
+ *     reference-type opcodes for a value-type element, and the assembly fails at JIT time.
+ *   - A struct-typed *field* is worse than either, because `outer.inner.field = x` writes into a
+ *     temporary copy of `inner` and is then discarded, with no diagnostic.
+ *
+ * So: scalars and `array<int>`, nothing else.
+ *
+ * The copy semantics that follow are the useful half of the same rule. A prolang struct is a .NET
+ * value type, so passing a Document copies its three fields — but `pixels` is a reference to a
+ * real CLR array, so writes through it are seen by the caller. Every function below that changes
+ * the image mutates `pixels` and returns void; none of them return a new Document.
+ */
+
+import "array"
+import "math"
+import "color.prl"
+
+struct Document {
+    pixels: array<int>;
+    width:  int;
+    height: int;
+}
+
+// ── Construction ─────────────────────────────────────────────────────────────
+
+/*
+ * A new document, every pixel set to `fill`.
+ *
+ * array_new zeroes its buffer, which is transparent black — so an explicit fill pass is only
+ * needed when `fill` is something else, and skipping it is a measurable saving on a large canvas.
+ */
+func doc_new(width: int, height: int, fill: int) : Document {
+    let pixels: array<int> = array_new(width * height)
+    let doc: Document = Document { pixels: pixels, width: width, height: height }
+
+    if (fill != 0) {
+        doc_fill(doc, fill)
+    }
+
+    return doc
+}
+
+/*
+ * An independent copy. The new document's buffer is separate, which is what makes it usable as
+ * an undo snapshot or a shape-tool preview.
+ */
+func doc_clone(doc: Document) : Document {
+    let copy: Document = doc_new(doc.width, doc.height, 0)
+    doc_copy_into(doc, copy)
+    return copy
+}
+
+// ── Bounds ───────────────────────────────────────────────────────────────────
+
+func doc_in_bounds(doc: Document, x: int, y: int) : bool {
+    return x >= 0 && y >= 0 && x < doc.width && y < doc.height
+}
+
+// Flat buffer offset of a pixel, or -1 when it is outside the image.
+func doc_index(doc: Document, x: int, y: int) : int {
+    if (!doc_in_bounds(doc, x, y)) {
+        return 0 - 1
+    }
+    return (y * doc.width) + x
+}
+
+func doc_pixel_count(doc: Document) : int {
+    return doc.width * doc.height
+}
+
+// ── Access ───────────────────────────────────────────────────────────────────
+
+/*
+ * The colour at a pixel, or fully transparent for coordinates outside the image.
+ *
+ * Returning a value rather than failing keeps every caller that samples a neighbourhood — the
+ * flood fill, the shape rasterisers — free of edge tests it would otherwise repeat.
+ */
+func doc_get(doc: Document, x: int, y: int) : int {
+    let index: int = doc_index(doc, x, y)
+    if (index < 0) {
+        return 0
+    }
+    return doc.pixels[index]
+}
+
+// Sets one pixel. Out-of-bounds coordinates are ignored, for the same reason doc_get tolerates them.
+func doc_set(doc: Document, x: int, y: int, colour: int) : void {
+    let index: int = doc_index(doc, x, y)
+    if (index >= 0) {
+        doc.pixels[index] = colour
+    }
+}
+
+// ── Bulk operations ──────────────────────────────────────────────────────────
+
+func doc_fill(doc: Document, colour: int) : void {
+    let count: int = doc_pixel_count(doc)
+    let i: int = 0
+    while (i < count) {
+        doc.pixels[i] = colour
+        i = i + 1
+    }
+}
+
+func doc_clear(doc: Document) : void {
+    doc_fill(doc, 0)
+}
+
+/*
+ * Copies pixels from one document into another of the same size.
+ *
+ * Sizes that disagree copy the overlapping top-left region rather than failing, so that opening
+ * an image of a different size into an existing canvas degrades predictably.
+ */
+func doc_copy_into(source: Document, target: Document) : void {
+    let rows: int = min(source.height, target.height)
+    let cols: int = min(source.width, target.width)
+
+    let y: int = 0
+    while (y < rows) {
+        let x: int = 0
+        while (x < cols) {
+            target.pixels[(y * target.width) + x] = source.pixels[(y * source.width) + x]
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
+// True when both documents have the same dimensions and identical pixels. Used by the tests.
+func doc_equals(a: Document, b: Document) : bool {
+    if (a.width != b.width || a.height != b.height) {
+        return false
+    }
+
+    let count: int = doc_pixel_count(a)
+    let i: int = 0
+    while (i < count) {
+        if (a.pixels[i] != b.pixels[i]) {
+            return false
+        }
+        i = i + 1
+    }
+
+    return true
+}
+
+// How many pixels hold `colour`. Used by the tests to check fills without comparing whole buffers.
+func doc_count_colour(doc: Document, colour: int) : int {
+    let count: int = doc_pixel_count(doc)
+    let found: int = 0
+    let i: int = 0
+    while (i < count) {
+        if (doc.pixels[i] == colour) {
+            found = found + 1
+        }
+        i = i + 1
+    }
+    return found
+}

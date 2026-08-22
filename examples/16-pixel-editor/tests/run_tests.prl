@@ -1,0 +1,52 @@
+/*
+ * Pixel editor — test suite
+ *
+ * The single entry point for every test. Run it with:
+ *
+ *   dotnet run --project src/ProLang/ProLang.csproj -- \
+ *     examples/16-pixel-editor/tests/run_tests.prl -o bin/tests.dll
+ *   dotnet bin/tests.dll
+ *
+ * It is also the one file here classified `Runnable` in
+ * src/ProLang.Tests/Infrastructure/TestCorpus.cs, so `dotnet test` compiles it, runs it, and
+ * compares its output against a golden file. The execution tests demand a zero exit code and
+ * empty stderr, and t_report's `assert` breaks both when a check fails.
+ *
+ * Everything reachable from here is pure prolang. Nothing imports "winforms", deliberately: the
+ * whole import graph is compiled into one assembly, and a single reference to the shim would make
+ * this program require the Windows Desktop runtime pack and stop it being runnable under test.
+ */
+
+import "io"
+import "testing.prl"
+import "test_util.prl"
+import "test_color.prl"
+import "test_document.prl"
+import "test_intstack.prl"
+import "test_raster.prl"
+import "test_fill.prl"
+import "test_history.prl"
+import "test_palette.prl"
+import "test_view.prl"
+import "test_tools.prl"
+
+func main()
+{
+    print("pixel editor test suite")
+    print("")
+
+    let total: TestRun = t_new()
+
+    total = t_merge(total, test_util_run(), "util")
+    total = t_merge(total, test_color_run(), "color")
+    total = t_merge(total, test_document_run(), "document")
+    total = t_merge(total, test_intstack_run(), "intstack")
+    total = t_merge(total, test_raster_run(), "raster")
+    total = t_merge(total, test_fill_run(), "fill")
+    total = t_merge(total, test_history_run(), "history")
+    total = t_merge(total, test_palette_run(), "palette")
+    total = t_merge(total, test_view_run(), "view")
+    total = t_merge(total, test_tools_run(), "tools")
+
+    t_report(total)
+}

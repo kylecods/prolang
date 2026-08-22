@@ -34,6 +34,9 @@ internal static class RuntimeLibrary
     /// <summary>Metadata full name of the numeric operations type.</summary>
     public const string MathOps = "ProLang.Runtime.MathOps";
 
+    /// <summary>Metadata full name of the assertion type backing <c>import "test"</c>.</summary>
+    public const string TestOps = "ProLang.Runtime.TestOps";
+
     /// <summary>
     /// Finds <c>ProLang.Runtime.dll</c> on disk.
     /// </summary>

@@ -1,0 +1,83 @@
+/*
+ * Pixel editor tests — document.prl
+ */
+
+import "testing.prl"
+import "../document.prl"
+import "../color.prl"
+
+func test_document_run() : TestRun {
+    let r: TestRun = t_new()
+
+    let red: int = color_rgb(255, 0, 0)
+    let blue: int = color_rgb(0, 0, 255)
+
+    let doc: Document = doc_new(4, 3, 0)
+
+    r = t_eq_int(r, "width", doc.width, 4)
+    r = t_eq_int(r, "height", doc.height, 3)
+    r = t_eq_int(r, "pixel count", doc_pixel_count(doc), 12)
+    r = t_eq_int(r, "starts transparent", doc_count_colour(doc, 0), 12)
+
+    // Row-major: index is y * width + x.
+    r = t_eq_int(r, "index origin", doc_index(doc, 0, 0), 0)
+    r = t_eq_int(r, "index second row", doc_index(doc, 0, 1), 4)
+    r = t_eq_int(r, "index last", doc_index(doc, 3, 2), 11)
+
+    r = t_true(r, "origin in bounds", doc_in_bounds(doc, 0, 0))
+    r = t_true(r, "far corner in bounds", doc_in_bounds(doc, 3, 2))
+    r = t_false(r, "negative x out of bounds", doc_in_bounds(doc, 0 - 1, 0))
+    r = t_false(r, "negative y out of bounds", doc_in_bounds(doc, 0, 0 - 1))
+    r = t_false(r, "past width out of bounds", doc_in_bounds(doc, 4, 0))
+    r = t_false(r, "past height out of bounds", doc_in_bounds(doc, 0, 3))
+    r = t_eq_int(r, "index out of bounds", doc_index(doc, 4, 0), 0 - 1)
+
+    doc_set(doc, 1, 1, red)
+    r = t_eq_int(r, "set then get", doc_get(doc, 1, 1), red)
+    r = t_eq_int(r, "neighbour untouched", doc_get(doc, 2, 1), 0)
+
+    // Out-of-bounds access is defined rather than fatal, so the rasterisers and the flood fill
+    // do not each need their own edge tests. prolang cannot catch an exception.
+    doc_set(doc, 99, 99, blue)
+    r = t_eq_int(r, "out of bounds set is ignored", doc_count_colour(doc, blue), 0)
+    r = t_eq_int(r, "out of bounds get is transparent", doc_get(doc, 99, 99), 0)
+
+    doc_fill(doc, blue)
+    r = t_eq_int(r, "fill covers everything", doc_count_colour(doc, blue), 12)
+
+    doc_clear(doc)
+    r = t_eq_int(r, "clear makes it transparent", doc_count_colour(doc, 0), 12)
+
+    // A Document is a value type, so passing one copies its three fields — but `pixels` is a
+    // reference to a real CLR array, which is why writes through a parameter are visible here.
+    // The whole design depends on this.
+    let mutated: Document = doc_new(2, 2, 0)
+    test_document_write_through(mutated, red)
+    r = t_eq_int(r, "callee writes are visible", doc_get(mutated, 0, 0), red)
+
+    // A clone must not share that array.
+    let source: Document = doc_new(3, 3, red)
+    let copy: Document = doc_clone(source)
+    r = t_true(r, "clone equals source", doc_equals(source, copy))
+
+    doc_set(copy, 0, 0, blue)
+    r = t_eq_int(r, "clone has its own buffer", doc_get(source, 0, 0), red)
+    r = t_false(r, "clone no longer equals source", doc_equals(source, copy))
+
+    r = t_false(r, "different sizes are unequal", doc_equals(doc_new(2, 2, 0), doc_new(3, 3, 0)))
+
+    // Mismatched sizes copy the overlapping corner instead of failing, so opening an image of a
+    // different size degrades predictably.
+    let small: Document = doc_new(2, 2, red)
+    let large: Document = doc_new(4, 4, 0)
+    doc_copy_into(small, large)
+    r = t_eq_int(r, "copy_into copies overlap", doc_count_colour(large, red), 4)
+    r = t_eq_int(r, "copy_into leaves the rest", doc_get(large, 3, 3), 0)
+
+    return r
+}
+
+// Writes through a Document parameter, to prove the change reaches the caller.
+func test_document_write_through(doc: Document, colour: int) : void {
+    doc_set(doc, 0, 0, colour)
+}

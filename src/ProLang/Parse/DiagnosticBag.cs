@@ -110,7 +110,7 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportWrongArgumentCount(TextLocation location, string name, int expectedCount, int actualCount)
     {
-        var message = $"Function '{name} requires {expectedCount}' arguments but was given {actualCount}";
+        var message = $"Function '{name}' requires {expectedCount} arguments but was given {actualCount}";
 
         Report(location, message);
     }
@@ -257,6 +257,25 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         var message = proLangName == null ?
             $"The required type '{metaDataName}' was found in multiple references: {assemblyNameList}."
             : $"The required type '{proLangName}' ('{metaDataName}') was found in multiple references : {assemblyNameList}";
+
+        Report(default, message);
+    }
+
+    /// <summary>
+    /// Reported when a struct field is assigned through something that has no storage location.
+    /// </summary>
+    /// <remarks>
+    /// A struct is a value type, so writing to a field of one requires the address of where it
+    /// lives. A local, a parameter, an array element and a field of any of those all have one; the
+    /// result of a call does not — it is a temporary that is discarded at the end of the
+    /// statement, so the assignment could not have any effect. This used to be emitted anyway,
+    /// storing into a copy on the evaluation stack with no diagnostic at all.
+    /// </remarks>
+    public void ReportCannotAssignToTemporaryStructField(string fieldName)
+    {
+        var message =
+            $"Cannot assign to field '{fieldName}': the value on the left is a temporary, "
+            + "not a variable, array element, or field of one. Assign it to a variable first.";
 
         Report(default, message);
     }

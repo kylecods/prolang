@@ -25,6 +25,7 @@ internal static class CRuntimeHeader
         "prl_io.h",
         "prl_console.h",
         "prl_psp.h",
+        "prl_test.h",
         "prolang_runtime.h",
     ];
 

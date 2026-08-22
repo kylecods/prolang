@@ -1,0 +1,112 @@
+/*
+ * Pixel editor — flood fill
+ *
+ * Pure prolang; exercised by tests/test_fill.prl.
+ *
+ * The pixel is recoloured at the moment it is pushed, never when it is popped. That one choice
+ * decides the whole shape of this file:
+ *
+ *   - It doubles as the visited mark, so no separate visited set is needed.
+ *   - It bounds the stack at exactly one entry per pixel, so a fixed capacity of width x height
+ *     can never overflow and the stack never has to grow.
+ *
+ * Marking on pop instead is the usual first attempt and is quietly wrong: a pixel reachable from
+ * two neighbours is pushed twice before either is popped, the stack can then exceed the pixel
+ * count, and the fill does redundant work proportional to the region's perimeter.
+ */
+
+import "array"
+import "document.prl"
+import "intstack.prl"
+
+/*
+ * Recolours the connected region of matching pixels containing (x, y), four-connected.
+ *
+ * Returns the number of pixels changed, which the tests assert on and the status bar reports.
+ */
+func fill_flood(doc: Document, x: int, y: int, newColour: int) : int {
+    if (!doc_in_bounds(doc, x, y)) {
+        return 0
+    }
+
+    let target: int = doc_get(doc, x, y)
+
+    // Without this the fill would never terminate: recolouring to the colour already there
+    // leaves every neighbour still matching, so nothing is ever excluded.
+    if (target == newColour) {
+        return 0
+    }
+
+    let width: int = doc.width
+    let height: int = doc.height
+
+    let stack: IntStack = intstack_new(doc_pixel_count(doc))
+
+    doc.pixels[(y * width) + x] = newColour
+    stack = intstack_push(stack, (y * width) + x)
+
+    let changed: int = 0
+
+    while (!intstack_is_empty(stack)) {
+        let index: int = intstack_peek(stack)
+        stack = intstack_pop(stack)
+        changed = changed + 1
+
+        let px: int = index % width
+        let py: int = index / width
+
+        stack = fill_visit(doc, stack, px - 1, py, target, newColour)
+        stack = fill_visit(doc, stack, px + 1, py, target, newColour)
+        stack = fill_visit(doc, stack, px, py - 1, target, newColour)
+        stack = fill_visit(doc, stack, px, py + 1, target, newColour)
+    }
+
+    return changed
+}
+
+/*
+ * Recolours and enqueues one neighbour, if it is inside the image and still the target colour.
+ *
+ * Returns the stack because prolang structs are value types: assigning to a field of the
+ * parameter would only change this function's copy.
+ */
+func fill_visit(doc: Document, stack: IntStack, x: int, y: int, target: int, newColour: int) : IntStack {
+    if (x < 0 || y < 0 || x >= doc.width || y >= doc.height) {
+        return stack
+    }
+
+    let index: int = (y * doc.width) + x
+
+    if (doc.pixels[index] != target) {
+        return stack
+    }
+
+    doc.pixels[index] = newColour
+    return intstack_push(stack, index)
+}
+
+/*
+ * Recolours every matching pixel in the image, connected or not.
+ *
+ * The other thing a paint bucket is commonly expected to do — shift-click in most editors — and
+ * a single pass rather than a traversal.
+ */
+func fill_replace_all(doc: Document, target: int, newColour: int) : int {
+    if (target == newColour) {
+        return 0
+    }
+
+    let count: int = doc_pixel_count(doc)
+    let changed: int = 0
+    let i: int = 0
+
+    while (i < count) {
+        if (doc.pixels[i] == target) {
+            doc.pixels[i] = newColour
+            changed = changed + 1
+        }
+        i = i + 1
+    }
+
+    return changed
+}

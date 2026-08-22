@@ -1,0 +1,96 @@
+/*
+ * Pixel editor tests — the harness
+ *
+ * prolang has no globals: every statement lives inside a function and there is no module-level
+ * state a counter could live in. So the tally is a value threaded through every check and
+ * returned, which is the same shape std/dynarray.prl uses for its collections.
+ *
+ * Checks print only when they fail. A run that passes produces one line per module plus a
+ * summary, which keeps the golden stdout file small enough to read as a diff.
+ *
+ * The run is failed by the `assert` builtin from `import "test"`, called once at the end. That
+ * matters more than the printing: a prolang program cannot set an exit code, so before `assert`
+ * existed a test suite could only print the word "failed" and still exit 0 — which the execution
+ * tests would have recorded as a pass.
+ */
+
+import "io"
+import "test"
+import "../util.prl"
+
+struct TestRun {
+    passed: int;
+    failed: int;
+}
+
+func t_new() : TestRun {
+    return TestRun { passed: 0, failed: 0 }
+}
+
+// Records a passing check.
+func t_pass(run: TestRun) : TestRun {
+    return TestRun { passed: run.passed + 1, failed: run.failed }
+}
+
+// Records a failing check and reports it.
+func t_fail(run: TestRun, name: string, detail: string) : TestRun {
+    print("  FAIL " + name + ": " + detail)
+    return TestRun { passed: run.passed, failed: run.failed + 1 }
+}
+
+func t_eq_int(run: TestRun, name: string, actual: int, expected: int) : TestRun {
+    if (actual == expected) {
+        return t_pass(run)
+    }
+    return t_fail(run, name, "expected " + expected + " but got " + actual)
+}
+
+func t_eq_bool(run: TestRun, name: string, actual: bool, expected: bool) : TestRun {
+    if (actual == expected) {
+        return t_pass(run)
+    }
+    return t_fail(run, name, "expected " + expected + " but got " + actual)
+}
+
+func t_eq_str(run: TestRun, name: string, actual: string, expected: string) : TestRun {
+    if (actual == expected) {
+        return t_pass(run)
+    }
+    return t_fail(run, name, "expected " + expected + " but got " + actual)
+}
+
+func t_true(run: TestRun, name: string, condition: bool) : TestRun {
+    return t_eq_bool(run, name, condition, true)
+}
+
+func t_false(run: TestRun, name: string, condition: bool) : TestRun {
+    return t_eq_bool(run, name, condition, false)
+}
+
+// Merges one module's tally into the running total and reports the module's result.
+func t_merge(total: TestRun, part: TestRun, moduleName: string) : TestRun {
+    let checks: int = part.passed + part.failed
+
+    if (part.failed == 0) {
+        print("  " + util_pad_left("" + checks, 4) + " ok   " + moduleName)
+    } else {
+        print("  " + util_pad_left("" + checks, 4) + " FAIL " + moduleName
+              + " (" + part.failed + " failed)")
+    }
+
+    return TestRun { passed: total.passed + part.passed, failed: total.failed + part.failed }
+}
+
+/*
+ * Prints the summary and fails the process if anything failed.
+ *
+ * The assert is what makes this a real gate rather than a report nobody reads.
+ */
+func t_report(run: TestRun) : void {
+    let total: int = run.passed + run.failed
+
+    print("")
+    print("passed " + run.passed + " of " + total)
+
+    assert(run.failed == 0, "" + run.failed + " of " + total + " checks failed")
+}

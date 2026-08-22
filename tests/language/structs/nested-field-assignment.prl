@@ -1,0 +1,90 @@
+/*
+ * Regression: assigning to a struct field through something other than a bare variable.
+ *
+ * A struct is a value type, so writing to a field of one needs the *address* of where it lives.
+ * The emitter only produced an address for a local or a parameter; for anything else it pushed
+ * the struct by value and stored into that copy, which was then discarded. `arr[i].f = x` and
+ * `outer.inner.leaf = x` both compiled without a diagnostic and silently did nothing.
+ *
+ * Addresses are now emitted for the whole chain: ldloca / ldarga for a variable, ldelema for an
+ * array element, and ldflda to step into a nested struct.
+ */
+
+import "io"
+import "array"
+
+struct Leaf {
+    value: int;
+}
+
+struct Branch {
+    leaf: Leaf;
+    tag:  int;
+}
+
+struct Tree {
+    branch: Branch;
+    name:   string;
+}
+
+// Writing through an array field of a struct parameter reaches the caller, because the array is
+// a reference. This is the mutation channel the language does have, and it must keep working.
+func bump_first(cells: array<Leaf>) : void {
+    cells[0].value = cells[0].value + 1
+}
+
+func main()
+{
+    // ── One level: array element ─────────────────────────────────────────────
+    let cells: array<Leaf> = array_new(3)
+    cells[0] = Leaf { value: 10 }
+    cells[1] = Leaf { value: 20 }
+    cells[2] = Leaf { value: 30 }
+
+    cells[1].value = 99
+    print("element written  = " + cells[1].value)
+    print("neighbour left   = " + cells[0].value + "," + cells[2].value)
+
+    // The index is an expression, not just a literal.
+    let i: int = 2
+    cells[i].value = 77
+    print("computed index   = " + cells[2].value)
+
+    // ── One level: nested struct ─────────────────────────────────────────────
+    let branch: Branch = Branch { leaf: Leaf { value: 1 }, tag: 5 }
+    branch.leaf.value = 42
+    print("nested written   = " + branch.leaf.value)
+    print("sibling left     = " + branch.tag)
+
+    // ── Two levels deep ──────────────────────────────────────────────────────
+    let tree: Tree = Tree { branch: Branch { leaf: Leaf { value: 0 }, tag: 1 }, name: "root" }
+    tree.branch.leaf.value = 7
+    tree.branch.tag = 8
+    print("two levels       = " + tree.branch.leaf.value)
+    print("one level        = " + tree.branch.tag)
+    print("untouched        = " + tree.name)
+
+    // ── Array element, then into its nested struct ───────────────────────────
+    let branches: array<Branch> = array_new(2)
+    branches[0] = Branch { leaf: Leaf { value: 0 }, tag: 0 }
+    branches[1] = Branch { leaf: Leaf { value: 0 }, tag: 0 }
+
+    branches[1].leaf.value = 55
+    branches[1].tag = 66
+    print("elem then nested = " + branches[1].leaf.value + "," + branches[1].tag)
+    print("other element    = " + branches[0].leaf.value + "," + branches[0].tag)
+
+    // ── Through a parameter ──────────────────────────────────────────────────
+    bump_first(cells)
+    print("through param    = " + cells[0].value)
+
+    // ── A plain local, the case that always worked ───────────────────────────
+    let solo: Leaf = Leaf { value: 0 }
+    solo.value = 3
+    print("plain local      = " + solo.value)
+
+    // Assignment is an expression and yields the assigned value.
+    let echoed: int = 0
+    echoed = branch.leaf.value = 123
+    print("assignment value = " + echoed + "," + branch.leaf.value)
+}

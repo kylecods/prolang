@@ -1,0 +1,100 @@
+/*
+ * Pixel editor — rendering
+ *
+ * The boundary between the editor's own model and Windows Forms. Everything above this file is
+ * pure prolang and covered by tests; everything the shim needs to be told lives here.
+ *
+ * Keeping the boundary this thin is deliberate. view.prl computes the zoom and pan mapping and is
+ * tested exactly; this file only hands the result to the canvas. Doing the arithmetic here would
+ * put the most error-prone code in the one module a test cannot reach.
+ */
+
+import "winforms"
+import "document.prl"
+import "view.prl"
+import "palette.prl"
+import "color.prl"
+import "tools.prl"
+
+// The grid drawn over the image once the zoom is high enough to make it useful.
+func render_grid_colour() : int {
+    return color_argb(90, 0, 0, 0)
+}
+
+/*
+ * Pushes a document's pixels into a bitmap.
+ *
+ * One interop call for the whole image. A prolang `array<int>` is a real CLR `int[]`, so the
+ * buffer is handed over rather than copied element by element — the alternative is one call per
+ * pixel, which at 256x256 is 65,536 of them per repaint.
+ */
+func render_image(bitmapId: int, doc: Document) : void {
+    WinFormsHelper.SetPixels(bitmapId, doc.pixels, doc.width, doc.height)
+}
+
+/*
+ * Applies the current zoom and pan to the canvas.
+ *
+ * The grid colour is passed as fully transparent below the zoom threshold, which is how the
+ * canvas is told not to draw it: at low zoom the lines occupy as much space as the pixels.
+ */
+func render_view(canvasId: int, view: View) : void {
+    let grid: int = 0
+
+    if (view_show_grid(view)) {
+        grid = render_grid_colour()
+    }
+
+    WinFormsHelper.CanvasSetView(canvasId, view.zoom, view.panX, view.panY, grid, 1)
+}
+
+/*
+ * Redraws the canvas from whichever document is currently live.
+ *
+ * While a shape is being rubber-banded the preview is shown instead of the image, because the
+ * shape does not exist in the image until the button is released.
+ */
+func render_canvas(canvasId: int, bitmapId: int, doc: Document, preview: Document, stroke: Stroke, view: View) : void {
+    if (stroke.active && tool_is_shape(stroke.tool)) {
+        render_image(bitmapId, preview)
+    } else {
+        render_image(bitmapId, doc)
+    }
+
+    render_view(canvasId, view)
+    WinFormsHelper.CanvasRefresh(canvasId)
+}
+
+// Redraws the palette strip with `selected` ringed.
+func render_palette(canvasId: int, bitmapId: int, strip: Document, cell: int, columns: int, selected: int) : void {
+    palette_draw(strip, cell, columns, selected)
+    render_image(bitmapId, strip)
+    WinFormsHelper.CanvasRefresh(canvasId)
+}
+
+/*
+ * Builds the status line.
+ *
+ * Coordinates are padded to a fixed width: the bar is rewritten on every mouse move, and without
+ * padding a value going from 10 to 9 would leave the stale digit behind.
+ */
+func render_status(stroke: Stroke, view: View, doc: Document, x: int, y: int, dirty: bool) : string {
+    let position: string = "-, -"
+
+    if (doc_in_bounds(doc, x, y)) {
+        position = util_pad_left("" + x, 4) + "," + util_pad_left("" + y, 4)
+    }
+
+    let modified: string = ""
+    if (dirty) {
+        modified = "  *modified*"
+    }
+
+    return position
+        + "   " + doc.width + "x" + doc.height
+        + "   zoom " + view.zoom + "x"
+        + "   " + tool_name(stroke.tool)
+        + " " + stroke.size + "px"
+        + "   " + color_hex(stroke.colour)
+        + modified
+}

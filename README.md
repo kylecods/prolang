@@ -44,6 +44,8 @@ dotnet hello.dll
 | `-o PATH` | Output assembly path |
 | `-m NAME` | Module name |
 | `-r PATH` | Reference a .NET assembly |
+| `--target=KIND` | Subsystem of the emitted assembly: `library` (default), `console`, or `winexe` |
+| `--framework=NAME` | Shared framework to request, or the shorthand `windowsdesktop` |
 | `-d`, `--disassemble` | Print the lowered intermediate representation |
 | `--msil=PATH` | Print an MSIL listing for a compiled assembly |
 | `--emit-c` | Transpile to C99 |
@@ -66,8 +68,30 @@ import "dotnet:System"
 import "winforms"
 ```
 
+`import "test"` brings in `assert(condition, message)`, which ends the program with a non-zero
+exit code and a message on stderr. It is what lets a test suite written in ProLang actually fail;
+`print()` is buffered until `main()` returns, and `assert` flushes it before throwing so the output
+leading up to a failure survives.
+
 See [AGENTS.md](AGENTS.md) for a full language tour, and [examples/](examples/) for worked
-programs including a JSON parser, a CHIP-8 emulator, and a Snake game.
+programs including a JSON parser, a CHIP-8 emulator, a Snake game, and a
+[pixel editor](examples/16-pixel-editor/) with a 295-check test suite.
+
+A Windows Forms program wants both new flags:
+
+```bash
+prolang examples/16-pixel-editor/main.prl --target=winexe -o bin/pixel-editor.dll
+```
+
+`--target=winexe` selects the windows subsystem, so no console window opens behind the form; it
+implies `--framework=windowsdesktop` in the emitted `runtimeconfig.json`, and marks the entry point
+`[STAThread]`.
+
+That last part matters more than it sounds. The Windows *common* dialogs — open file, save file —
+are COM objects that require a single-threaded apartment. Called from an MTA thread they do not
+throw: they disable the owner window and never return, so the program looks frozen while still
+pumping messages. `MessageBox` and an ordinary `Form.ShowDialog()` are unaffected, which makes the
+symptom look specific to the file commands rather than to the apartment.
 
 ## Backends
 
@@ -87,6 +111,7 @@ src/ProLang/            Compiler: lexer, parser, binder, lowering, backends
 src/ProLang.Runtime/    Managed runtime library shipped with compiled programs
 src/ProLang.Tests/      xUnit suite: IL snapshots, execution tests, IL validity
 src/ProLang.Benchmarks/ BenchmarkDotNet suite covering each compiler phase
+src/WinFormsHelper.Tests/ xUnit suite for the Windows Forms shim (Windows only)
 native/                 C runtime headers for the C99 and PSP backends
 std/                    Standard library written in ProLang
 examples/               Example programs
@@ -98,6 +123,7 @@ docs/                   Architecture, contributing, and performance documentatio
 
 ```bash
 dotnet test src/ProLang.Tests/ProLang.Tests.csproj -c Release
+dotnet test src/WinFormsHelper.Tests/WinFormsHelper.Tests.csproj -c Release   # Windows only
 dotnet run -c Release --project src/ProLang.Benchmarks -- --filter "*"
 ```
 

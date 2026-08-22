@@ -1,4 +1,5 @@
 using System.Collections.Immutable;
+using System.Reflection;
 using ProLang.Interop;
 using ProLang.Lowering;
 using ProLang.Parse;
@@ -1418,7 +1419,7 @@ internal sealed class Binder
 
         if (!_scope.TryLookupFunction(syntax.Identifier.Text, out var function))
         {
-            var dotNetFunc = TryResolveDotNetFunction(syntax.Identifier.Text);
+            var dotNetFunc = TryResolveDotNetFunction(syntax.Identifier.Text, boundArguments.Count);
             if (dotNetFunc != null)
             {
                 function = dotNetFunc;
@@ -1533,36 +1534,81 @@ internal sealed class Binder
     /// <summary>
     /// Tries to resolve a function from .NET assemblies by searching for static methods.
     /// </summary>
-    private DotNetFunctionSymbol? TryResolveDotNetFunction(string name)
+    /// <summary>
+    /// Last resort for an unqualified call: a public static method of that exact name and arity,
+    /// somewhere in the loaded assemblies.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// This used to match <b>case-insensitively</b> and take the <b>first method with the right
+    /// name regardless of how many parameters it had</b>, across every loaded assembly in
+    /// whatever order reflection produced them. A misspelled call did not report an undefined
+    /// function — it silently bound to something in the BCL and then failed with an argument
+    /// count complaint about a method the program had never heard of. <c>equals(1)</c> reported
+    /// that <c>Equals</c> requires 2 arguments; <c>exit(0)</c> reported that <c>Exit</c> requires
+    /// 0. Which method won also depended on assembly load order, so the same source could
+    /// diagnose differently depending on what had been imported.
+    /// </para>
+    /// <para>
+    /// Now the name must match exactly — ProLang is case-sensitive everywhere else — the
+    /// parameter count must match the call, and a name that resolves to methods on more than one
+    /// type is refused rather than picked between. Refusing means the caller reports the
+    /// undefined function it actually is, which is what a typo should produce.
+    /// </para>
+    /// </remarks>
+    /// <param name="name">The identifier at the call site.</param>
+    /// <param name="argumentCount">How many arguments the call passes.</param>
+    private DotNetFunctionSymbol? TryResolveDotNetFunction(string name, int argumentCount)
     {
         var registry = DotNetAssemblyRegistry.Instance;
 
-        // Search through all loaded assemblies for a static method matching the name
-        foreach (var assembly in registry.GetLoadedAssemblies())
+        MethodInfo? match = null;
+
+        // Ordered so that the outcome does not depend on the order reflection happens to return
+        // assemblies and types in, which varies with what the program imported.
+        foreach (var assembly in registry.GetLoadedAssemblies().OrderBy(a => a.FullName, StringComparer.Ordinal))
         {
             try
             {
-                foreach (var type in assembly.GetExportedTypes())
+                foreach (var type in assembly.GetExportedTypes().OrderBy(t => t.FullName, StringComparer.Ordinal))
                 {
-                    if (!type.IsPublic) continue;
-
-                    var methods = registry.GetStaticMethods(type);
-                    var matchingMethod = methods.FirstOrDefault(m =>
-                        m.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-
-                    if (matchingMethod != null)
+                    if (!type.IsPublic)
                     {
-                        return DotNetFunctionSymbol.FromStaticMethod(matchingMethod);
+                        continue;
+                    }
+
+                    foreach (var method in registry.GetStaticMethods(type))
+                    {
+                        if (!string.Equals(method.Name, name, StringComparison.Ordinal)
+                            || method.GetParameters().Length != argumentCount)
+                        {
+                            continue;
+                        }
+
+                        if (match == null)
+                        {
+                            match = method;
+                            continue;
+                        }
+
+                        // Overloads of the same arity on the same type are already resolved
+                        // elsewhere by metadata order; two different types is a genuine
+                        // ambiguity that this has no basis for deciding.
+                        if (match.DeclaringType != method.DeclaringType)
+                        {
+                            return null;
+                        }
                     }
                 }
             }
-            catch
+            catch (Exception e) when (e is ReflectionTypeLoadException or FileNotFoundException or TypeLoadException)
             {
-                // Ignore assembly access errors
+                // An assembly whose types cannot be loaded contributes nothing and is not an
+                // error in the program being compiled.
             }
         }
 
-        return null;
+        return match == null ? null : DotNetFunctionSymbol.FromStaticMethod(match);
     }
 
     private static readonly Dictionary<string, FunctionSymbol> ArrayMethods = new(StringComparer.Ordinal)

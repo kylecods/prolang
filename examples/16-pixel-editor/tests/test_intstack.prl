@@ -1,0 +1,61 @@
+/*
+ * Pixel editor tests — intstack.prl
+ */
+
+import "testing.prl"
+import "../intstack.prl"
+
+func test_intstack_run() : TestRun {
+    let r: TestRun = t_new()
+
+    let s: IntStack = intstack_new(4)
+
+    r = t_true(r, "new stack is empty", intstack_is_empty(s))
+    r = t_eq_int(r, "new stack count", intstack_count(s), 0)
+    r = t_eq_int(r, "peek when empty", intstack_peek(s), 0 - 1)
+
+    // Popping an empty stack returns it unchanged rather than failing: prolang has no exceptions
+    // and no way to signal an error from a function returning a struct.
+    s = intstack_pop(s)
+    r = t_eq_int(r, "pop when empty is a no-op", intstack_count(s), 0)
+
+    s = intstack_push(s, 10)
+    s = intstack_push(s, 20)
+    s = intstack_push(s, 30)
+
+    r = t_eq_int(r, "count after pushes", intstack_count(s), 3)
+    r = t_false(r, "not empty after pushes", intstack_is_empty(s))
+    r = t_eq_int(r, "peek returns the top", intstack_peek(s), 30)
+    r = t_eq_int(r, "peek does not remove", intstack_count(s), 3)
+
+    s = intstack_pop(s)
+    r = t_eq_int(r, "pop exposes the next", intstack_peek(s), 20)
+    r = t_eq_int(r, "count after pop", intstack_count(s), 2)
+
+    // Last in, first out.
+    s = intstack_pop(s)
+    r = t_eq_int(r, "second pop", intstack_peek(s), 10)
+    s = intstack_pop(s)
+    r = t_true(r, "empty after draining", intstack_is_empty(s))
+
+    // The capacity is fixed because every caller knows its bound in advance. A push past it is
+    // dropped rather than writing out of range, which prolang could not survive.
+    let full: IntStack = intstack_new(2)
+    full = intstack_push(full, 1)
+    full = intstack_push(full, 2)
+    full = intstack_push(full, 3)
+    r = t_eq_int(r, "push past capacity is dropped", intstack_count(full), 2)
+    r = t_eq_int(r, "top is the last accepted", intstack_peek(full), 2)
+
+    let cleared: IntStack = intstack_clear(full)
+    r = t_true(r, "clear empties the stack", intstack_is_empty(cleared))
+
+    // Mutators return a new struct and the caller reassigns; the original binding is unchanged.
+    // This is forced by value semantics, not a style choice, so it is worth pinning down.
+    let original: IntStack = intstack_new(4)
+    let pushed: IntStack = intstack_push(original, 99)
+    r = t_eq_int(r, "original count is unchanged", intstack_count(original), 0)
+    r = t_eq_int(r, "returned count is updated", intstack_count(pushed), 1)
+
+    return r
+}

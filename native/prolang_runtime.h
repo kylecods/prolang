@@ -41,5 +41,6 @@ extern int   memcmp(const void *, const void *, size_t);
 #include "prl_psp.h"
 #include "prl_io.h"
 #include "prl_console.h"
+#include "prl_test.h"
 
 #endif /* PROLANG_RUNTIME_H */

@@ -1,0 +1,515 @@
+/*
+ * Pixel editor — the application
+ *
+ * Builds the window and runs the event loop.
+ *
+ * Windows Forms raises events by calling a delegate, and prolang has no delegates, lambdas or
+ * function values of any kind. So the shim owns every handler: they push a flattened record onto
+ * a queue, and this loop pulls from it. What would be a callback in C# is an `elif` arm here.
+ *
+ * The same constraint explains the shape of the state. prolang structs are .NET value types and a
+ * struct-typed field cannot be assigned through, so there is no App struct holding the document,
+ * history and view together — they are locals of app_run, passed to whatever needs them, and
+ * reassigned from the value each helper returns.
+ */
+
+import "io"
+import "array"
+import "winforms"
+import "document.prl"
+import "color.prl"
+import "palette.prl"
+import "view.prl"
+import "tools.prl"
+import "history.prl"
+import "render.prl"
+import "util.prl"
+
+// Event kinds, matching PrlEventKind in std/WinFormsHelper/EventQueue.cs.
+enum Ev {
+    NONE,
+    MOUSE_DOWN,
+    MOUSE_MOVE,
+    MOUSE_UP,
+    WHEEL,
+    KEY_DOWN,
+    KEY_UP,
+    MOUSE_LEAVE,
+    RESIZE,
+    QUIT,
+    COMMAND
+}
+
+// Toolbar command tags. Tool buttons use TOOL_BASE + the tool's own value.
+enum Cmd {
+    TOOL_BASE = 100,
+    NEW = 200,
+    OPEN = 201,
+    SAVE = 202,
+    UNDO = 203,
+    REDO = 204,
+    CLEAR = 205,
+    ZOOM_IN = 206,
+    ZOOM_OUT = 207,
+    ZOOM_FIT = 208,
+    SIZE_DOWN = 209,
+    SIZE_UP = 210
+}
+
+// Virtual key codes, from System.Windows.Forms.Keys.
+enum Key {
+    ESCAPE = 27,
+    E = 69,
+    F = 70,
+    I = 73,
+    L = 76,
+    N = 78,
+    O = 79,
+    P = 80,
+    R = 82,
+    S = 83,
+    Y = 89,
+    Z = 90,
+    MINUS = 189,
+    PLUS = 187
+}
+
+// Modifier bits, matching CurrentModifiers in the shim.
+enum Mod {
+    SHIFT = 1,
+    CONTROL = 2,
+    ALT = 4
+}
+
+// ── Layout ───────────────────────────────────────────────────────────────────
+
+func app_canvas_width() : int  { return 820 }
+func app_canvas_height() : int { return 600 }
+func app_palette_cell() : int  { return 30 }
+func app_palette_columns() : int { return 16 }
+func app_toolbar_width() : int { return 104 }
+
+func app_default_width() : int  { return 64 }
+func app_default_height() : int { return 64 }
+func app_undo_slots() : int     { return 24 }
+
+// ── Entry point ──────────────────────────────────────────────────────────────
+
+func app_run() : void
+{
+    WinFormsHelper.InitApplication()
+
+    let canvasW: int = app_canvas_width()
+    let canvasH: int = app_canvas_height()
+    let cell: int = app_palette_cell()
+    let columns: int = app_palette_columns()
+    let stripW: int = cell * columns
+    let stripH: int = cell * palette_rows(columns)
+    let left: int = app_toolbar_width() + 16
+
+    let form: int = WinFormsHelper.CreateForm("ProLang Pixel Editor", left + canvasW + 16, canvasH + stripH + 96)
+
+    let canvas: int = WinFormsHelper.CreateCanvas(left, 8, canvasW, canvasH)
+    let strip: int = WinFormsHelper.CreateCanvas(left, canvasH + 16, stripW, stripH)
+    let status: int = WinFormsHelper.CreateLabel("", left, canvasH + stripH + 26, canvasW, 22)
+
+    WinFormsHelper.AddControl(form, canvas)
+    WinFormsHelper.AddControl(form, strip)
+    WinFormsHelper.AddControl(form, status)
+
+    app_build_toolbar(form)
+
+    // ── Model ────────────────────────────────────────────────────────────────
+    let doc: Document = doc_new(app_default_width(), app_default_height(), color_rgb(255, 255, 255))
+    let preview: Document = doc_clone(doc)
+    let swatches: Document = doc_new(stripW, stripH, 0)
+
+    // Sized to the whole image so a shape covering the canvas can still be rewound exactly.
+    let touched: array<int> = array_new(doc_pixel_count(doc))
+
+    let history: History = hist_reset(hist_new(doc.width, doc.height, app_undo_slots()), doc)
+    let stroke: Stroke = stroke_new(Tool.PENCIL, palette_colour(0), 1)
+    let view: View = view_centre(view_new(view_fit_zoom(doc.width, doc.height, canvasW, canvasH)),
+                                 doc.width, doc.height, canvasW, canvasH)
+
+    let image: int = WinFormsHelper.CreateBitmap(doc.width, doc.height)
+    let stripImage: int = WinFormsHelper.CreateBitmap(stripW, stripH)
+
+    WinFormsHelper.CanvasSetBitmap(canvas, image)
+    WinFormsHelper.CanvasSetBitmap(strip, stripImage)
+
+    WinFormsHelper.EnableMouseInput(canvas)
+    WinFormsHelper.EnableMouseInput(strip)
+    WinFormsHelper.EnableKeyInput(form)
+
+    render_canvas(canvas, image, doc, preview, stroke, view)
+    render_palette(strip, stripImage, swatches, cell, columns, 0)
+    WinFormsHelper.Show(form)
+
+    // ── Loop ─────────────────────────────────────────────────────────────────
+    let ev: array<int> = array_new(8)
+    let cursorX: int = 0 - 1
+    let cursorY: int = 0 - 1
+    let dirty: bool = false
+    let selected: int = 0
+    let running: bool = true
+
+    while (running) {
+        let kind: int = WinFormsHelper.WaitEventInto(ev, 16)
+
+        if (kind == Ev.NONE) {
+            // Idle: the wait already yielded, so there is nothing to do.
+        } elif (kind == Ev.QUIT) {
+            running = false
+        } elif (kind == Ev.MOUSE_DOWN) {
+            if (ev[7] == strip) {
+                let picked: int = palette_index_at(ev[0], ev[1], cell, columns)
+                if (picked >= 0) {
+                    selected = picked
+                    stroke = stroke_with_colour(stroke, palette_colour(picked))
+                    render_palette(strip, stripImage, swatches, cell, columns, selected)
+                }
+            } else {
+                let x: int = view_to_image_x(view, ev[0])
+                let y: int = view_to_image_y(view, ev[1])
+
+                // Right-clicking erases, which is what every editor does and saves a trip to
+                // the toolbar for the commonest correction.
+                let held: Stroke = stroke
+                if ((ev[2] & 2) != 0) {
+                    held = stroke_with_tool(stroke, Tool.ERASER)
+                }
+
+                held = tool_press(held, doc, preview, touched, x, y)
+
+                // The picker reports a colour rather than changing the image.
+                if (held.picked >= 0) {
+                    held = stroke_with_colour(held, held.picked)
+                }
+
+                stroke = stroke_with_tool(held, stroke.tool)
+                stroke = stroke_with_colour(stroke, held.colour)
+
+                // stroke_with_tool clears the drag, so an in-progress one is restored here.
+                if (held.active) {
+                    stroke = held
+                }
+
+                if (held.commit) {
+                    history = hist_commit(history, doc)
+                    dirty = true
+                }
+
+                cursorX = x
+                cursorY = y
+                render_canvas(canvas, image, doc, preview, stroke, view)
+            }
+        } elif (kind == Ev.MOUSE_MOVE) {
+            if (ev[7] != strip) {
+                cursorX = view_to_image_x(view, ev[0])
+                cursorY = view_to_image_y(view, ev[1])
+
+                if (stroke.active) {
+                    stroke = tool_drag(stroke, doc, preview, touched, cursorX, cursorY)
+                    render_canvas(canvas, image, doc, preview, stroke, view)
+                }
+            }
+        } elif (kind == Ev.MOUSE_UP) {
+            if (stroke.active) {
+                let x: int = view_to_image_x(view, ev[0])
+                let y: int = view_to_image_y(view, ev[1])
+
+                stroke = tool_release(stroke, doc, preview, touched, x, y)
+
+                if (stroke.commit) {
+                    history = hist_commit(history, doc)
+                    dirty = true
+                }
+
+                render_canvas(canvas, image, doc, preview, stroke, view)
+            }
+        } elif (kind == Ev.MOUSE_LEAVE) {
+            // A drag that leaves the canvas is abandoned rather than left half-drawn with no way
+            // to finish it, since the button release will never arrive.
+            if (stroke.active) {
+                stroke = tool_cancel(stroke, doc, preview, touched)
+                render_canvas(canvas, image, doc, preview, stroke, view)
+            }
+            cursorX = 0 - 1
+            cursorY = 0 - 1
+        } elif (kind == Ev.WHEEL) {
+            view = view_zoom_to(view, app_wheel_zoom(view, ev[4]), ev[0], ev[1])
+            view = view_clamp_pan(view, doc.width, doc.height, canvasW, canvasH)
+            render_canvas(canvas, image, doc, preview, stroke, view)
+        } elif (kind == Ev.KEY_DOWN) {
+            let tool: int = app_tool_for_key(ev[3])
+
+            if (tool >= 0) {
+                stroke = stroke_with_tool(stroke, tool)
+            } elif (ev[3] == Key.ESCAPE) {
+                if (stroke.active) {
+                    stroke = tool_cancel(stroke, doc, preview, touched)
+                    render_canvas(canvas, image, doc, preview, stroke, view)
+                }
+            } elif (ev[3] == Key.Z && (ev[5] & Mod.CONTROL) != 0) {
+                history = hist_undo(history, doc)
+                doc_copy_into(doc, preview)
+                dirty = true
+                render_canvas(canvas, image, doc, preview, stroke, view)
+            } elif (ev[3] == Key.Y && (ev[5] & Mod.CONTROL) != 0) {
+                history = hist_redo(history, doc)
+                doc_copy_into(doc, preview)
+                dirty = true
+                render_canvas(canvas, image, doc, preview, stroke, view)
+            } elif (ev[3] == Key.PLUS) {
+                view = view_zoom_in(view, canvasW / 2, canvasH / 2)
+                render_canvas(canvas, image, doc, preview, stroke, view)
+            } elif (ev[3] == Key.MINUS) {
+                view = view_zoom_out(view, canvasW / 2, canvasH / 2)
+                render_canvas(canvas, image, doc, preview, stroke, view)
+            }
+        } elif (kind == Ev.COMMAND) {
+            let tag: int = ev[6]
+
+            if (tag >= Cmd.TOOL_BASE && tag < (Cmd.TOOL_BASE + tool_count())) {
+                stroke = stroke_with_tool(stroke, tag - Cmd.TOOL_BASE)
+            } elif (tag == Cmd.UNDO) {
+                history = hist_undo(history, doc)
+                doc_copy_into(doc, preview)
+                dirty = true
+                render_canvas(canvas, image, doc, preview, stroke, view)
+            } elif (tag == Cmd.REDO) {
+                history = hist_redo(history, doc)
+                doc_copy_into(doc, preview)
+                dirty = true
+                render_canvas(canvas, image, doc, preview, stroke, view)
+            } elif (tag == Cmd.CLEAR) {
+                doc_fill(doc, color_rgb(255, 255, 255))
+                doc_copy_into(doc, preview)
+                history = hist_commit(history, doc)
+                dirty = true
+                render_canvas(canvas, image, doc, preview, stroke, view)
+            } elif (tag == Cmd.ZOOM_IN) {
+                view = view_zoom_in(view, canvasW / 2, canvasH / 2)
+                render_canvas(canvas, image, doc, preview, stroke, view)
+            } elif (tag == Cmd.ZOOM_OUT) {
+                view = view_zoom_out(view, canvasW / 2, canvasH / 2)
+                render_canvas(canvas, image, doc, preview, stroke, view)
+            } elif (tag == Cmd.ZOOM_FIT) {
+                view = view_centre(view_new(view_fit_zoom(doc.width, doc.height, canvasW, canvasH)),
+                                   doc.width, doc.height, canvasW, canvasH)
+                render_canvas(canvas, image, doc, preview, stroke, view)
+            } elif (tag == Cmd.SIZE_UP) {
+                stroke = stroke_with_size(stroke, stroke.size + 1)
+            } elif (tag == Cmd.SIZE_DOWN) {
+                stroke = stroke_with_size(stroke, stroke.size - 1)
+            } elif (tag == Cmd.SAVE) {
+                dirty = app_save(doc, image)
+            } elif (tag == Cmd.NEW || tag == Cmd.OPEN) {
+                if (app_may_discard(dirty)) {
+                    let replacement: Document = doc_new(1, 1, 0)
+
+                    if (tag == Cmd.NEW) {
+                        replacement = app_new_document()
+                    } else {
+                        replacement = app_open_document(doc)
+                    }
+
+                    // A different size invalidates every buffer sized from the old one.
+                    doc = replacement
+                    preview = doc_clone(doc)
+
+                    // Bound to a typed local first: array_new returns an untyped `array`, and it
+                    // is the declaration's type annotation that pins the element type. A bare
+                    // reassignment has nothing to infer from and fails to convert.
+                    let resized: array<int> = array_new(doc_pixel_count(doc))
+                    touched = resized
+                    history = hist_reset(hist_new(doc.width, doc.height, app_undo_slots()), doc)
+                    stroke = stroke_with_tool(stroke, stroke.tool)
+                    dirty = false
+
+                    WinFormsHelper.DisposeBitmap(image)
+                    image = WinFormsHelper.CreateBitmap(doc.width, doc.height)
+                    WinFormsHelper.CanvasSetBitmap(canvas, image)
+
+                    view = view_centre(view_new(view_fit_zoom(doc.width, doc.height, canvasW, canvasH)),
+                                       doc.width, doc.height, canvasW, canvasH)
+                    render_canvas(canvas, image, doc, preview, stroke, view)
+                }
+            }
+        }
+
+        WinFormsHelper.SetText(status, render_status(stroke, view, doc, cursorX, cursorY, dirty))
+    }
+
+    WinFormsHelper.DisposeBitmap(image)
+    WinFormsHelper.DisposeBitmap(stripImage)
+}
+
+// ── Toolbar ──────────────────────────────────────────────────────────────────
+
+/*
+ * Lays the toolbar out as one column of buttons.
+ *
+ * Every button posts a Command event carrying its tag, so the loop above has a single dispatch
+ * chain rather than one polling call per control.
+ */
+func app_build_toolbar(form: int) : void {
+    let x: int = 8
+    let width: int = app_toolbar_width() - 8
+    let y: int = 8
+
+    let tool: int = 0
+    while (tool < tool_count()) {
+        app_add_button(form, tool_name(tool), x, y, width, 26, Cmd.TOOL_BASE + tool)
+        y = y + 28
+        tool = tool + 1
+    }
+
+    y = y + 10
+    app_add_button(form, "size -", x, y, width, 26, Cmd.SIZE_DOWN)
+    y = y + 28
+    app_add_button(form, "size +", x, y, width, 26, Cmd.SIZE_UP)
+
+    y = y + 38
+    app_add_button(form, "zoom -", x, y, width, 26, Cmd.ZOOM_OUT)
+    y = y + 28
+    app_add_button(form, "zoom +", x, y, width, 26, Cmd.ZOOM_IN)
+    y = y + 28
+    app_add_button(form, "fit", x, y, width, 26, Cmd.ZOOM_FIT)
+
+    y = y + 38
+    app_add_button(form, "undo", x, y, width, 26, Cmd.UNDO)
+    y = y + 28
+    app_add_button(form, "redo", x, y, width, 26, Cmd.REDO)
+    y = y + 28
+    app_add_button(form, "clear", x, y, width, 26, Cmd.CLEAR)
+
+    y = y + 38
+    app_add_button(form, "new", x, y, width, 26, Cmd.NEW)
+    y = y + 28
+    app_add_button(form, "open", x, y, width, 26, Cmd.OPEN)
+    y = y + 28
+    app_add_button(form, "save", x, y, width, 26, Cmd.SAVE)
+}
+
+func app_add_button(form: int, text: string, x: int, y: int, width: int, height: int, tag: int) : void {
+    let button: int = WinFormsHelper.CreateButton(text, x, y, width, height)
+    WinFormsHelper.AddControl(form, button)
+    WinFormsHelper.EnableCommand(button, tag)
+}
+
+// ── Input mapping ────────────────────────────────────────────────────────────
+
+// The tool a single-letter shortcut selects, or -1 when the key is not a tool shortcut.
+func app_tool_for_key(key: int) : int {
+    if (key == Key.P) { return Tool.PENCIL }
+    if (key == Key.E) { return Tool.ERASER }
+    if (key == Key.F) { return Tool.FILL }
+    if (key == Key.L) { return Tool.LINE }
+    if (key == Key.R) { return Tool.RECT }
+    if (key == Key.O) { return Tool.ELLIPSE }
+    if (key == Key.I) { return Tool.PICKER }
+    return 0 - 1
+}
+
+/*
+ * The zoom a wheel notch should move to.
+ *
+ * Doubling per notch rather than adding one: the useful range runs from 1x to 32x, and stepping
+ * linearly would take thirty notches to cross it.
+ */
+func app_wheel_zoom(view: View, delta: int) : int {
+    if (delta > 0) {
+        return view.zoom * 2
+    }
+    if (delta < 0) {
+        return view.zoom / 2
+    }
+    return view.zoom
+}
+
+// ── File commands ────────────────────────────────────────────────────────────
+
+/*
+ * Asks before discarding unsaved work.
+ *
+ * Returns true when there is nothing to lose or the user said to go ahead.
+ */
+func app_may_discard(dirty: bool) : bool {
+    if (!dirty) {
+        return true
+    }
+
+    return WinFormsHelper.MessageBoxYesNoCancel(
+        "Discard unsaved changes?", "ProLang Pixel Editor") == 1
+}
+
+/*
+ * Prompts for a size and returns a blank white document.
+ *
+ * The size comes back through InputInt rather than InputDialog because prolang has no
+ * string-to-number conversion — there is no rule from string to int, so `int(text)` does not
+ * compile — and the clamping belongs with the prompt rather than at the call site.
+ */
+func app_new_document() : Document {
+    let width: int = WinFormsHelper.InputInt("Width in pixels:", "New image", app_default_width(), 1, 512)
+    let height: int = WinFormsHelper.InputInt("Height in pixels:", "New image", app_default_height(), 1, 512)
+
+    return doc_new(width, height, color_rgb(255, 255, 255))
+}
+
+/*
+ * Loads a PNG, or returns `current` unchanged when the dialog is cancelled or the file is
+ * unreadable.
+ */
+func app_open_document(current: Document) : Document {
+    let path: string = WinFormsHelper.ShowOpenFileDialog("Open image", "PNG images|*.png|All files|*.*")
+
+    if (path == "") {
+        return current
+    }
+
+    let loaded: int = WinFormsHelper.LoadBitmapPng(path)
+
+    if (loaded < 0) {
+        WinFormsHelper.MessageBoxShow("Could not read " + path, "Open failed")
+        return current
+    }
+
+    let width: int = WinFormsHelper.GetBitmapWidth(loaded)
+    let height: int = WinFormsHelper.GetBitmapHeight(loaded)
+    let opened: Document = doc_new(width, height, 0)
+
+    // The shim fills the buffer this program allocated, so the pixels never cross the boundary
+    // as a return value.
+    WinFormsHelper.GetPixels(loaded, opened.pixels, width, height)
+    WinFormsHelper.DisposeBitmap(loaded)
+
+    return opened
+}
+
+/*
+ * Writes the image to a PNG the user chooses.
+ *
+ * Returns the document's new dirty state: false once it has been written, and unchanged when the
+ * dialog was cancelled or the write failed.
+ */
+func app_save(doc: Document, image: int) : bool {
+    let path: string = WinFormsHelper.ShowSaveFileDialog("Save image", "PNG images|*.png", "untitled.png")
+
+    if (path == "") {
+        return true
+    }
+
+    // The canvas bitmap already holds the current image, but it is refreshed here so a save is
+    // never one repaint behind what is on screen.
+    render_image(image, doc)
+
+    if (!WinFormsHelper.SaveBitmapPng(image, path)) {
+        WinFormsHelper.MessageBoxShow("Could not write " + path, "Save failed")
+        return true
+    }
+
+    return false
+}

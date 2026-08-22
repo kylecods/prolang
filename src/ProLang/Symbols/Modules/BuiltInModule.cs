@@ -16,6 +16,7 @@ public abstract class BuiltInModule
         Register(new ArrayModule());
         Register(new ConsoleModule());
         Register(new PspModule());
+        Register(new TestModule());
     }
 
     public static void Register(BuiltInModule module)
