@@ -18,7 +18,8 @@ namespace ProLang.Compiler
     {
         private DiagnosticBag _diagnostics = new();
 
-        private readonly Dictionary<TypeSymbol, TypeReference> _knownTypes = new();
+        /// <summary>Maps ProLang types to Cecil references and owns emitted struct definitions.</summary>
+        private readonly TypeEmitter _types;
 
         /// <summary>Resolves BCL and referenced-assembly members into the emitted module.</summary>
         private readonly ReferenceResolver _references;
@@ -35,15 +36,12 @@ namespace ProLang.Compiler
         private MethodReference? _outputFlushMethod;
         private bool _outputInfrastructureGenerated = false;
 
-        private readonly TypeReference _dictionaryType;
 
         private readonly AssemblyDefinition _assemblyDefinition;
 
         private Dictionary<FunctionSymbol, MethodDefinition> _methods = new();
 
 
-        // Keyed by struct name so concrete instantiations (DynArray<int>) are deduplicated by name.
-        private Dictionary<string, TypeDefinition> _structTypes = new(StringComparer.Ordinal);
 
         private TypeDefinition _typeDefinition;
 
@@ -76,7 +74,7 @@ namespace ProLang.Compiler
             }
 
             _stringConcatReference = ResolveMethod("System.String", "Concat", ["System.Object", "System.Object"])!;
-            _dictionaryType = ResolveType("System.Collections.Generic.Dictionary`2")!;
+            _types = new TypeEmitter(_references, _assemblyDefinition.MainModule);
         }
 
         /// <inheritdoc cref="ReferenceResolver.ResolveType"/>
@@ -93,102 +91,22 @@ namespace ProLang.Compiler
         private MethodReference GetGenericMethod(TypeReference type, string methodName, int parameterCount) =>
             _references.GetGenericMethod(type, methodName, parameterCount);
 
-        private TypeReference GetTypeReference(TypeSymbol type)
-        {
-            if (_knownTypes.TryGetValue(type, out var typeReference))
-                return typeReference;
+        /// <inheritdoc cref="TypeEmitter.GetReference"/>
+        private TypeReference GetTypeReference(TypeSymbol type) => _types.GetReference(type);
 
-            if (type is EnumSymbol)
-            {
-                var intRef = GetCachedType("System.Int32");
-                _knownTypes.Add(type, intRef);
-                return intRef;
-            }
-
-            if (type is StructSymbol structType)
-            {
-                if (!_structTypes.TryGetValue(structType.Name, out var structTypeDef))
-                {
-                    // Lazily emit instantiated generic struct types encountered during emission.
-                    EmitStructType(structType);
-                    _structTypes.TryGetValue(structType.Name, out structTypeDef);
-                }
-                var structTypeRef = _assemblyDefinition.MainModule.ImportReference(structTypeDef!);
-                _knownTypes.Add(type, structTypeRef);
-                return structTypeRef;
-            }
-
-            TypeReference? resolved = null;
-
-            if (type.TypeArguments.Length == 0)
-            {
-                resolved = type.Name switch
-                {
-                    "any" => GetCachedType("System.Object"),
-                    "bool" => GetCachedType("System.Boolean"),
-                    "int" => GetCachedType("System.Int32"),
-                    "uint32" => GetCachedType("System.UInt32"),
-                    "int16" => GetCachedType("System.Int16"),
-                    "uint16" => GetCachedType("System.UInt16"),
-                    "int8" => GetCachedType("System.SByte"),
-                    "uint8" => GetCachedType("System.Byte"),
-                    "int64" => GetCachedType("System.Int64"),
-                    "uint64" => GetCachedType("System.UInt64"),
-                    "float32" => GetCachedType("System.Single"),
-                    "float64" => GetCachedType("System.Double"),
-                    "float" => GetCachedType("System.Double"),
-                    "string" => GetCachedType("System.String"),
-                    "void" => GetCachedType("System.Void"),
-                    "array" => new ArrayType(GetCachedType("System.Object")),
-                    "map" => _dictionaryType.MakeGenericInstanceType(GetCachedType("System.Object"), GetCachedType("System.Object")),
-                    _ => throw new Exception($"Unexpected type {type.Name}")
-                };
-            }
-            else
-            {
-                if (type.Name == "array")
-                {
-                    var elementType = GetTypeReference(type.TypeArguments[0]);
-                    resolved = new ArrayType(elementType);
-                }
-                else if (type.Name == "map")
-                {
-                    var keyType = GetTypeReference(type.TypeArguments[0]);
-                    var valueType = GetTypeReference(type.TypeArguments[1]);
-                    resolved = _dictionaryType.MakeGenericInstanceType(keyType, valueType);
-                }
-            }
-
-            if (resolved == null)
-                throw new Exception($"Could not resolve type {type}");
-
-            _knownTypes.Add(type, resolved);
-            return resolved;
-        }
-
-        private void EmitStructType(StructSymbol structSymbol)
-        {
-            var typeDef = new TypeDefinition(
-                "",
-                structSymbol.Name,
-                Mono.Cecil.TypeAttributes.SequentialLayout | Mono.Cecil.TypeAttributes.Sealed | Mono.Cecil.TypeAttributes.Public,
-                ResolveType("System.ValueType")
-            );
-
-            foreach (var field in structSymbol.Fields)
-            {
-                var fieldType = GetTypeReference(field.Type);
-                var fieldDef = new FieldDefinition(
-                    field.Name,
-                    Mono.Cecil.FieldAttributes.Public,
-                    fieldType
-                );
-                typeDef.Fields.Add(fieldDef);
-            }
-
-            _assemblyDefinition.MainModule.Types.Add(typeDef);
-            _structTypes[structSymbol.Name] = typeDef;
-        }
+        /// <summary>
+        /// The emitted definition for a struct, emitting it first if it has not been seen.
+        /// </summary>
+        /// <remarks>
+        /// A field access or struct creation can be the first thing that mentions a
+        /// monomorphised generic struct, since those are not in <c>BoundProgram.StructTypes</c>.
+        /// This used to be an unguarded dictionary indexer, which threw
+        /// <see cref="KeyNotFoundException"/> instead of emitting the missing type.
+        /// </remarks>
+        private TypeDefinition ResolveStructDefinition(StructSymbol structSymbol) =>
+            _types.TryGetStruct(structSymbol.Name, out var definition)
+                ? definition
+                : _types.EmitStruct(structSymbol);
 
         public static ImmutableArray<Diagnostic> Emit(BoundProgram program, string moduleName, string[] references, string outputPath)
         {
@@ -280,7 +198,7 @@ namespace ProLang.Compiler
             {
                 // Skip generic templates — only concrete instantiations are emitted
                 if (structType.IsGeneric) continue;
-                EmitStructType(structType);
+                _types.EmitStruct(structType);
             }
 
             foreach (var functionWithBody in program.Functions)
@@ -816,7 +734,7 @@ namespace ProLang.Compiler
                 return;
             }
 
-            var parameterType = RuntimeOverloadParameter(fromType);
+            var parameterType = RuntimeOverloads.ParameterTypeFor(fromType);
 
             // A struct or anything else without a dedicated overload still goes through object.
             if (parameterType == null)
@@ -839,49 +757,6 @@ namespace ProLang.Compiler
             }
 
             scope.IL.Emit(OpCodes.Call, from);
-        }
-
-        /// <summary>
-        /// The metadata name of the runtime overload parameter that takes <paramref name="type"/>
-        /// without boxing, or <see langword="null"/> if there is no such overload.
-        /// </summary>
-        /// <remarks>
-        /// <para>
-        /// The IL evaluation stack has no types narrower than <c>int32</c>, so <c>int8</c>,
-        /// <c>uint8</c>, <c>int16</c>, and <c>uint16</c> are already sitting there as <c>int32</c>
-        /// and can call the <c>int</c> overload directly. Their values survive: the signed types
-        /// are sign-extended and the unsigned ones zero-extended when loaded.
-        /// </para>
-        /// <para>
-        /// <c>uint32</c> cannot share that overload — the bit pattern is the same but
-        /// <c>int32</c> would render anything above 2^31 as negative. <c>float32</c> likewise
-        /// keeps its own overload, because <c>Single.ToString()</c> and
-        /// <c>Double.ToString()</c> disagree on the same value.
-        /// </para>
-        /// </remarks>
-        private static string? RuntimeOverloadParameter(TypeSymbol type)
-        {
-            if (type is EnumSymbol)
-            {
-                // Enums are erased to int32.
-                return "System.Int32";
-            }
-
-            if (type == TypeSymbol.Int || type == TypeSymbol.Int8 || type == TypeSymbol.Int16
-                || type == TypeSymbol.UInt8 || type == TypeSymbol.UInt16)
-            {
-                return "System.Int32";
-            }
-
-            if (type == TypeSymbol.UInt32) return "System.UInt32";
-            if (type == TypeSymbol.Int64) return "System.Int64";
-            if (type == TypeSymbol.UInt64) return "System.UInt64";
-            if (type == TypeSymbol.Bool) return "System.Boolean";
-            if (type == TypeSymbol.Float32) return "System.Single";
-            if (type == TypeSymbol.Float64 || type == TypeSymbol.Float) return "System.Double";
-            if (type == TypeSymbol.String) return "System.String";
-
-            return null;
         }
 
         private static OpCode NumericConvOpCode(TypeSymbol to)
@@ -967,9 +842,9 @@ namespace ProLang.Compiler
                 EmitExpression(scope, argument);
             }
 
-            if (IntrinsicRegistry.TryGetEmitter(node.Function, out var intrinsic))
+            if (IntrinsicRegistry.TryGet(node.Function, out var intrinsic))
             {
-                intrinsic(new IntrinsicContext(scope, _references, _diagnostics, GetTypeReference));
+                intrinsic.Emit(new IntrinsicContext(scope, _references, _diagnostics, GetTypeReference));
                 return;
             }
 
@@ -1014,8 +889,8 @@ namespace ProLang.Compiler
                     "Output infrastructure must be resolved before any call to print().");
             }
 
-            var value = UnwrapConversionToAny(argument);
-            var parameterType = RuntimeOverloadParameter(value.Type);
+            var value = RuntimeOverloads.UnwrapConversionToAny(argument);
+            var parameterType = RuntimeOverloads.ParameterTypeFor(value.Type);
 
             if (parameterType == null)
             {
@@ -1039,24 +914,6 @@ namespace ProLang.Compiler
         }
 
         /// <summary>
-        /// Looks through conversions the binder inserted purely to satisfy an <c>any</c>
-        /// parameter, recovering the expression's real static type.
-        /// </summary>
-        /// <remarks>
-        /// Only conversions whose target is <c>any</c> are unwrapped. A conversion that changes
-        /// the value — a numeric widening, or a cast the program wrote — is left alone.
-        /// </remarks>
-        private static BoundExpression UnwrapConversionToAny(BoundExpression expression)
-        {
-            while (expression is BoundConversionExpression conversion && conversion.Type == TypeSymbol.Any)
-            {
-                expression = conversion.Expression;
-            }
-
-            return expression;
-        }
-
-        /// <summary>
         /// Boxes the value just emitted if <c>String.Concat(object, object)</c> would otherwise
         /// receive an unboxed value type.
         /// </summary>
@@ -1076,7 +933,7 @@ namespace ProLang.Compiler
 
             // A statically known type converts to string without boxing, which also lets the
             // concatenation itself use Concat(string, string) rather than the object overload.
-            if (RuntimeOverloadParameter(operandType) != null)
+            if (RuntimeOverloads.ParameterTypeFor(operandType) != null)
             {
                 EmitStringConversion(scope, operandType);
                 return;
@@ -1108,8 +965,8 @@ namespace ProLang.Compiler
                 ?? _stringConcatReference;
 
         private bool CanConcatAsStrings(BoundBinaryExpression node) =>
-            (node.Left.Type == TypeSymbol.String || RuntimeOverloadParameter(node.Left.Type) != null)
-            && (node.Right.Type == TypeSymbol.String || RuntimeOverloadParameter(node.Right.Type) != null);
+            (node.Left.Type == TypeSymbol.String || RuntimeOverloads.ParameterTypeFor(node.Left.Type) != null)
+            && (node.Right.Type == TypeSymbol.String || RuntimeOverloads.ParameterTypeFor(node.Right.Type) != null);
 
         private void EmitBinaryExpression(MethodBodyScope scope, BoundBinaryExpression node)
         {
@@ -1358,7 +1215,7 @@ namespace ProLang.Compiler
         private void EmitStructCreationExpression(MethodBodyScope scope, BoundStructCreationExpression node)
         {
             var structSymbol = node.StructType;
-            var typeDef = _structTypes[structSymbol.Name];
+            var typeDef = ResolveStructDefinition(structSymbol);
             var typeRef = _assemblyDefinition.MainModule.ImportReference(typeDef);
 
             var localVar = scope.DeclareTemporary(typeRef);
@@ -1395,7 +1252,7 @@ namespace ProLang.Compiler
             EmitExpression(scope, node.Expression);
 
             var structSymbol = (StructSymbol)node.Expression.Type;
-            var typeDef = _structTypes[structSymbol.Name];
+            var typeDef = ResolveStructDefinition(structSymbol);
             var typeRef = _assemblyDefinition.MainModule.ImportReference(typeDef);
             var fieldType = GetTypeReference(node.Field.Type);
             var fieldRef = new FieldReference(node.FieldName, fieldType);
@@ -1412,7 +1269,7 @@ namespace ProLang.Compiler
         private void EmitFieldAssignmentExpression(MethodBodyScope scope, BoundFieldAssignmentExpression node)
         {
             var structSymbol = (StructSymbol)node.Expression.Type;
-            var typeDef = _structTypes[structSymbol.Name];
+            var typeDef = ResolveStructDefinition(structSymbol);
             var typeRef = _assemblyDefinition.MainModule.ImportReference(typeDef);
             var fieldType = GetTypeReference(node.Field.Type);
             var fieldRef = new FieldReference(node.FieldName, fieldType);

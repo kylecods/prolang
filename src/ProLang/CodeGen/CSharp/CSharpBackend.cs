@@ -3,6 +3,8 @@ using System.Globalization;
 using System.Text;
 using ProLang.Intermediate;
 using ProLang.Parse;
+using ProLang.CodeGen.DotNet;
+using ProLang.CodeGen.DotNet.Intrinsics;
 using ProLang.Symbols;
 
 namespace ProLang.CodeGen.CSharp;
@@ -578,21 +580,12 @@ internal sealed class CSharpBackend
             return Unsupported(node);
         }
 
-        // String concatenation of a non-string operand goes through object, mirroring the
-        // String.Concat(object, object) call the MSIL backend emits.
+        // String concatenation mirrors what the MSIL backend emits: a statically known operand
+        // is converted through StringOps.From so Concat(string, string) applies, and only a
+        // genuinely dynamic one goes through object.
         if (node.Op.Kind == BoundBinaryOperatorKind.Addition && node.Op.Type == TypeSymbol.String)
         {
-            if (node.Left.Type != TypeSymbol.String)
-            {
-                left = $"(object)({left})";
-            }
-
-            if (node.Right.Type != TypeSymbol.String)
-            {
-                right = $"(object)({right})";
-            }
-
-            return $"({left} {op} {right})";
+            return $"({ConcatOperand(node.Left, left)} {op} {ConcatOperand(node.Right, right)})";
         }
 
         // ProLang lets an `any` operand take part in arithmetic and comparison directly; the
@@ -614,8 +607,35 @@ internal sealed class CSharpBackend
         return $"({left} {op} {right})";
     }
 
+    /// <summary>
+    /// Renders one side of a string concatenation the way the MSIL backend compiles it.
+    /// </summary>
+    private static string ConcatOperand(BoundExpression operand, string rendered)
+    {
+        if (operand.Type == TypeSymbol.String)
+        {
+            return rendered;
+        }
+
+        return RuntimeOverloads.HasTypedOverload(operand.Type)
+            ? $"{RuntimeLibrary.StringOps}.From({rendered})"
+            : $"(object)({rendered})";
+    }
+
     private string CallExpression(BoundCallExpression node)
     {
+        // print() takes `any`, so the binder wraps its argument in a conversion to object. The
+        // MSIL backend looks through that and picks a typed Output.Write overload; rendering the
+        // conversion literally would show a boxing cast the emitter no longer performs.
+        if (node.Function == BuiltInFunctions.Print)
+        {
+            var value = RuntimeOverloads.UnwrapConversionToAny(node.Arguments[0]);
+
+            return RuntimeOverloads.HasTypedOverload(value.Type)
+                ? $"{RuntimeLibrary.Output}.Write({Expression(value)})"
+                : $"{RuntimeLibrary.Output}.Write({Expression(node.Arguments[0])})";
+        }
+
         // Builtins whose .NET equivalent is an instance member take their receiver from the
         // first argument, so they cannot be rendered as a plain static call.
         if (node.Function == BuiltInFunctions.StringLength || node.Function == BuiltInFunctions.ArrayLength)
@@ -635,40 +655,37 @@ internal sealed class CSharpBackend
     }
 
     /// <summary>
-    /// Maps a builtin onto the runtime call the MSIL backend emits for it.
+    /// The .NET member a builtin maps onto, read from the same table the MSIL emitter uses.
     /// </summary>
     /// <returns>
-    /// A fully-qualified target, or <see langword="null"/> if the symbol is not a builtin and
-    /// should be rendered as an ordinary call.
+    /// A fully-qualified static target, or <see langword="null"/> when the builtin has no
+    /// declarative target — either it is not a builtin at all, or it compiles to a bespoke IL
+    /// sequence with nothing to name.
     /// </returns>
     /// <remarks>
-    /// Kept in step with <c>IntrinsicRegistry</c> by hand. It is a rendering aid rather than a
-    /// second source of truth: a builtin missing from here renders as a plain call, which is
-    /// still readable, just less faithful about where the work happens.
+    /// This used to be a hand-written copy of <see cref="IntrinsicRegistry"/>, which could drift
+    /// out of step with what was actually emitted. Reading the registry directly means adding a
+    /// builtin updates both backends at once.
+    /// <para>
+    /// <c>print</c> is not in the registry — its target is resolved per-emit — so it is named
+    /// here explicitly.
+    /// </para>
     /// </remarks>
     private static string? BuiltinTarget(FunctionSymbol function)
     {
-        if (function == BuiltInFunctions.Print) return "Output.Write";
-        if (function == BuiltInFunctions.ReadInput) return "ConsoleOps.ReadInput";
-        if (function == BuiltInFunctions.ConsoleWrite) return "ConsoleOps.Write";
-        if (function == BuiltInFunctions.ConsoleSetCursor) return "ConsoleOps.SetCursor";
-        if (function == BuiltInFunctions.ConsoleSetColor) return "ConsoleOps.SetColor";
-        if (function == BuiltInFunctions.ConsoleResetColor) return "ConsoleOps.ResetColor";
-        if (function == BuiltInFunctions.ConsoleHideCursor) return "ConsoleOps.HideCursor";
-        if (function == BuiltInFunctions.ConsoleKeyAvailable) return "ConsoleOps.KeyAvailable";
-        if (function == BuiltInFunctions.ConsoleReadKey) return "ConsoleOps.ReadKey";
-        if (function == BuiltInFunctions.Min) return "System.Math.Min";
-        if (function == BuiltInFunctions.Max) return "System.Math.Max";
-        if (function == BuiltInFunctions.Random) return "MathOps.Random";
-        if (function == BuiltInFunctions.StringCharAt) return "StringOps.CharAt";
-        if (function == BuiltInFunctions.StringSubstring) return "StringOps.Substring";
-        if (function == BuiltInFunctions.FileExists) return "System.IO.File.Exists";
-        if (function == BuiltInFunctions.ReadFile) return "System.IO.File.ReadAllText";
-        if (function == BuiltInFunctions.ReadFileBytes) return "System.IO.File.ReadAllBytes";
-        if (function == BuiltInFunctions.WriteFile) return "System.IO.File.WriteAllText";
-        if (function == BuiltInFunctions.ThreadSleep) return "System.Threading.Thread.Sleep";
+        if (function == BuiltInFunctions.Print)
+        {
+            return $"{RuntimeLibrary.Output}.Write";
+        }
 
-        return null;
+        if (!IntrinsicRegistry.TryGet(function, out var intrinsic) || intrinsic.Target == null)
+        {
+            return null;
+        }
+
+        // An instance call takes its receiver from the first argument, so it cannot be rendered
+        // as a static target. CallExpression handles those cases before reaching here.
+        return intrinsic.Target.IsInstanceCall ? null : intrinsic.Target.QualifiedName;
     }
 
     private string MapExpression(BoundMapExpression node)

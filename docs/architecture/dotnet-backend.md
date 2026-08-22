@@ -35,13 +35,18 @@ which phases are checked is defined once.
 
 | File | Responsibility |
 |---|---|
-| `Compiler/Emitter.cs` | Orchestration, type mapping, statement and expression emission |
+| `Compiler/Emitter.cs` | Orchestration, statement and expression emission |
+| `CodeGen/DotNet/TypeEmitter.cs` | ProLang types to Cecil references; emits struct definitions |
+| `CodeGen/DotNet/MethodBodyScope.cs` | Per-method locals, labels, and branch fixups |
 | `CodeGen/DotNet/ReferenceAssemblyLocator.cs` | Finds and reads the .NET reference assemblies |
 | `CodeGen/DotNet/ReferenceResolver.cs` | Resolves BCL/reference members to Cecil references, with caching |
 | `CodeGen/DotNet/RuntimeLibrary.cs` | Locates `ProLang.Runtime.dll` and names its members |
+| `CodeGen/DotNet/RuntimeOverloads.cs` | Which runtime overload takes a type unboxed; shared with the C# backend |
 | `CodeGen/DotNet/InteropEmitter.cs` | Emits calls into .NET assemblies the program imported |
-| `CodeGen/DotNet/Intrinsics/IntrinsicRegistry.cs` | Table mapping each builtin to the IL that implements it |
+| `CodeGen/DotNet/Intrinsics/Intrinsic.cs` | A builtin's target member, or its bespoke IL sequence |
+| `CodeGen/DotNet/Intrinsics/IntrinsicRegistry.cs` | Table mapping each builtin to an `Intrinsic` |
 | `CodeGen/DotNet/Intrinsics/IntrinsicContext.cs` | What an intrinsic emitter is given |
+| `CodeGen/CSharp/CSharpBackend.cs` | `--emit-csharp` rendering backend |
 | `CodeGen/PreparedProgram.cs` | Result of the shared pre-emit phase check |
 | `src/ProLang.Runtime/` | Managed runtime assembly shipped beside compiled programs |
 
@@ -257,15 +262,17 @@ signatures, locals, and field types, iterating until closed.
 
 ## Outstanding work
 
-- **`Emitter.cs` is ~1,280 lines.** Type mapping, struct emission, function emission, statement
-  emission, and expression emission are all still in it. Metadata resolution, interop, builtins,
-  and per-method state have been extracted.
-- **`CSharpBackend.BuiltinTarget` is maintained by hand** alongside `IntrinsicRegistry`. A builtin
-  missing from it renders as a plain call — readable, but less faithful about where the work
-  happens. Deriving one from the other would need the registry to carry target metadata rather
-  than opaque delegates.
+- **`Emitter.cs` is ~1,300 lines**, holding orchestration plus statement and expression emission.
+  Metadata resolution, type mapping, struct emission, interop, builtins, per-method state, and
+  the runtime library have all been extracted. Splitting expression emission out as well is
+  possible but would mean threading a context object through some thirty methods to produce one
+  file that is still the largest — worth doing only if it starts changing often.
 - **Two reflection stacks.** The binder discovers interop members with `System.Reflection` while
   the emitter needs Cecil, so every interop member is resolved twice. Unifying them is a much
   larger change than this refactor.
 - **Interop overload matching falls back to arity** when parameter type names do not compare
   equal, which is unavoidable while reflection and Cecil spell constructed generics differently.
+- **Overload selection could move into the binder.** Both backends now decide independently which
+  runtime overload a value reaches — `RuntimeOverloads` for .NET, `UnwrapAny` for C. If the binder
+  stopped inserting a conversion to `any` where a typed overload resolves, both could drop their
+  copy. See [boxing.md](boxing.md).
