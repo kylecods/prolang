@@ -1,0 +1,174 @@
+/*
+ * Pixel editor tests — layout.prl
+ *
+ * Layout is the one part of the interface that can be wrong on a machine nobody testing it owns.
+ * The editor is developed on a 100% display and will be run on 125%, 150% and 200% ones, where
+ * the failures are not crashes but a toolbar half a button too narrow, a rule that no longer meets
+ * the bar it edges, or a window taller than the screen.
+ *
+ * So these check the *relationships* — the bar is wide enough for its buttons, the window is
+ * exactly its parts, nothing rounds away to nothing — at every scaling factor Windows offers,
+ * rather than checking particular pixel counts at the one factor this machine happens to have.
+ */
+
+import "array"
+import "testing.prl"
+import "../layout.prl"
+
+// The factors the Windows display settings offer, plus the two extremes of the clamp.
+func test_layout_scales() : array<int> {
+    let scales: array<int> = array_new(8)
+    scales[0] = 100
+    scales[1] = 125
+    scales[2] = 150
+    scales[3] = 175
+    scales[4] = 200
+    scales[5] = 225
+    scales[6] = 250
+    scales[7] = 350
+    return scales
+}
+
+func test_layout_run() : TestRun {
+    let r: TestRun = t_new()
+
+    // ── Scaling ──────────────────────────────────────────────────────────────
+    r = t_eq_int(r, "an unscaled display changes nothing", layout_px(100, 36), 36)
+    r = t_eq_int(r, "125% of 36", layout_px(125, 36), 45)
+    r = t_eq_int(r, "150% of 36", layout_px(150, 36), 54)
+    r = t_eq_int(r, "200% of 36", layout_px(200, 36), 72)
+
+    // Rounded, not truncated: at 150% a truncating divide leaves a 3-pixel gap at 4 and a
+    // 1-pixel rule at 1, and the two errors pull the layout apart in opposite directions.
+    r = t_eq_int(r, "a half rounds up", layout_px(150, 1), 2)
+    r = t_eq_int(r, "125% of 10 is exact", layout_px(125, 10), 13)
+    r = t_eq_int(r, "zero scales to zero", layout_px(150, 0), 0)
+
+    r = t_eq_int(r, "a normal factor passes through", layout_clamp_scale(150), 150)
+    r = t_eq_int(r, "an impossible factor is refused", layout_clamp_scale(0), 100)
+    r = t_eq_int(r, "a factor below 100 is refused", layout_clamp_scale(75), 100)
+    r = t_eq_int(r, "an absurd factor is capped", layout_clamp_scale(9600), 350)
+
+    // ── Invariants at every scaling factor ───────────────────────────────────
+    let scales: array<int> = test_layout_scales()
+    let count: int = scales.length()
+
+    let barFits: int = 0
+    let topBarFits: int = 0
+    let iconFits: int = 0
+    let iconVisible: int = 0
+    let ruleVisible: int = 0
+    let widthAdds: int = 0
+    let heightAdds: int = 0
+    let contentPlaced: int = 0
+    let grows: int = 0
+
+    let i: int = 0
+    while (i < count) {
+        let scale: int = scales[i]
+        let button: int = layout_button(scale)
+        let icon: int = layout_icon(scale)
+
+        // The tool bar has to hold its own two columns of buttons and their margins. Deriving its
+        // width from them rather than stating it is what makes this true by construction, and
+        // this is the check that it stayed that way.
+        let needed: int = (button * layout_tool_columns())
+                          + (layout_button_gap(scale) * (layout_tool_columns() - 1))
+                          + (layout_gap(scale) * 2)
+        if (layout_leftbar(scale) >= needed) {
+            barFits = barFits + 1
+        }
+
+        // A button must fit inside the top bar with room left over, or it touches both edges.
+        if (layout_topbar(scale) >= button + (layout_gap(scale) / 2)) {
+            topBarFits = topBarFits + 1
+        }
+
+        // An icon has to be smaller than the button it sits on, and big enough to identify.
+        if (icon < button) {
+            iconFits = iconFits + 1
+        }
+        if ((icon * 2) >= button) {
+            iconVisible = iconVisible + 1
+        }
+
+        // A hairline must never round down to nothing, whatever the factor.
+        if (layout_divider(scale) >= 1) {
+            ruleVisible = ruleVisible + 1
+        }
+
+        // The window is exactly its parts. If these drift, the canvas and the window disagree
+        // about where the right-hand margin is and the layout looks lopsided.
+        let canvas: int = layout_canvas_width(scale, layout_px(scale, 1400))
+        let palette: int = layout_palette_cell(scale) * 1
+        let tall: int = layout_canvas_height(scale, layout_px(scale, 1000), palette)
+
+        if (layout_window_width(scale, canvas) == layout_side_chrome(scale) + canvas) {
+            widthAdds = widthAdds + 1
+        }
+        if (layout_window_height(scale, tall, palette) == layout_stack_chrome(scale, palette) + tall) {
+            heightAdds = heightAdds + 1
+        }
+
+        // The canvas sits inside the window with a margin on the far side, not flush against it.
+        if (layout_content_x(scale) + canvas + layout_gap(scale) == layout_window_width(scale, canvas)) {
+            contentPlaced = contentPlaced + 1
+        }
+
+        // Everything gets larger as the display does, which is the whole point.
+        if (i > 0) {
+            let smaller: int = scales[i - 1]
+            if (layout_button(scale) > layout_button(smaller)
+                && layout_icon(scale) > layout_icon(smaller)
+                && layout_topbar(scale) > layout_topbar(smaller)
+                && layout_leftbar(scale) > layout_leftbar(smaller)) {
+                grows = grows + 1
+            }
+        }
+
+        i = i + 1
+    }
+
+    r = t_eq_int(r, "the tool bar fits its buttons at every factor", barFits, count)
+    r = t_eq_int(r, "the top bar fits its buttons at every factor", topBarFits, count)
+    r = t_eq_int(r, "an icon fits its button at every factor", iconFits, count)
+    r = t_eq_int(r, "an icon stays identifiable at every factor", iconVisible, count)
+    r = t_eq_int(r, "a rule never vanishes at any factor", ruleVisible, count)
+    r = t_eq_int(r, "the window width is its parts", widthAdds, count)
+    r = t_eq_int(r, "the window height is its parts", heightAdds, count)
+    r = t_eq_int(r, "the canvas keeps its far margin", contentPlaced, count)
+    r = t_eq_int(r, "every metric grows with the display", grows, count - 1)
+
+    // ── The canvas against the room available ────────────────────────────────
+    let palette: int = layout_palette_cell(100) * 2
+
+    // A small screen gets the smallest canvas worth drawing in rather than a negative one.
+    r = t_eq_int(r, "a cramped screen falls back to the minimum width",
+                 layout_canvas_width(100, 200), layout_px(100, 420))
+    r = t_eq_int(r, "a cramped screen falls back to the minimum height",
+                 layout_canvas_height(100, 200, palette), layout_px(100, 300))
+
+    // A very wide monitor does not get a window spanning all of it.
+    r = t_eq_int(r, "a wide screen is capped", layout_canvas_width(100, 6000), layout_px(100, 1040))
+    r = t_eq_int(r, "a tall screen is capped", layout_canvas_height(100, 4000, palette), layout_px(100, 700))
+
+    // Between the two, the canvas takes what is left and the window is exactly the screen.
+    let usable: int = 1000
+    let middling: int = layout_canvas_width(100, usable)
+    r = t_true(r, "a middling screen is not capped", middling < layout_px(100, 1040))
+    r = t_eq_int(r, "a middling screen is used fully", layout_window_width(100, middling), usable)
+
+    // The same window at 200% is about twice the size, which is what "the same window" means on a
+    // display with twice the pixels.
+    let atOne: int = layout_window_width(100, layout_canvas_width(100, 3000))
+    let atTwo: int = layout_window_width(200, layout_canvas_width(200, 6000))
+    r = t_eq_int(r, "the capped window doubles with the display", atTwo, atOne * 2)
+
+    // ── Supersampling ────────────────────────────────────────────────────────
+    // It deliberately does not depend on the display: it is about how many coverage levels an
+    // edge gets, not how many pixels the edge is.
+    r = t_true(r, "icons are supersampled", layout_supersample() > 1)
+    r = t_true(r, "supersampling stays affordable", layout_supersample() <= 4)
+
+    return r
+}

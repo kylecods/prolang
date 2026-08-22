@@ -174,6 +174,70 @@ func doc_scale_into(source: Document, target: Document, factor: int) : void {
     }
 }
 
+/*
+ * Copies `source` into `target` with each `factor` x `factor` block averaged into one pixel.
+ *
+ * The other half of doc_scale_into, and the reason the toolbar icons have smooth edges. prolang
+ * has no anti-aliasing anywhere and shape.prl deliberately writes only solid pixels, so an icon is
+ * drawn several times larger than it will be shown and reduced here — supersampling, which turns
+ * a hard edge into a run of intermediate alphas without any of the drawing code knowing about it.
+ *
+ * Colours are averaged weighted by alpha, and alpha is averaged on its own. Averaging the channels
+ * of a transparent pixel along with the rest is the classic mistake: the fully transparent pixels
+ * outside a glyph are transparent *black*, and letting their zeroed channels into the mean draws
+ * a dark halo around every edge, which is exactly what a resampled icon should not have.
+ */
+func doc_downsample_into(source: Document, target: Document, factor: int) : void {
+    if (factor < 1) {
+        return
+    }
+
+    let rows: int = min(target.height, source.height / factor)
+    let cols: int = min(target.width, source.width / factor)
+    let samples: int = factor * factor
+
+    let y: int = 0
+    while (y < rows) {
+        let x: int = 0
+        while (x < cols) {
+            let alpha: int = 0
+            let red: int = 0
+            let green: int = 0
+            let blue: int = 0
+
+            let dy: int = 0
+            while (dy < factor) {
+                let row: int = ((((y * factor) + dy) * source.width) + (x * factor))
+                let dx: int = 0
+
+                while (dx < factor) {
+                    let sample: int = source.pixels[row + dx]
+                    let a: int = color_a(sample)
+
+                    alpha = alpha + a
+                    red = red + (color_r(sample) * a)
+                    green = green + (color_g(sample) * a)
+                    blue = blue + (color_b(sample) * a)
+
+                    dx = dx + 1
+                }
+
+                dy = dy + 1
+            }
+
+            let blended: int = 0
+
+            if (alpha > 0) {
+                blended = color_argb(alpha / samples, red / alpha, green / alpha, blue / alpha)
+            }
+
+            target.pixels[(y * target.width) + x] = blended
+            x = x + 1
+        }
+        y = y + 1
+    }
+}
+
 // True when both documents have the same dimensions and identical pixels. Used by the tests.
 func doc_equals(a: Document, b: Document) : bool {
     if (a.width != b.width || a.height != b.height) {

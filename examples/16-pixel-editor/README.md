@@ -1,7 +1,7 @@
 # Pixel editor
 
-A pixel art editor written in ProLang, on Windows Forms. Fourteen modules, ~2,600 lines, with a
-331-check test suite also written in ProLang.
+A pixel art editor written in ProLang, on Windows Forms. Sixteen modules, ~3,200 lines, with a
+432-check test suite also written in ProLang.
 
 ```powershell
 .\build.ps1 -Run     # build and start it
@@ -17,18 +17,61 @@ Right-click erases. Single letters select tools (`p` `e` `f` `l` `r` `o` `i`), `
 
 ## The icons are drawn in ProLang
 
-Every toolbar icon is pixel art, drawn at 16x16 by the same rasteriser that draws in the canvas —
-`icons.prl` is Bresenham lines, rectangles and ellipses, the module the editor already had.
+Every toolbar icon is described in `icons.prl` as geometry on a 48-unit square — strokes of one
+weight with round caps, discs, arcs and rounded rectangles — and rasterised at whatever pixel size
+the display calls for. There is no authored resolution and there are no image files.
 
-That is worth doing rather than shipping PNGs. The icons recolour themselves for each theme,
-because they are *drawn* from theme colours rather than tinted. They stay sharp at any integer
-zoom, because `doc_scale_into` repeats pixels instead of resampling. There are no binary assets to
-keep in step with the source. And an editor whose own buttons are pixel art looks like nothing
-else.
+That is worth doing rather than shipping PNGs. A set of PNGs needs one file per size per theme,
+is still wrong at the next scaling factor Windows offers, and has to be kept in step with a colour
+scheme it cannot see. These follow the theme because they are drawn from its colours, and they
+follow the display because they have no fixed size.
+
+**Smooth edges without an anti-aliasing rasteriser.** `shape.prl` only ever writes solid pixels.
+Each icon is drawn four times oversized and averaged down by `doc_downsample_into`, so every
+intermediate shade in the finished glyph comes from coverage rather than from any drawing code
+knowing about it. Supersampling is a dozen lines and applies to every shape at once, including
+where two of them overlap — a rasteriser computing coverage per shape would have to decide what
+happens where an outline crosses its own fill, and would get it visibly wrong along every seam.
+
+Colours are averaged **weighted by alpha**. The pixels outside a glyph are transparent *black*, and
+letting their zeroed channels into the mean draws a dark halo around every edge.
 
 `test_icons.prl` covers what can go mechanically wrong with a drawn icon: one that draws nothing,
-one that spills outside its grid, one that uses a colour it was not handed and so ignores the
-theme, and any two that come out identical.
+one that fills its box, one that loses its margin, one that uses a colour it was not handed and so
+ignores the theme, and any two that come out identical. It also checks the property that makes the
+set resolution independent — the same glyph at twice the size covers the same *share* of its box —
+which is what catches a coordinate accidentally written in pixels, since that looks perfectly
+correct at whatever size the author happened to try.
+
+## It sizes itself to the display
+
+Every measurement in the interface is a function of the display's scaling factor and the room the
+screen has, in `layout.prl`. Sizes are written once at 100% and scaled through `layout_px`.
+
+The editor used to hard-code its pixels. On a 96-dpi display that is right; on the 150% and 200%
+displays laptops now ship with it is wrong in the worst way, because everything still *works* — it
+is just half the size it should be, with 36-pixel buttons measuring 18 real points. Windows papers
+over that by stretching the finished window, which is exactly what makes an application look dated.
+
+So the process is DPI aware and does its own scaling. Windows Forms is told **not** to scale
+anything (`AutoScaleMode.None`), for a reason particular to this program: the canvas maps one image
+pixel to an exact whole number of screen pixels, and a framework free to apply a 1.5x factor
+somewhere in that chain puts a fractional offset in it. The visible result is a brush that paints
+the pixel next to the one under the cursor.
+
+Awareness is *system*, not per-monitor. A per-monitor process is told its factor has changed when
+the window is dragged to another display and is expected to lay itself out again — a message this
+program has nowhere to deliver, since the ProLang side reads its metrics once while building the
+window. System awareness fixes the factor for the life of the process, which is a promise this
+design can keep.
+
+The window is also sized from the screen rather than to a constant, so it does not open taller than
+the display it is on, and does not span all of a very wide one either.
+
+`test_layout.prl` checks the *relationships* at every factor Windows offers — the bar is wide
+enough for its own buttons, the window is exactly its parts, a hairline never rounds away to
+nothing, an icon stays smaller than its button and large enough to identify — rather than checking
+pixel counts at the one factor the development machine happens to have.
 
 ## Themes
 
@@ -59,14 +102,16 @@ being runnable under `dotnet test`.
 | `color.prl` | ARGB packing and unpacking |
 | `document.prl` | the image: a flat pixel buffer and its size |
 | `intstack.prl` | an explicit stack, for the flood fill |
-| `raster.prl` | lines, rectangles, ellipses, brushes |
+| `raster.prl` | lines, rectangles, ellipses, brushes — for the image being edited |
+| `shape.prl` | discs, arcs, round-capped strokes, polygons — for the interface |
 | `fill.prl` | flood fill |
 | `history.prl` | undo and redo, as a ring of whole-image snapshots |
 | `palette.prl` | the sixteen colours and the swatch strip |
 | `view.prl` | zoom and pan arithmetic |
 | `tools.prl` | the press / drag / release state machine |
 | `theme.prl` | the four themes, as a colour per role |
-| `icons.prl` | every toolbar icon, drawn as 16x16 pixel art |
+| `icons.prl` | every toolbar icon, as geometry on a 48-unit square |
+| `layout.prl` | every size in the interface, as a function of the display |
 | `render.prl` | the boundary: hands model state to the shim |
 | `app.prl` | window construction and the event loop |
 
@@ -131,7 +176,10 @@ tests require a zero exit code and empty stderr. Before `assert` existed a ProLa
 could only print the word "failed" and still exit 0.
 
 The C# shim has its own suite at `src/WinFormsHelper.Tests/` covering the event queue's coalescing
-and overflow rules and the pixel-blit and PNG round-trips.
+and overflow rules, the pixel-blit and PNG round-trips, and the display metrics. Those last cannot
+assert a particular scaling factor — it is whatever the machine running the tests is set to, and a
+test expecting 100% would fail on any scaled laptop — so they assert that the numbers are usable
+and that two calls agree, which is what the layout depends on because it reads them once.
 
 ## Notes
 

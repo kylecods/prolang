@@ -1,0 +1,201 @@
+/*
+ * Pixel editor — layout metrics
+ *
+ * Every size in the interface, as a function of the display's scaling factor and how much room
+ * the screen actually has. Pure prolang; exercised by tests/test_layout.prl.
+ *
+ * ── Why this is a module and not a handful of constants ──────────────────────
+ *
+ * The editor used to hard-code its sizes in pixels. On a 96-dpi display that is right, and on the
+ * 150% and 200% displays that laptops now ship with it is wrong in the worst way: everything still
+ * *works*, it is just half the size it should be, with 36-pixel buttons that measure 18 real
+ * points and icons too small to identify. Windows can paper over that by stretching the whole
+ * window, but stretching a bitmap is what makes an application look dated.
+ *
+ * So the shim reports the scaling factor and the usable screen area, and everything here is
+ * derived from them. Sizes below are given at 100% and scaled once, in layout_px.
+ *
+ * ── Why the scaling is done here rather than by Windows Forms ────────────────
+ *
+ * Windows Forms can rescale a window's contents itself. It is not used because this program
+ * positions every control by hand and, more importantly, because the canvas maps one image pixel
+ * to an exact whole number of screen pixels. A framework free to apply a 1.5x factor to anything
+ * it likes would put a fractional offset somewhere in that chain, and the visible result is a
+ * brush that paints the pixel next to the one under the cursor. Doing the arithmetic here keeps
+ * every coordinate an integer that this program chose.
+ */
+
+import "math"
+import "util.prl"
+
+// ── The scaling factor ───────────────────────────────────────────────────────
+
+// What the shim reports on a display that is not scaled at all.
+func layout_scale_base() : int {
+    return 100
+}
+
+/*
+ * Converts a size measured at 100% into one for the display in use.
+ *
+ * Rounded rather than truncated: at 150% a truncating divide turns a 1-pixel hairline into 1 and
+ * a 3-pixel gap into 4, and the accumulated error shows up as a toolbar whose buttons no longer
+ * line up with the rule beneath them.
+ */
+func layout_px(scale: int, logical: int) : int {
+    return ((logical * scale) + (layout_scale_base() / 2)) / layout_scale_base()
+}
+
+/*
+ * Constrains a reported scaling factor to something the layout can survive.
+ *
+ * Windows offers 100% to 350% through the settings app, and a display that reports something
+ * outside that is more likely to be a bad reading than a real configuration.
+ */
+func layout_clamp_scale(scale: int) : int {
+    return util_clamp(scale, layout_scale_base(), 350)
+}
+
+// ── Chrome ───────────────────────────────────────────────────────────────────
+
+// The side of a toolbar button.
+func layout_button(scale: int) : int {
+    return layout_px(scale, 36)
+}
+
+/*
+ * The side of the glyph drawn on a button.
+ *
+ * A little over half the button, which is the proportion that leaves an icon looking placed rather
+ * than crammed in. It is the one measurement the icons themselves care about: everything in
+ * icons.prl is in units of a 48-unit square, and this is what a unit turns out to be worth.
+ */
+func layout_icon(scale: int) : int {
+    return layout_px(scale, 20)
+}
+
+/*
+ * How many times oversized an icon is drawn before being averaged down.
+ *
+ * This is what anti-aliases them, and it does not scale with the display: 4x4 gives sixteen
+ * coverage levels per output pixel, which is past the point where an edge looks stepped, and
+ * raising it costs quadratically for no visible gain.
+ */
+func layout_supersample() : int {
+    return 4
+}
+
+// Space between two buttons in the same group.
+func layout_button_gap(scale: int) : int {
+    return layout_px(scale, 4)
+}
+
+// Space either side of the rule that separates two groups of buttons.
+func layout_group_gap(scale: int) : int {
+    return layout_px(scale, 10)
+}
+
+// The margin used between the major regions of the window.
+func layout_gap(scale: int) : int {
+    return layout_px(scale, 10)
+}
+
+// A hairline rule. Never allowed to round down to nothing.
+func layout_divider(scale: int) : int {
+    return max(1, layout_px(scale, 1))
+}
+
+func layout_topbar(scale: int) : int {
+    return layout_px(scale, 58)
+}
+
+// The tools are laid out in a grid this many columns wide.
+func layout_tool_columns() : int {
+    return 2
+}
+
+/*
+ * The width of the tool bar down the left side.
+ *
+ * Derived from what it has to hold rather than given as its own number, so that changing the
+ * button size cannot leave the bar too narrow for its own contents.
+ */
+func layout_leftbar(scale: int) : int {
+    let columns: int = layout_tool_columns()
+    let buttons: int = layout_button(scale) * columns
+    let gaps: int = layout_button_gap(scale) * (columns - 1)
+
+    return buttons + gaps + (layout_gap(scale) * 2)
+}
+
+// The side of one palette swatch.
+func layout_palette_cell(scale: int) : int {
+    return layout_px(scale, 26)
+}
+
+func layout_status(scale: int) : int {
+    return layout_px(scale, 28)
+}
+
+// Point size for the status bar's monospaced text. Point sizes are already scaled by Windows.
+func layout_status_font() : int {
+    return 9
+}
+
+// ── The canvas ───────────────────────────────────────────────────────────────
+
+/*
+ * Everything the window needs beside the canvas.
+ *
+ * Kept separate from layout_canvas_width so the window arithmetic and the canvas arithmetic
+ * cannot drift apart: the canvas takes what is left, and this is the definition of "the rest".
+ */
+func layout_side_chrome(scale: int) : int {
+    return layout_leftbar(scale) + (layout_gap(scale) * 2)
+}
+
+// Everything the window needs above and below the canvas, given the palette strip's height.
+func layout_stack_chrome(scale: int, paletteHeight: int) : int {
+    return layout_topbar(scale) + (layout_gap(scale) * 4) + paletteHeight + layout_status(scale)
+}
+
+/*
+ * How wide the canvas should be, given the room available.
+ *
+ * Clamped at both ends. The lower bound is a canvas still worth drawing in when the window has
+ * been squeezed onto a small screen; the upper bound stops the editor opening full-width on a
+ * wide monitor, where a window occupying every pixel of a 34-inch display is not what anyone
+ * wanted. Both bounds are themselves scaled, because they are sizes on a screen like any other.
+ */
+func layout_canvas_width(scale: int, usableWidth: int) : int {
+    let available: int = usableWidth - layout_side_chrome(scale)
+
+    return util_clamp(available, layout_px(scale, 420), layout_px(scale, 1040))
+}
+
+func layout_canvas_height(scale: int, usableHeight: int, paletteHeight: int) : int {
+    let available: int = usableHeight - layout_stack_chrome(scale, paletteHeight)
+
+    return util_clamp(available, layout_px(scale, 300), layout_px(scale, 700))
+}
+
+// ── The window ───────────────────────────────────────────────────────────────
+
+// The client width the window needs to hold a canvas of the given width.
+func layout_window_width(scale: int, canvasWidth: int) : int {
+    return layout_side_chrome(scale) + canvasWidth
+}
+
+func layout_window_height(scale: int, canvasHeight: int, paletteHeight: int) : int {
+    return layout_stack_chrome(scale, paletteHeight) + canvasHeight
+}
+
+// Where the canvas and everything below it begins, to the right of the tool bar.
+func layout_content_x(scale: int) : int {
+    return layout_leftbar(scale) + layout_gap(scale)
+}
+
+// Where the canvas begins, below the top bar.
+func layout_content_y(scale: int) : int {
+    return layout_topbar(scale) + layout_gap(scale)
+}

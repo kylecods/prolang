@@ -62,10 +62,25 @@ public static partial class WinFormsHelper
     /// Prepares the process for Windows Forms. Must run before any control is created.
     /// </summary>
     /// <remarks>
-    /// DPI awareness is set to unaware on purpose. A pixel editor maps one document pixel to an
-    /// exact integer number of screen pixels; if Windows rescales the window, that mapping stops
-    /// being integral and the coordinate arithmetic in the prolang program — which has no idea
-    /// scaling happened — starts selecting the wrong pixel near the edges of the canvas.
+    /// <para>
+    /// The process is made DPI aware, and then does its own scaling: a prolang program asks for
+    /// <see cref="GetDpiScalePercent"/> and multiplies its own sizes. The alternative — declaring
+    /// the process unaware and letting Windows stretch the finished window — is what makes an
+    /// application look dated on a modern laptop, because a stretched bitmap is blurry at every
+    /// scaling factor that is not a whole number.
+    /// </para>
+    /// <para>
+    /// <see cref="HighDpiMode.SystemAware"/> rather than per-monitor: a per-monitor process is
+    /// told its scaling factor has changed when the window is dragged to another display, and is
+    /// expected to lay itself out again. That is a message this program has nowhere to deliver,
+    /// since the prolang side reads its metrics once while building the window. System awareness
+    /// fixes the factor for the life of the process, which is a promise this design can keep.
+    /// </para>
+    /// <para>
+    /// Awareness is safe for the canvas because Windows Forms is never asked to scale anything:
+    /// forms are created with <see cref="AutoScaleMode.None"/>, so one image pixel still maps to a
+    /// whole number of screen pixels and the prolang coordinate arithmetic stays exact.
+    /// </para>
     /// </remarks>
     public static void InitApplication()
     {
@@ -74,13 +89,65 @@ public static partial class WinFormsHelper
 
         try
         {
-            Application.SetHighDpiMode(HighDpiMode.DpiUnaware);
+            Application.SetHighDpiMode(HighDpiMode.SystemAware);
         }
         catch (InvalidOperationException)
         {
             // Already set, which happens if a form was created first. Not worth failing over.
         }
     }
+
+    // ── Display metrics ───────────────────────────────────────────────────────
+
+    /// <summary>
+    /// The display's scaling factor as a percentage: 100 unscaled, 150 at "150%", and so on.
+    /// </summary>
+    /// <remarks>
+    /// Reported as a percentage rather than a ratio because prolang has no floating point, and as
+    /// a whole number of percent rather than the raw dots per inch because that is the number the
+    /// user chose in the settings app — a program that scales by 150/100 produces the sizes the
+    /// display was configured to show.
+    /// </remarks>
+    public static int GetDpiScalePercent()
+    {
+        try
+        {
+            using var probe = new Control();
+
+            if (probe.DeviceDpi > 0)
+            {
+                return Math.Clamp(probe.DeviceDpi * 100 / 96, 100, 400);
+            }
+        }
+        catch (InvalidOperationException)
+        {
+            // No display to ask, which happens in a headless test host.
+        }
+
+        return 100;
+    }
+
+    /// <summary>
+    /// The widest client area a window can have and still fit on the primary display.
+    /// </summary>
+    /// <remarks>
+    /// The <em>client</em> area, not the window: <see cref="CreateForm"/> takes a client size, and
+    /// a window is larger than its client area by its border and title bar. Returning the budget
+    /// the caller can actually spend means the sizing arithmetic on the prolang side has nothing
+    /// to know about window frames.
+    /// </remarks>
+    public static int GetUsableClientWidth()
+        => Math.Max(320, WorkArea().Width - (SystemInformation.FrameBorderSize.Width * 2));
+
+    /// <summary>The tallest client area a window can have and still fit on the primary display.</summary>
+    public static int GetUsableClientHeight()
+        => Math.Max(240, WorkArea().Height
+                         - SystemInformation.CaptionHeight
+                         - (SystemInformation.FrameBorderSize.Height * 2));
+
+    /// <summary>The primary display minus the taskbar, or a conservative guess if there is none.</summary>
+    private static Rectangle WorkArea()
+        => Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1280, 720);
 
     // ── Canvas ────────────────────────────────────────────────────────────────
 

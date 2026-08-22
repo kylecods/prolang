@@ -73,39 +73,48 @@ func render_palette(canvasId: int, bitmapId: int, strip: Document, cell: int, co
 // ── Icons ────────────────────────────────────────────────────────────────────
 
 /*
- * Draws one icon and hands it to the shim as a bitmap.
+ * Draws one icon at `pixels` square and hands it to the shim as a bitmap.
  *
- * The glyph is authored at 16x16 and enlarged by whole-pixel repetition, so the result is crisp
- * pixel art at any scale rather than a blurred resample. Pixels the icon did not draw stay
- * transparent, which is what lets the button's own background — hover, pressed, selected — show
- * through the glyph.
+ * Drawn `supersample` times larger and averaged down, which is where the smooth edges come from.
+ * Nothing in shape.prl or icons.prl knows this is happening: they write solid pixels, and every
+ * intermediate shade in the finished glyph is produced here by doc_downsample_into.
+ *
+ * Supersampling rather than an anti-aliasing rasteriser because it is a dozen lines that apply to
+ * every shape at once, including the places where two of them overlap. A rasteriser that computed
+ * coverage per shape would have to decide what happens where an outline crosses its own fill, and
+ * would get it visibly wrong along every such seam.
+ *
+ * Pixels the icon did not draw stay fully transparent, which is what lets a button's own
+ * background — hover, pressed, selected — show through the glyph.
  */
-func render_icon_bitmap(icon: int, ink: int, accent: int, scale: int) : int {
-    let glyph: Document = doc_new(icon_size(), icon_size(), 0)
-    icon_draw(glyph, icon, ink, accent)
+func render_icon_bitmap(icon: int, ink: int, accent: int, pixels: int, supersample: int) : int {
+    let oversized: Document = doc_new(pixels * supersample, pixels * supersample, 0)
+    icon_draw(oversized, icon, ink, accent)
 
-    let enlarged: Document = doc_new(icon_size() * scale, icon_size() * scale, 0)
-    doc_scale_into(glyph, enlarged, scale)
+    let glyph: Document = doc_new(pixels, pixels, 0)
+    doc_downsample_into(oversized, glyph, supersample)
 
-    let bitmap: int = WinFormsHelper.CreateBitmap(enlarged.width, enlarged.height)
-    WinFormsHelper.SetPixels(bitmap, enlarged.pixels, enlarged.width, enlarged.height)
+    let bitmap: int = WinFormsHelper.CreateBitmap(glyph.width, glyph.height)
+    WinFormsHelper.SetPixels(bitmap, glyph.pixels, glyph.width, glyph.height)
 
     return bitmap
 }
 
 /*
- * Rebuilds every icon in the theme's colours, filling `bitmaps` by icon id.
+ * Rebuilds every icon at the display's size in the theme's colours, filling `bitmaps` by icon id.
  *
  * Icons are redrawn rather than tinted because they are drawn from theme colours in the first
- * place; a theme switch is just another pass over the same code.
+ * place; a theme switch is just another pass over the same code. Redrawing is also what keeps them
+ * sharp, since there is no source resolution to enlarge from — the glyph is described in units and
+ * only becomes pixels here.
  */
-func render_build_icons(bitmaps: array<int>, activeTheme: int, scale: int) : void {
+func render_build_icons(bitmaps: array<int>, activeTheme: int, pixels: int, supersample: int) : void {
     let ink: int = theme_text(activeTheme)
     let accent: int = theme_accent(activeTheme)
 
     let i: int = 0
     while (i < icon_count()) {
-        bitmaps[i] = render_icon_bitmap(i, ink, accent, scale)
+        bitmaps[i] = render_icon_bitmap(i, ink, accent, pixels, supersample)
         i = i + 1
     }
 }
@@ -129,6 +138,11 @@ func render_free_icons(bitmaps: array<int>) : void {
  *
  * `selected` marks the active tool: a filled background and an accent border, rather than a
  * different icon, so the state is visible without the icon having to encode it.
+ *
+ * An unselected button has no border at all. Outlining every one turns a toolbar into a grid of
+ * boxes, and the boxes carry no information — which button the pointer is over and which tool is
+ * active are both already said by the background. Leaving the border to the selected button alone
+ * means the one box on screen is the one worth looking at.
  */
 func render_style_button(buttonId: int, activeTheme: int, selected: bool) : void {
     WinFormsHelper.SetFlatStyle(buttonId,
@@ -141,7 +155,7 @@ func render_style_button(buttonId: int, activeTheme: int, selected: bool) : void
         WinFormsHelper.SetFlatBorder(buttonId, theme_accent(activeTheme), 2)
     } else {
         WinFormsHelper.SetBackColor(buttonId, theme_surface(activeTheme))
-        WinFormsHelper.SetFlatBorder(buttonId, theme_border(activeTheme), 1)
+        WinFormsHelper.SetFlatBorder(buttonId, theme_border(activeTheme), 0)
     }
 
     WinFormsHelper.SetForeColor(buttonId, theme_text(activeTheme))

@@ -74,6 +74,61 @@ func test_document_run() : TestRun {
     r = t_eq_int(r, "copy_into copies overlap", doc_count_colour(large, red), 4)
     r = t_eq_int(r, "copy_into leaves the rest", doc_get(large, 3, 3), 0)
 
+    // ── Downsampling ─────────────────────────────────────────────────────────
+    // The toolbar icons are drawn oversized and reduced through this, so it is what turns a hard
+    // edge into a run of alphas. Everything about it that can be checked exactly is checked here.
+
+    // A block of one colour averages to itself, not to something a shade off.
+    let flat: Document = doc_new(8, 8, red)
+    let reduced: Document = doc_new(2, 2, 0)
+    doc_downsample_into(flat, reduced, 4)
+    r = t_eq_int(r, "a solid block keeps its colour", doc_count_colour(reduced, red), 4)
+
+    // Half covered gives half the alpha and none of the transparent pixels' colour. Averaging the
+    // channels of a transparent pixel along with the rest is what puts a dark halo around a glyph.
+    let half: Document = doc_new(2, 2, 0)
+    doc_set(half, 0, 0, red)
+    doc_set(half, 1, 0, red)
+
+    let averaged: Document = doc_new(1, 1, 0)
+    doc_downsample_into(half, averaged, 2)
+
+    let blend: int = doc_get(averaged, 0, 0)
+    r = t_eq_int(r, "half coverage halves the alpha", color_a(blend), 127)
+    r = t_eq_int(r, "half coverage keeps the red", color_r(blend), 255)
+    r = t_eq_int(r, "half coverage does not darken", color_g(blend), 0)
+    r = t_eq_int(r, "half coverage does not tint blue", color_b(blend), 0)
+
+    // Nothing covered stays fully transparent rather than becoming transparent black with a
+    // colour attached, which would show up the moment the pixel was composited over anything.
+    let empty: Document = doc_new(4, 4, 0)
+    let stillEmpty: Document = doc_new(2, 2, red)
+    doc_downsample_into(empty, stillEmpty, 2)
+    r = t_eq_int(r, "empty blocks reduce to nothing", doc_count_colour(stillEmpty, 0), 4)
+
+    // Two colours in equal measure meet in the middle.
+    let mixed: Document = doc_new(2, 2, red)
+    doc_set(mixed, 0, 0, blue)
+    doc_set(mixed, 1, 0, blue)
+
+    let mixedOut: Document = doc_new(1, 1, 0)
+    doc_downsample_into(mixed, mixedOut, 2)
+    let mix: int = doc_get(mixedOut, 0, 0)
+    r = t_eq_int(r, "a full block stays opaque", color_a(mix), 255)
+    r = t_eq_int(r, "two colours meet in the middle", color_r(mix), 127)
+    r = t_eq_int(r, "the other channel meets too", color_b(mix), 127)
+
+    // A factor of one is a copy, and a factor below one is refused rather than corrupting the
+    // target — the same rule doc_scale_into follows.
+    let identity: Document = doc_new(3, 3, red)
+    let copied: Document = doc_new(3, 3, 0)
+    doc_downsample_into(identity, copied, 1)
+    r = t_true(r, "downsampling by one is a copy", doc_equals(identity, copied))
+
+    let untouched: Document = doc_new(3, 3, blue)
+    doc_downsample_into(identity, untouched, 0)
+    r = t_eq_int(r, "a factor below one is ignored", doc_count_colour(untouched, blue), 9)
+
     return r
 }
 

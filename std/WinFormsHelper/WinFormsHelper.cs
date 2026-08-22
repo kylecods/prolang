@@ -35,11 +35,25 @@ public static partial class WinFormsHelper
     // ── Form lifecycle ────────────────────────────────────────────────────────
 
     /// <summary>Creates a new Form. Returns an int handle (prolang int ↔ .NET int, one-to-one).</summary>
+    /// <remarks>
+    /// <para>
+    /// <see cref="AutoScaleMode.None"/> is deliberate. The process is DPI aware (see
+    /// <see cref="InitApplication"/>), and a prolang program scales its own sizes from
+    /// <see cref="GetDpiScalePercent"/>; letting Windows Forms apply a second factor on top would
+    /// scale everything twice.
+    /// </para>
+    /// <para>
+    /// It also keeps the sizes exact. Automatic scaling multiplies every coordinate by a
+    /// fractional factor and rounds, which is fine for a form of labels and unacceptable for one
+    /// holding a canvas that maps an image pixel to a whole number of screen pixels.
+    /// </para>
+    /// </remarks>
     public static int CreateForm(string title, int width, int height)
     {
         var form = new Form
         {
             Text = title,
+            AutoScaleMode = AutoScaleMode.None,
             ClientSize = new Size(width, height),
             StartPosition = FormStartPosition.CenterScreen,
         };

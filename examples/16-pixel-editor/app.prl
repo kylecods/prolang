@@ -29,6 +29,7 @@ import "history.prl"
 import "render.prl"
 import "theme.prl"
 import "icons.prl"
+import "layout.prl"
 import "util.prl"
 
 // Event kinds, matching PrlEventKind in std/WinFormsHelper/EventQueue.cs.
@@ -96,18 +97,11 @@ enum Mod {
 
 // ── Layout ───────────────────────────────────────────────────────────────────
 
-func app_icon_scale() : int    { return 2 }
-func app_button() : int        { return 38 }
-func app_gap() : int           { return 8 }
-func app_topbar_height() : int { return 54 }
-func app_leftbar_width() : int { return 92 }
-func app_tool_columns() : int  { return 2 }
-
-func app_canvas_width() : int  { return 820 }
-func app_canvas_height() : int { return 560 }
-func app_palette_cell() : int  { return 26 }
+/*
+ * Sizes live in layout.prl, as functions of the display's scaling factor. What is left here is
+ * the handful of numbers that are not sizes at all.
+ */
 func app_palette_columns() : int { return 16 }
-func app_status_height() : int { return 26 }
 
 func app_default_width() : int  { return 64 }
 func app_default_height() : int { return 64 }
@@ -125,19 +119,29 @@ func app_run() : void
 {
     WinFormsHelper.InitApplication()
 
-    let gap: int = app_gap()
-    let canvasW: int = app_canvas_width()
-    let canvasH: int = app_canvas_height()
-    let cell: int = app_palette_cell()
+    /*
+     * Nothing below is a fixed number of pixels.
+     *
+     * The scaling factor is what the display is configured for — 150 on a 150% laptop screen — and
+     * every size comes from it through layout.prl. The usable client area is the screen minus the
+     * taskbar and the window's own frame, which is what stops the editor opening taller than the
+     * display it is on. Both are read once: the window is built from them and does not rebuild.
+     */
+    let scale: int = layout_clamp_scale(WinFormsHelper.GetDpiScalePercent())
+    let gap: int = layout_gap(scale)
+    let cell: int = layout_palette_cell(scale)
     let columns: int = app_palette_columns()
     let stripW: int = cell * columns
     let stripH: int = cell * palette_rows(columns)
 
-    let contentX: int = app_leftbar_width() + gap
-    let contentY: int = app_topbar_height() + gap
+    let canvasW: int = layout_canvas_width(scale, WinFormsHelper.GetUsableClientWidth())
+    let canvasH: int = layout_canvas_height(scale, WinFormsHelper.GetUsableClientHeight(), stripH)
 
-    let formW: int = contentX + canvasW + gap
-    let formH: int = contentY + canvasH + gap + stripH + gap + app_status_height() + gap
+    let contentX: int = layout_content_x(scale)
+    let contentY: int = layout_content_y(scale)
+
+    let formW: int = layout_window_width(scale, canvasW)
+    let formH: int = layout_window_height(scale, canvasH, stripH)
 
     let form: int = WinFormsHelper.CreateForm("ProLang Pixel Editor", formW, formH)
 
@@ -145,9 +149,9 @@ func app_run() : void
     // The rules are children of the bars they edge, not of the form. Windows Forms adds each new
     // control to the *back* of the z-order, so anything placed on the form after a bar would be
     // covered by it — which is also why the toolbar buttons below are parented to the bars.
-    let topBar: int = WinFormsHelper.CreatePanel(0, 0, formW, app_topbar_height())
-    let leftBar: int = WinFormsHelper.CreatePanel(0, app_topbar_height(), app_leftbar_width(),
-                                                  formH - app_topbar_height())
+    let topBar: int = WinFormsHelper.CreatePanel(0, 0, formW, layout_topbar(scale))
+    let leftBar: int = WinFormsHelper.CreatePanel(0, layout_topbar(scale), layout_leftbar(scale),
+                                                  formH - layout_topbar(scale))
 
     WinFormsHelper.AddControl(form, topBar)
     WinFormsHelper.AddControl(form, leftBar)
@@ -160,7 +164,7 @@ func app_run() : void
     let strip: int = WinFormsHelper.CreateCanvas(contentX + stripH + gap, paletteY, stripW, stripH)
 
     let status: int = WinFormsHelper.CreateLabel("", contentX, paletteY + stripH + gap,
-                                                 canvasW, app_status_height())
+                                                 canvasW, layout_status(scale))
 
     WinFormsHelper.AddControl(form, canvas)
     WinFormsHelper.AddControl(form, swatch)
@@ -168,7 +172,10 @@ func app_run() : void
     WinFormsHelper.AddControl(form, status)
 
     WinFormsHelper.SetBorderStyle(swatch, 1)
-    WinFormsHelper.SetFont(status, "Consolas", 9, false)
+
+    // Point sizes are already in physical units, so the one number here that is not scaled by
+    // hand is the one Windows scales itself.
+    WinFormsHelper.SetFont(status, "Consolas", layout_status_font(), false)
     WinFormsHelper.SetCrosshairCursor(canvas, true)
     WinFormsHelper.SetHandCursor(strip, true)
 
@@ -180,7 +187,7 @@ func app_run() : void
     let dividers: array<int> = array_new(app_divider_count())
 
     WinFormsHelper.BeginLayout(form)
-    app_build_toolbars(topBar, leftBar, buttons, iconOf, dividers, formW, formH)
+    app_build_toolbars(topBar, leftBar, buttons, iconOf, dividers, formW, formH, scale)
     WinFormsHelper.EndLayout(form)
 
     // ── Model ────────────────────────────────────────────────────────────────
@@ -206,7 +213,7 @@ func app_run() : void
     let icons: array<int> = array_new(icon_count())
     let activeTheme: int = Theme.MIDNIGHT
 
-    app_apply_theme(activeTheme, form, topBar, leftBar, canvas, status, swatch,
+    app_apply_theme(activeTheme, scale, form, topBar, leftBar, canvas, status, swatch,
                     buttons, iconOf, dividers, icons, stroke.tool)
 
     WinFormsHelper.EnableMouseInput(canvas)
@@ -328,7 +335,7 @@ func app_run() : void
                 }
             } elif (ev[3] == Key.T) {
                 activeTheme = theme_next(activeTheme)
-                app_apply_theme(activeTheme, form, topBar, leftBar, canvas, status, swatch,
+                app_apply_theme(activeTheme, scale, form, topBar, leftBar, canvas, status, swatch,
                                 buttons, iconOf, dividers, icons, stroke.tool)
                 render_palette(strip, stripImage, swatches, cell, columns, selected)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
@@ -357,7 +364,7 @@ func app_run() : void
                 app_mark_selected_tool(buttons, activeTheme, stroke.tool)
             } elif (tag == Cmd.THEME) {
                 activeTheme = theme_next(activeTheme)
-                app_apply_theme(activeTheme, form, topBar, leftBar, canvas, status, swatch,
+                app_apply_theme(activeTheme, scale, form, topBar, leftBar, canvas, status, swatch,
                                 buttons, iconOf, dividers, icons, stroke.tool)
                 render_palette(strip, stripImage, swatches, cell, columns, selected)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
@@ -448,22 +455,29 @@ func app_run() : void
  * right picture to each button without rediscovering the layout.
  */
 func app_build_toolbars(topBar: int, leftBar: int, buttons: array<int>, iconOf: array<int>,
-                        dividers: array<int>, formW: int, formH: int) : void {
-    let size: int = app_button()
-    let gap: int = app_gap()
+                        dividers: array<int>, formW: int, formH: int, scale: int) : void {
+    let size: int = layout_button(scale)
+    let gap: int = layout_gap(scale)
+    let group: int = layout_group_gap(scale)
+    let rule: int = layout_divider(scale)
+    let topbar: int = layout_topbar(scale)
+
+    // The distance from one button to the next within a group, which is the only spacing the
+    // positions below need: every button in a bar is the same size.
+    let step: int = size + layout_button_gap(scale)
 
     // The rules edging each bar, parented to the bar so they sit in front of it.
-    dividers[0] = app_add_divider(topBar, 0, app_topbar_height() - 1, formW, 1)
-    dividers[1] = app_add_divider(leftBar, app_leftbar_width() - 1, 0, 1, formH - app_topbar_height())
+    dividers[0] = app_add_divider(topBar, 0, topbar - rule, formW, rule)
+    dividers[1] = app_add_divider(leftBar, layout_leftbar(scale) - rule, 0, rule, formH - topbar)
 
     // ── Left: tools, in a two-column grid ────────────────────────────────────
     // Coordinates are relative to the bar, which is the control they are parented to.
-    let columns: int = app_tool_columns()
+    let columns: int = layout_tool_columns()
     let tool: int = 0
 
     while (tool < tool_count()) {
-        let x: int = gap + ((tool % columns) * (size + 2))
-        let y: int = gap + ((tool / columns) * (size + 2))
+        let x: int = gap + ((tool % columns) * step)
+        let y: int = gap + ((tool / columns) * step)
 
         buttons[tool] = app_add_button(leftBar, x, y, size, size,
                                        Cmd.TOOL_BASE + tool, tool_name(tool))
@@ -473,51 +487,54 @@ func app_build_toolbars(topBar: int, leftBar: int, buttons: array<int>, iconOf: 
 
     // Brush size, below the tools and separated from them by a rule.
     let toolRows: int = (tool_count() + columns - 1) / columns
-    let sizeRowY: int = gap + (toolRows * (size + 2)) + gap
+    let sizeRowY: int = gap + (toolRows * step) + group
 
-    dividers[2] = app_add_divider(leftBar, gap, sizeRowY - (gap / 2), (size * 2) + 2, 1)
+    dividers[2] = app_add_divider(leftBar, gap, sizeRowY - (group / 2), step + size, rule)
 
     buttons[9] = app_add_button(leftBar, gap, sizeRowY, size, size, Cmd.SIZE_DOWN, "Smaller brush")
     iconOf[9] = Icon.SIZE_DOWN
-    buttons[10] = app_add_button(leftBar, gap + size + 2, sizeRowY, size, size, Cmd.SIZE_UP, "Larger brush")
+    buttons[10] = app_add_button(leftBar, gap + step, sizeRowY, size, size, Cmd.SIZE_UP, "Larger brush")
     iconOf[10] = Icon.SIZE_UP
 
     // ── Top: file, edit, view, theme ─────────────────────────────────────────
-    let y: int = (app_topbar_height() - size) / 2
+    // A rule stands between each group, inset from the button's full height so it reads as a
+    // separator rather than as another edge of the bar.
+    let y: int = (topbar - size) / 2
+    let inset: int = size / 5
     let x: int = gap
 
     buttons[11] = app_add_button(topBar, x, y, size, size, Cmd.NEW, "New image")
     iconOf[11] = Icon.NEW
-    x = x + size + 2
+    x = x + step
     buttons[12] = app_add_button(topBar, x, y, size, size, Cmd.OPEN, "Open a PNG")
     iconOf[12] = Icon.OPEN
-    x = x + size + 2
+    x = x + step
     buttons[13] = app_add_button(topBar, x, y, size, size, Cmd.SAVE, "Save as PNG")
     iconOf[13] = Icon.SAVE
 
-    x = x + size + gap
-    dividers[3] = app_add_divider(topBar, x, y + 4, 1, size - 8)
-    x = x + gap
+    x = x + size + group
+    dividers[3] = app_add_divider(topBar, x, y + inset, rule, size - (inset * 2))
+    x = x + group
 
     buttons[14] = app_add_button(topBar, x, y, size, size, Cmd.UNDO, "Undo (Ctrl+Z)")
     iconOf[14] = Icon.UNDO
-    x = x + size + 2
+    x = x + step
     buttons[15] = app_add_button(topBar, x, y, size, size, Cmd.REDO, "Redo (Ctrl+Y)")
     iconOf[15] = Icon.REDO
-    x = x + size + 2
+    x = x + step
     buttons[16] = app_add_button(topBar, x, y, size, size, Cmd.CLEAR, "Clear the canvas")
     iconOf[16] = Icon.CLEAR
 
-    x = x + size + gap
-    dividers[4] = app_add_divider(topBar, x, y + 4, 1, size - 8)
-    x = x + gap
+    x = x + size + group
+    dividers[4] = app_add_divider(topBar, x, y + inset, rule, size - (inset * 2))
+    x = x + group
 
     buttons[17] = app_add_button(topBar, x, y, size, size, Cmd.ZOOM_OUT, "Zoom out (-)")
     iconOf[17] = Icon.ZOOM_OUT
-    x = x + size + 2
+    x = x + step
     buttons[18] = app_add_button(topBar, x, y, size, size, Cmd.ZOOM_IN, "Zoom in (+)")
     iconOf[18] = Icon.ZOOM_IN
-    x = x + size + 2
+    x = x + step
     buttons[19] = app_add_button(topBar, x, y, size, size, Cmd.ZOOM_FIT, "Fit to window")
     iconOf[19] = Icon.ZOOM_FIT
 
@@ -565,7 +582,7 @@ func app_add_divider(parent: int, x: int, y: int, width: int, height: int) : int
  * with, so a theme switch is another pass over the same drawing code. The old bitmaps are
  * released first — they are GDI handles, and a few dozen leaked per switch would accumulate.
  */
-func app_apply_theme(activeTheme: int, form: int, topBar: int, leftBar: int, canvas: int,
+func app_apply_theme(activeTheme: int, scale: int, form: int, topBar: int, leftBar: int, canvas: int,
                      status: int, swatch: int, buttons: array<int>, iconOf: array<int>,
                      dividers: array<int>, icons: array<int>, selectedTool: int) : void {
     WinFormsHelper.BeginLayout(form)
@@ -586,7 +603,7 @@ func app_apply_theme(activeTheme: int, form: int, topBar: int, leftBar: int, can
     }
 
     render_free_icons(icons)
-    render_build_icons(icons, activeTheme, app_icon_scale())
+    render_build_icons(icons, activeTheme, layout_icon(scale), layout_supersample())
 
     let i: int = 0
     while (i < app_button_count()) {

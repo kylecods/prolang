@@ -24,6 +24,7 @@ import "test_color.prl"
 import "test_document.prl"
 import "test_intstack.prl"
 import "test_raster.prl"
+import "test_shape.prl"
 import "test_fill.prl"
 import "test_history.prl"
 import "test_palette.prl"
@@ -31,6 +32,7 @@ import "test_view.prl"
 import "test_tools.prl"
 import "test_theme.prl"
 import "test_icons.prl"
+import "test_layout.prl"
 
 func main()
 {
@@ -44,6 +46,7 @@ func main()
     total = t_merge(total, test_document_run(), "document")
     total = t_merge(total, test_intstack_run(), "intstack")
     total = t_merge(total, test_raster_run(), "raster")
+    total = t_merge(total, test_shape_run(), "shape")
     total = t_merge(total, test_fill_run(), "fill")
     total = t_merge(total, test_history_run(), "history")
     total = t_merge(total, test_palette_run(), "palette")
@@ -51,6 +54,7 @@ func main()
     total = t_merge(total, test_tools_run(), "tools")
     total = t_merge(total, test_theme_run(), "theme")
     total = t_merge(total, test_icons_run(), "icons")
+    total = t_merge(total, test_layout_run(), "layout")
 
     t_report(total)
 }
