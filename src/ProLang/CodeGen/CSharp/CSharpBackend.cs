@@ -353,6 +353,9 @@ internal sealed class CSharpBackend
             BoundStructCreationExpression structCreation => StructCreation(structCreation),
             BoundEnumMemberExpression enumMember =>
                 $"{enumMember.Member.Value} /* {enumMember.EnumType.Name}.{enumMember.Member.Name} */",
+            BoundFunctionReference functionReference => Identifier(functionReference.Function.Name),
+            BoundIndirectCallExpression indirectCall =>
+                $"{Expression(indirectCall.Target)}({string.Join(", ", indirectCall.Arguments.Select(Expression))})",
             _ => Unsupported(node),
         };
 
@@ -732,6 +735,21 @@ internal sealed class CSharpBackend
         if (type is EnumSymbol)
         {
             return "int";
+        }
+
+        // Function values become the same BCL delegates the .NET backend binds them to.
+        if (type is FunctionTypeSymbol functionType)
+        {
+            var parameters = functionType.ParameterTypes.Select(TypeName);
+
+            if (functionType.ReturnsVoid)
+            {
+                return functionType.ParameterTypes.IsEmpty
+                    ? "System.Action"
+                    : $"System.Action<{string.Join(", ", parameters)}>";
+            }
+
+            return $"System.Func<{string.Join(", ", parameters.Append(TypeName(functionType.ReturnType)))}>";
         }
 
         if (type.TypeArguments.Length > 0)

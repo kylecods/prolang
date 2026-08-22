@@ -1,0 +1,238 @@
+/*
+ * The display list: a laid-out tree flattened into drawing commands.
+ *
+ * ── This is the line the toolkit is built around ─────────────────────────────
+ *
+ * Everything above this module is pure ProLang and knows nothing about a screen. Everything below
+ * it is a backend. What passes between them is this: a flat `array<int>` of fixed-width records,
+ * plus the string table the text records point into.
+ *
+ * A backend's whole job is to execute that buffer. Windows Forms runs it through GDI+, the PSP runs
+ * it through the GE, a browser would run it through a canvas context — and none of them needs to
+ * know what a column is, or what a button is, or that a layout pass happened. That is what makes
+ * the toolkit framework-independent in a way that a shared widget *interface* would not: there is
+ * nothing to implement, only a buffer to walk.
+ *
+ * ── Why a buffer of ints rather than calls ───────────────────────────────────
+ *
+ * The obvious alternative is for this module to call `fill_rect` and `draw_text` directly. That
+ * would put one interop call per primitive on the boundary — hundreds per frame — and it would make
+ * this module platform-specific, which is exactly what the display list avoids. Instead the whole
+ * frame crosses in a single call, and a ProLang `array<int>` is a real CLR `int[]`, so it crosses
+ * with no marshalling and no copy.
+ *
+ * It also makes the output *testable*. A test can build a tree and assert on the exact commands
+ * that come out, which is not something a series of calls into a window would allow.
+ *
+ * ── The record format ────────────────────────────────────────────────────────
+ *
+ * Every record is `dl_stride()` ints wide, whatever its opcode, so the reader can step through the
+ * buffer without a table of per-opcode lengths and a test can address record `n` directly. The
+ * waste is a few unused ints per command, which is nothing against the clarity of a fixed stride.
+ *
+ *   op          a        b        c        d        e        f
+ *   RECT        x        y        w        h        argb
+ *   RRECT       x        y        w        h        argb     radius
+ *   TEXT        x        y        strIdx   argb     font
+ *   LINE        x1       y1       x2       y2       argb     width
+ *   IMAGE       x        y        w        h        imageId
+ *   CLIP_PUSH   x        y        w        h
+ *   CLIP_POP
+ */
+
+import "test"
+import "ui/widget"
+import "ui/box"
+import "ui/hit"
+import "ui/color"
+import "ui/font"
+
+// ── Opcodes ──────────────────────────────────────────────────────────────────
+
+enum DlOp {
+    END,
+    RECT,
+    RRECT,
+    TEXT,
+    LINE,
+    IMAGE,
+    CLIP_PUSH,
+    CLIP_POP
+}
+
+// Ints per record: the opcode plus six operands.
+func dl_stride() : int {
+    return 7
+}
+
+/*
+ * How much a hovered or pressed surface shifts towards white.
+ *
+ * Applied through `color_shade`, so a widget names one colour and gets three. Pressed moves further
+ * than hovered and in the same direction rather than the opposite one — an inversion reads as a
+ * different widget appearing, not as the same one responding.
+ */
+func dl_hover_shade() : int {
+    return 18
+}
+
+func dl_press_shade() : int {
+    return 38
+}
+
+// ── Emitting ─────────────────────────────────────────────────────────────────
+
+/*
+ * Writes one record at `at` (a record index, not an int index) and returns the next index.
+ *
+ * Silently refuses to write past the end of the buffer rather than throwing. A display list that
+ * overruns loses its last few commands, which is a visibly incomplete frame; the alternative is a
+ * program that dies mid-paint, and the caller can compare the returned count against the capacity
+ * to notice.
+ */
+func dl_emit(ops: array<int>, at: int, op: int, a: int, b: int, c: int, d: int, e: int, f: int) : int {
+    let base: int = at * dl_stride()
+
+    if (base + dl_stride() > ops.length()) { return at }
+
+    ops[base] = op
+    ops[base + 1] = a
+    ops[base + 2] = b
+    ops[base + 3] = c
+    ops[base + 4] = d
+    ops[base + 5] = e
+    ops[base + 6] = f
+
+    return at + 1
+}
+
+// The number of records a buffer of this many ints can hold.
+func dl_capacity(ops: array<int>) : int {
+    return ops.length() / dl_stride()
+}
+
+// ── Reading back, for backends and tests ─────────────────────────────────────
+
+func dl_op(ops: array<int>, at: int) : int {
+    return ops[at * dl_stride()]
+}
+
+// Operand `which`, numbered from 0, of the record at `at`.
+func dl_arg(ops: array<int>, at: int, which: int) : int {
+    return ops[(at * dl_stride()) + 1 + which]
+}
+
+// ── Building ─────────────────────────────────────────────────────────────────
+
+/*
+ * Flattens the laid-out tree into `ops`, returning how many records were written.
+ *
+ * Emission order is tree order, so a parent's background is written before its children and a later
+ * sibling paints over an earlier one. That is the same order `hit_topmost` searches in reverse,
+ * which is what keeps what is clickable and what is visible in agreement.
+ */
+func dl_build(ui: Ui, fonts: FontSet, root: int, ops: array<int>) : int {
+    if (root < 0) { return 0 }
+
+    return dl_node(ui, fonts, ops, 0, root)
+}
+
+// Emits one node and everything below it, returning the next free record index.
+func dl_node(ui: Ui, fonts: FontSet, ops: array<int>, at: int, node: int) : int {
+    let kind: int = ui_kind(ui, node)
+    let next: int = at
+
+    if (kind == UiKind.BUTTON) {
+        next = dl_button(ui, fonts, ops, next, node)
+    } elif (kind == UiKind.IMAGE) {
+        next = dl_emit(ops, next, DlOp.IMAGE,
+            ui_get(ui, node, UiF.X), ui_get(ui, node, UiF.Y),
+            ui_get(ui, node, UiF.W), ui_get(ui, node, UiF.H),
+            ui_get(ui, node, UiF.IMAGE_ID), 0)
+    } elif (kind == UiKind.TEXT) {
+        next = dl_text(ui, fonts, ops, next, node)
+    } else {
+        next = dl_surface(ui, ops, next, node, ui_get(ui, node, UiF.BG))
+    }
+
+    let child: int = ui_first_child(ui, node)
+    while (child >= 0) {
+        next = dl_node(ui, fonts, ops, next, child)
+        child = ui_next_sibling(ui, child)
+    }
+
+    return next
+}
+
+/*
+ * Emits a node's background, as a rectangle or a rounded one.
+ *
+ * A fully transparent background emits nothing at all. Most nodes in a tree are structural — a row
+ * that exists to place two things side by side has no appearance of its own — and emitting a
+ * transparent rectangle for each of them would multiply the size of the display list for no pixels.
+ */
+func dl_surface(ui: Ui, ops: array<int>, at: int, node: int, bg: int) : int {
+    if (color_is_transparent(bg)) { return at }
+
+    let x: int = ui_get(ui, node, UiF.X)
+    let y: int = ui_get(ui, node, UiF.Y)
+    let w: int = ui_get(ui, node, UiF.W)
+    let h: int = ui_get(ui, node, UiF.H)
+    let radius: int = ui_get(ui, node, UiF.RADIUS)
+
+    if (radius > 0) {
+        return dl_emit(ops, at, DlOp.RRECT, x, y, w, h, bg, radius)
+    }
+
+    return dl_emit(ops, at, DlOp.RECT, x, y, w, h, bg, 0)
+}
+
+/*
+ * Emits a text node, positioned within its own padding.
+ *
+ * The y is the top of the line box, not the baseline. A backend that draws from a baseline adds the
+ * font's ascent; one that draws from the top uses it as it stands. Keeping the display list on the
+ * box means the two agree about where a line sits without either having to know the other's
+ * convention.
+ */
+func dl_text(ui: Ui, fonts: FontSet, ops: array<int>, at: int, node: int) : int {
+    let index: int = ui_get(ui, node, UiF.STR)
+
+    if (index < 0) { return at }
+
+    let x: int = ui_get(ui, node, UiF.X) + ui_get(ui, node, UiF.PAD_L)
+    let y: int = ui_get(ui, node, UiF.Y) + ui_get(ui, node, UiF.PAD_T)
+
+    return dl_emit(ops, at, DlOp.TEXT, x, y, index,
+        ui_get(ui, node, UiF.FG), ui_get(ui, node, UiF.FONT), 0)
+}
+
+/*
+ * Emits a button: its surface in the colour its current state calls for, then its label centred.
+ *
+ * The label is centred here rather than by the layout pass because a button has no child to place —
+ * its text is a property of the node, and the display list is where that becomes a position.
+ */
+func dl_button(ui: Ui, fonts: FontSet, ops: array<int>, at: int, node: int) : int {
+    let bg: int = ui_get(ui, node, UiF.BG)
+
+    if (hit_is_active(ui, node)) {
+        bg = color_shade(bg, dl_press_shade())
+    } elif (hit_is_hot(ui, node)) {
+        bg = color_shade(bg, dl_hover_shade())
+    }
+
+    let next: int = dl_surface(ui, ops, at, node, bg)
+    let index: int = ui_get(ui, node, UiF.STR)
+
+    if (index < 0) { return next }
+
+    let font: int = ui_get(ui, node, UiF.FONT)
+    let textW: int = font_measure(fonts, font, ui.strs[index])
+    let textH: int = font_line_height(fonts, font)
+
+    let x: int = ui_get(ui, node, UiF.X) + ((ui_get(ui, node, UiF.W) - textW) / 2)
+    let y: int = ui_get(ui, node, UiF.Y) + ((ui_get(ui, node, UiF.H) - textH) / 2)
+
+    return dl_emit(ops, next, DlOp.TEXT, x, y, index, ui_get(ui, node, UiF.FG), font, 0)
+}

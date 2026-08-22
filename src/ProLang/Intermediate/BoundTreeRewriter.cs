@@ -213,6 +213,11 @@ internal abstract class BoundTreeRewriter
             case BoundNodeKind.BoundEnumMemberExpression:
                 // Enum member expressions are compile-time int constants — no rewriting needed.
                 return node;
+            case BoundNodeKind.BoundFunctionReference:
+                // A reference to a named function; it has no sub-expressions to rewrite.
+                return node;
+            case BoundNodeKind.BoundIndirectCallExpression:
+                return RewriteIndirectCallExpression((BoundIndirectCallExpression)node);
             default:
                 throw new Exception($"Unexpected node: {node.Kind}");
         }
@@ -350,7 +355,40 @@ internal abstract class BoundTreeRewriter
 
         return new BoundCallExpression(node.Function, builder.MoveToImmutable());
     }
-    
+
+    protected virtual BoundExpression RewriteIndirectCallExpression(BoundIndirectCallExpression node)
+    {
+        var target = RewriteExpression(node.Target);
+        ImmutableArray<BoundExpression>.Builder? builder = null;
+
+        for (int i = 0; i < node.Arguments.Length; i++)
+        {
+            var oldArgument = node.Arguments[i];
+            var newArgument = RewriteExpression(oldArgument);
+
+            if (newArgument != oldArgument && builder == null)
+            {
+                builder = ImmutableArray.CreateBuilder<BoundExpression>(node.Arguments.Length);
+
+                for (int j = 0; j < i; j++)
+                {
+                    builder.Add(node.Arguments[j]);
+                }
+            }
+
+            builder?.Add(newArgument);
+        }
+
+        if (builder == null && target == node.Target)
+        {
+            return node;
+        }
+
+        var arguments = builder?.MoveToImmutable() ?? node.Arguments;
+
+        return new BoundIndirectCallExpression(target, node.FunctionType, arguments);
+    }
+
     protected virtual BoundExpression RewriteConversionExpression(BoundConversionExpression node)
     {
         var expression = RewriteExpression(node.Expression);

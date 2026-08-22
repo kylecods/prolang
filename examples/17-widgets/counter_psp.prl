@@ -1,0 +1,96 @@
+/*
+ * The same counter, on a PlayStation Portable.
+ *
+ * This file exists to be compared with counter.prl, which is the Windows Forms version. Put them
+ * side by side: the part that says what the interface *is* — the column, the card, the row of
+ * buttons, the spacer that pushes the last group right — is character for character the same.
+ *
+ * What differs is four lines of setup and the names of two host functions. Nothing about the
+ * widgets, the layout, the theming or the click handling knows which machine it is on, because
+ * none of that ever reaches a backend: it produces a display list, and the host executes it.
+ *
+ * The hardware could hardly be less like a desktop — 480x272, no windows, no pointer, an 8x8
+ * bitmap font, and no runtime at all, since this path transpiles to C99 and cross-compiles to a
+ * native MIPS binary. That is the point of the comparison.
+ *
+ * Build it with:
+ *
+ *     prolang examples/17-widgets/counter_psp.prl --emit-psp
+ *     # then, in WSL with the pspdev toolchain on PATH:
+ *     make -f Makefile.psp
+ *
+ * The D-pad moves a cursor, Cross clicks, Start quits.
+ */
+
+import "ui/host_psp"
+import "ui/theme"
+
+enum PspAct {
+    NONE,
+    INCREMENT,
+    DECREMENT,
+    RESET,
+    THEME
+}
+
+func main()
+{
+    let activeTheme: array<int> = array_new(1)
+    let count: array<int> = array_new(1)
+
+    activeTheme[0] = Theme.MIDNIGHT
+
+    let host: PspHost = hostp_open()
+    let fonts: FontSet = hostp_fonts()
+    let ui: Ui = ui_new(128)
+
+    while (hostp_running(host)) {
+        let theme: int = activeTheme[0]
+
+        hostp_begin(host, ui)
+
+        // ── Everything from here to hostp_present is identical to the desktop version ──
+        ui_col(ui, pad: 12, gap: 10, bg: theme_background(theme))
+
+            ui_text(ui, "Counter", fg: theme_text(theme))
+
+            ui_box(ui, pad: 12, radius: 6, flex: 1,
+                   bg: theme_surface(theme), align: UiAlign.CENTER, justify: UiAlign.CENTER)
+                ui_text(ui, "" + count[0], fg: theme_accent(theme))
+            ui_end(ui)
+
+            ui_row(ui, gap: 6)
+                psp_counter_button(ui, "-", PspAct.DECREMENT, theme)
+                psp_counter_button(ui, "+", PspAct.INCREMENT, theme)
+                psp_counter_button(ui, "Reset", PspAct.RESET, theme)
+                ui_spacer(ui, flex: 1)
+                psp_counter_button(ui, "Theme", PspAct.THEME, theme)
+            ui_end(ui)
+
+            ui_text(ui, theme_name(theme) + "  Start quits", fg: theme_text_dim(theme))
+
+        ui_end(ui)
+
+        let act: int = hostp_present(host, ui, fonts, theme_background(theme))
+
+        if (act == PspAct.INCREMENT) {
+            count[0] = count[0] + 1
+        } elif (act == PspAct.DECREMENT) {
+            count[0] = count[0] - 1
+        } elif (act == PspAct.RESET) {
+            count[0] = 0
+        } elif (act == PspAct.THEME) {
+            activeTheme[0] = theme_next(theme)
+        }
+    }
+}
+
+// The same component function as the desktop version, with padding suited to a smaller screen.
+func psp_counter_button(ui: Ui, label: string, action: int, theme: int) : int {
+    return ui_button(ui, label,
+        action: action,
+        bg: theme_surface(theme),
+        fg: theme_text(theme),
+        radius: 4,
+        pad: 6)
+}

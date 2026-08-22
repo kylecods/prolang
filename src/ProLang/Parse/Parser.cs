@@ -300,7 +300,19 @@ public sealed class Parser
     {
         var identifier = Match(SyntaxKind.IdentifierToken);
         var type = ParseTypeClause();
-        return new ParameterSyntax(_syntaxTree,identifier, type);
+
+        // An optional default value: `func f(pad: int = 0)`. The binder requires it to fold to a
+        // constant, so there is nothing here that has to be re-bound in the caller's scope.
+        SyntaxToken? equalsToken = null;
+        ExpressionSyntax? defaultValue = null;
+
+        if (Current.Kind == SyntaxKind.EqualsToken)
+        {
+            equalsToken = Match(SyntaxKind.EqualsToken);
+            defaultValue = ParseExpression();
+        }
+
+        return new ParameterSyntax(_syntaxTree, identifier, type, equalsToken, defaultValue);
     }
 
     private TypeClauseSyntax? ParseOptionalTypeClause()
@@ -329,6 +341,11 @@ public sealed class Parser
 
     private TypeSyntax ParseTypeBase()
     {
+        if (Current.Kind == SyntaxKind.FunctionKeyword)
+        {
+            return ParseFunctionType();
+        }
+
         var identifier = Match(SyntaxKind.IdentifierToken);
         if (Current.Kind == SyntaxKind.LessThanToken)
         {
@@ -339,6 +356,37 @@ public sealed class Parser
         }
 
         return new NameTypeSyntax(_syntaxTree, identifier);
+    }
+
+    /// <summary>
+    /// Parses <c>func(T, U) : R</c>. The return clause is optional and means <c>void</c>.
+    /// </summary>
+    private TypeSyntax ParseFunctionType()
+    {
+        var functionKeyword = Match(SyntaxKind.FunctionKeyword);
+        var openParenthesis = Match(SyntaxKind.LeftParenthesisToken);
+
+        var parameterTypes = ImmutableArray.CreateBuilder<TypeSyntax>();
+
+        while (Current.Kind != SyntaxKind.RightParenthesisToken && Current.Kind != SyntaxKind.EofToken)
+        {
+            parameterTypes.Add(ParseTypeSyntax());
+
+            if (Current.Kind == SyntaxKind.CommaToken)
+            {
+                NextToken();
+            }
+            else
+            {
+                break;
+            }
+        }
+
+        var closeParenthesis = Match(SyntaxKind.RightParenthesisToken);
+        var returnType = ParseOptionalTypeClause();
+
+        return new FunctionTypeSyntax(_syntaxTree, functionKeyword, openParenthesis,
+            parameterTypes.ToImmutable(), closeParenthesis, returnType);
     }
 
     private TypeSyntax ParseArraySuffix(TypeSyntax baseType)
@@ -989,7 +1037,7 @@ public sealed class Parser
 
         while (parseNextArgument && Current.Kind != SyntaxKind.RightParenthesisToken && Current.Kind != SyntaxKind.EofToken)
         {
-            var expression = ParseExpression();
+            var expression = ParseArgument();
             nodesAndSeparators.Add(expression);
 
             if (Current.Kind == SyntaxKind.CommaToken)
@@ -1005,6 +1053,27 @@ public sealed class Parser
         }
 
         return new SeparatedSyntaxList<ExpressionSyntax>(nodesAndSeparators.ToImmutable());
+    }
+
+    /// <summary>
+    /// One argument, either positional or written as <c>name: value</c>.
+    /// </summary>
+    /// <remarks>
+    /// An identifier followed by a colon is unambiguous in argument position: the only other place a
+    /// colon appears in an expression is a map literal, and that is always inside braces.
+    /// </remarks>
+    private ExpressionSyntax ParseArgument()
+    {
+        if (Current.Kind == SyntaxKind.IdentifierToken && Peek(1).Kind == SyntaxKind.ColonToken)
+        {
+            var identifier = Match(SyntaxKind.IdentifierToken);
+            var colon = Match(SyntaxKind.ColonToken);
+            var value = ParseExpression();
+
+            return new NamedArgumentSyntax(_syntaxTree, identifier, colon, value);
+        }
+
+        return ParseExpression();
     }
 
     private ExpressionSyntax ParseNameExpression()

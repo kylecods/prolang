@@ -35,4 +35,6 @@ public enum  BoundNodeKind
     BoundCastExpression,
     BoundArrayNewExpression,
     BoundEnumMemberExpression,
+    BoundFunctionReference,
+    BoundIndirectCallExpression,
 }

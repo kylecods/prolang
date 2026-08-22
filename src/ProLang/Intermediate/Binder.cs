@@ -355,10 +355,26 @@ internal sealed class Binder
         var parameters = ImmutableArray.CreateBuilder<ParameterSymbol>();
         var seenParameterNames = new HashSet<string>();
 
+        var sawOptionalParameter = false;
+
         foreach (var parameterSyntax in syntax.Parameters)
         {
             var parameterName = parameterSyntax.Identifier.Text;
             var parameterType = BindTypeClause(parameterSyntax.Type);
+
+            object? defaultValue = null;
+
+            if (parameterSyntax.DefaultValue != null)
+            {
+                defaultValue = BindConstantDefaultValue(parameterSyntax.DefaultValue, parameterName, parameterType);
+                sawOptionalParameter = true;
+            }
+            else if (sawOptionalParameter)
+            {
+                // Optional parameters have to be a suffix of the list, or omitting one in the middle
+                // would silently shift every positional argument after it.
+                _diagnostics.ReportRequiredParameterAfterOptional(parameterSyntax.Location, parameterName);
+            }
 
             if (!seenParameterNames.Add(parameterName))
             {
@@ -366,7 +382,7 @@ internal sealed class Binder
             }
             else
             {
-                var parameter = new ParameterSymbol(parameterName, parameterType, parameters.Count);
+                var parameter = new ParameterSymbol(parameterName, parameterType, parameters.Count, defaultValue);
                 parameters.Add(parameter);
             }
         }
@@ -382,6 +398,146 @@ internal sealed class Binder
         {
             _diagnostics.ReportSymbolAlreadyDeclared(syntax.Identifier.Location, function.Name);
         }
+    }
+
+    /// <summary>
+    /// Binds a parameter's default value and reduces it to the constant the call site will use.
+    /// </summary>
+    /// <remarks>
+    /// Restricted to constants deliberately. Storing a bound expression instead would mean
+    /// re-emitting it in the caller's scope, where the names it referred to may not exist and,
+    /// worse, may exist and mean something else. A constant has neither problem, and it is all a
+    /// default value needs to be: <c>pad: int = 0</c>, <c>bold: bool = false</c>,
+    /// <c>align: int = Align.START</c>.
+    /// </remarks>
+    private object? BindConstantDefaultValue(ExpressionSyntax syntax, string parameterName, TypeSymbol parameterType)
+    {
+        var bound = BindExpression(syntax);
+
+        if (bound.Type == TypeSymbol.Error)
+        {
+            return null;
+        }
+
+        var converted = BindConversion(syntax.Location, bound, parameterType);
+        var value = TryFoldConstant(converted);
+
+        if (value == null)
+        {
+            _diagnostics.ReportDefaultValueMustBeConstant(syntax.Location, parameterName);
+        }
+
+        return value;
+    }
+
+    private static object? TryFoldConstant(BoundExpression expression)
+    {
+        switch (expression)
+        {
+            case BoundLiteralExpression literal:
+                return literal.Value;
+
+            // Enums erase to Int32, so a member is already the constant the caller wants.
+            case BoundEnumMemberExpression member:
+                return member.Member.Value;
+
+            case BoundConversionExpression conversion:
+                return TryFoldConstant(conversion.Expression);
+
+            case BoundUnaryExpression unary:
+                var operand = TryFoldConstant(unary.Operand);
+
+                if (operand == null)
+                {
+                    return null;
+                }
+
+                return unary.Op.Kind switch
+                {
+                    BoundUnaryOperatorKind.Identity => operand,
+                    BoundUnaryOperatorKind.Negation when operand is int i => -i,
+                    BoundUnaryOperatorKind.Negation when operand is long l => -l,
+                    BoundUnaryOperatorKind.Negation when operand is double d => -d,
+                    BoundUnaryOperatorKind.LogicalNegation when operand is bool b => !b,
+                    BoundUnaryOperatorKind.OnesComplement when operand is int i2 => ~i2,
+                    _ => null,
+                };
+
+            // Folded because `0 - 1` is how this repository writes a negative literal, and because
+            // a default like `cap: int = 4 * 1024` reads better than the number it works out to.
+            case BoundBinaryExpression binary:
+                return TryFoldBinaryConstant(binary);
+
+            default:
+                return null;
+        }
+    }
+
+    private static object? TryFoldBinaryConstant(BoundBinaryExpression binary)
+    {
+        var left = TryFoldConstant(binary.Left);
+        var right = TryFoldConstant(binary.Right);
+
+        if (left == null || right == null)
+        {
+            return null;
+        }
+
+        if (left is bool lb && right is bool rb)
+        {
+            return binary.Op.Kind switch
+            {
+                BoundBinaryOperatorKind.LogicalAnd => lb && rb,
+                BoundBinaryOperatorKind.LogicalOr => lb || rb,
+                BoundBinaryOperatorKind.Equals => lb == rb,
+                BoundBinaryOperatorKind.NotEquals => lb != rb,
+                _ => null,
+            };
+        }
+
+        if (left is string ls && right is string rs)
+        {
+            return binary.Op.Kind switch
+            {
+                BoundBinaryOperatorKind.Addition => ls + rs,
+                BoundBinaryOperatorKind.Equals => ls == rs,
+                BoundBinaryOperatorKind.NotEquals => ls != rs,
+                _ => null,
+            };
+        }
+
+        if (left is not int l || right is not int r)
+        {
+            return null;
+        }
+
+        // Division and modulo by zero would throw here rather than at the call site, which is not a
+        // trade worth making inside the binder — leave them to be reported as non-constant.
+        if (r == 0 && binary.Op.Kind is BoundBinaryOperatorKind.Division or BoundBinaryOperatorKind.Modulo)
+        {
+            return null;
+        }
+
+        return binary.Op.Kind switch
+        {
+            BoundBinaryOperatorKind.Addition => l + r,
+            BoundBinaryOperatorKind.Subtraction => l - r,
+            BoundBinaryOperatorKind.Multiplication => l * r,
+            BoundBinaryOperatorKind.Division => l / r,
+            BoundBinaryOperatorKind.Modulo => l % r,
+            BoundBinaryOperatorKind.BitwiseAnd => l & r,
+            BoundBinaryOperatorKind.BitwiseOr => l | r,
+            BoundBinaryOperatorKind.BitwiseXor => l ^ r,
+            BoundBinaryOperatorKind.BitwiseLeftShift => l << r,
+            BoundBinaryOperatorKind.BitwiseRightShift => l >> r,
+            BoundBinaryOperatorKind.Equals => l == r,
+            BoundBinaryOperatorKind.NotEquals => l != r,
+            BoundBinaryOperatorKind.LessThan => l < r,
+            BoundBinaryOperatorKind.LessEqual => l <= r,
+            BoundBinaryOperatorKind.GreaterThan => l > r,
+            BoundBinaryOperatorKind.GreaterEqual => l >= r,
+            _ => null,
+        };
     }
 
     private void BindStructDeclaration(StructDeclarationSyntax syntax)
@@ -605,6 +761,7 @@ internal sealed class Binder
             {
                 var isAllowedExpression = es.Expression.Kind == BoundNodeKind.BoundErrorExpression ||
                                             es.Expression.Kind == BoundNodeKind.BoundCallExpression ||
+                                            es.Expression.Kind == BoundNodeKind.BoundIndirectCallExpression ||
                                             es.Expression.Kind == BoundNodeKind.BoundAssignmentExpression ||
                                             es.Expression.Kind == BoundNodeKind.BoundIndexAssignmentExpression ||
                                             es.Expression.Kind == BoundNodeKind.BoundFieldAssignmentExpression;
@@ -875,6 +1032,29 @@ internal sealed class Binder
         {
             var elementType = BindTypeSyntax(arraySyntax.ElementType);
             return TypeSymbol.Array.WithArgs(elementType);
+        }
+
+        if (syntax is FunctionTypeSyntax functionSyntax)
+        {
+            var parameterTypes = ImmutableArray.CreateBuilder<TypeSymbol>();
+
+            foreach (var parameterSyntax in functionSyntax.ParameterTypes)
+            {
+                parameterTypes.Add(BindTypeSyntax(parameterSyntax));
+            }
+
+            var returnType = functionSyntax.ReturnType == null
+                ? TypeSymbol.Void
+                : BindTypeSyntax(functionSyntax.ReturnType.Type);
+
+            if (parameterTypes.Count > FunctionTypeSymbol.MaxParameterCount)
+            {
+                _diagnostics.ReportFunctionValueTooManyParameters(functionSyntax.Location,
+                    FunctionTypeSymbol.MaxParameterCount);
+                return TypeSymbol.Error;
+            }
+
+            return new FunctionTypeSymbol(parameterTypes.ToImmutable(), returnType);
         }
 
         throw new Exception($"Unexpected type syntax {syntax.Kind}");
@@ -1379,6 +1559,13 @@ internal sealed class Binder
 
         if (!_scope.TryLookupVariable(name, out var variable))
         {
+            // A bare name that is not a variable but is a function is that function used as a
+            // value. Purely additive: before function values this was always "does not exist".
+            if (_scope.TryLookupFunction(name, out var function) && function != null)
+            {
+                return BindFunctionReference(function, syntax.IdentifierToken.Location);
+            }
+
             _diagnostics.ReportUndefinedName(syntax.IdentifierToken.Location, name);
             return new BoundErrorExpression();
         }
@@ -1386,13 +1573,61 @@ internal sealed class Binder
         return new BoundVariableExpression(variable!);
     }
 
+    /// <summary>
+    /// Turns a named function into a value of its own signature's type.
+    /// </summary>
+    /// <remarks>
+    /// A generic function has no single signature to take a reference to, and a .NET method is not
+    /// something the backends can produce a plain function pointer for, so both are refused here
+    /// rather than producing something only the .NET backend could emit.
+    /// </remarks>
+    private BoundExpression BindFunctionReference(FunctionSymbol function, TextLocation location)
+    {
+        if (function.IsGeneric || function is DotNetFunctionSymbol)
+        {
+            _diagnostics.ReportCannotUseAsFunctionValue(location, function.Name);
+            return new BoundErrorExpression();
+        }
+
+        var parameterTypes = function.Parameters.Select(p => p.Type).ToImmutableArray();
+        var functionType = new FunctionTypeSymbol(parameterTypes, function.Type);
+
+        return new BoundFunctionReference(function, functionType);
+    }
+
     private BoundExpression BindCallExpression(CallExpressionSyntax syntax, TypeSymbol? expectedType = null)
     {
-        // Special case: array_new(size) creates a zero-initialized fixed-length array
-        if (syntax.Identifier.Text == "array_new" && syntax.Arguments.Count == 1)
+        // Separate `name: value` arguments from positional ones. Everything below works on the
+        // unwrapped expressions, so nothing downstream of this method sees a NamedArgumentSyntax.
+        var argumentSyntaxes = new ExpressionSyntax[syntax.Arguments.Count];
+        var argumentNames = new SyntaxToken?[syntax.Arguments.Count];
+        var namedArgumentCount = 0;
+
+        for (int i = 0; i < syntax.Arguments.Count; i++)
         {
-            var sizeArg = BindExpression(syntax.Arguments[0]);
-            sizeArg = BindConversion(syntax.Arguments[0].Location, sizeArg, TypeSymbol.Int);
+            if (syntax.Arguments[i] is NamedArgumentSyntax named)
+            {
+                argumentSyntaxes[i] = named.Expression;
+                argumentNames[i] = named.Identifier;
+                namedArgumentCount++;
+            }
+            else
+            {
+                argumentSyntaxes[i] = syntax.Arguments[i];
+
+                if (namedArgumentCount > 0)
+                {
+                    _diagnostics.ReportPositionalArgumentAfterNamed(syntax.Arguments[i].Location);
+                    return new BoundErrorExpression();
+                }
+            }
+        }
+
+        // Special case: array_new(size) creates a zero-initialized fixed-length array
+        if (syntax.Identifier.Text == "array_new" && syntax.Arguments.Count == 1 && namedArgumentCount == 0)
+        {
+            var sizeArg = BindExpression(argumentSyntaxes[0]);
+            sizeArg = BindConversion(argumentSyntaxes[0].Location, sizeArg, TypeSymbol.Int);
             var elementType = TypeSymbol.Any;
             if (expectedType != null && expectedType.Name == "array" && expectedType.TypeArguments.Length == 1)
                 elementType = expectedType.TypeArguments[0];
@@ -1403,15 +1638,26 @@ internal sealed class Binder
         }
 
         if (syntax.Arguments.Count == 1
+            && namedArgumentCount == 0
             && !_scope.TryLookupFunction(syntax.Identifier.Text, out _)
             && LookupType(syntax.Identifier.Text) is TypeSymbol type)
         {
-            return BindConversion(syntax.Arguments[0], type, true);
+            return BindConversion(argumentSyntaxes[0], type, true);
+        }
+
+        // Calling a variable or parameter that holds a function value. Checked before the function
+        // table so that a handler named after the function it defaults to still calls the value it
+        // was given, not the function that shares its name.
+        if (_scope.TryLookupVariable(syntax.Identifier.Text, out var callee)
+            && callee?.Type is FunctionTypeSymbol calleeType)
+        {
+            return BindIndirectCall(syntax, argumentSyntaxes, argumentNames, namedArgumentCount,
+                callee, calleeType);
         }
 
         var boundArguments = ImmutableArray.CreateBuilder<BoundExpression>();
 
-        foreach (var argument in syntax.Arguments)
+        foreach (var argument in argumentSyntaxes)
         {
             var boundArgument = BindExpression(argument);
             boundArguments.Add(boundArgument);
@@ -1431,6 +1677,22 @@ internal sealed class Binder
             }
         }
 
+        // Named arguments are a ProLang-function feature. Interop overloads are picked by metadata
+        // signature, where a parameter's name is not part of the contract it publishes.
+        if (namedArgumentCount > 0 && function is DotNetFunctionSymbol)
+        {
+            _diagnostics.ReportNamedArgumentNotSupported(syntax.Identifier.Location, function.Name);
+            return new BoundErrorExpression();
+        }
+
+        // Put the arguments in parameter order and fill in the defaults, so that everything past
+        // this point — generic inference included — sees a complete, positional argument list.
+        if (!TryReorderArguments(syntax, function!, argumentNames, boundArguments,
+                out var orderedArguments, out var orderedLocations))
+        {
+            return new BoundErrorExpression();
+        }
+
         // Generic function instantiation
         if (function.IsGeneric)
         {
@@ -1441,7 +1703,7 @@ internal sealed class Binder
             }
             else
             {
-                typeArgs = InferTypeArguments(function, boundArguments.ToImmutable());
+                typeArgs = InferTypeArguments(function, orderedArguments.ToImmutable());
             }
 
             if (typeArgs.Length != function.TypeParameters.Length)
@@ -1459,22 +1721,156 @@ internal sealed class Binder
                 EnsureInstantiated(function);
         }
 
-        if (syntax.Arguments.Count != function.Parameters.Length)
+        // Instantiation substitutes types but preserves arity and order, so the ordered list built
+        // above still lines up with the parameters here.
+        for (int i = 0; i < orderedArguments.Count; i++)
         {
-            _diagnostics.ReportWrongArgumentCount(syntax.Location, function.Name, function.Parameters.Length,
-                syntax.Arguments.Count);
+            orderedArguments[i] = BindConversion(orderedLocations[i], orderedArguments[i],
+                function.Parameters[i].Type);
+        }
+
+        return new BoundCallExpression(function, orderedArguments.ToImmutable());
+    }
+
+    /// <summary>
+    /// Binds a call through a function value.
+    /// </summary>
+    /// <remarks>
+    /// A function type records parameter types but not their names or defaults — a value can be
+    /// assigned from any function with a matching signature, and two of those may disagree about
+    /// both. Named arguments and omitted parameters are therefore only available when calling a
+    /// function by name.
+    /// </remarks>
+    private BoundExpression BindIndirectCall(
+        CallExpressionSyntax syntax,
+        ExpressionSyntax[] argumentSyntaxes,
+        SyntaxToken?[] argumentNames,
+        int namedArgumentCount,
+        VariableSymbol callee,
+        FunctionTypeSymbol calleeType)
+    {
+        if (namedArgumentCount > 0)
+        {
+            var firstName = argumentNames.First(n => n != null)!;
+            _diagnostics.ReportNamedArgumentThroughFunctionValue(firstName.Location, callee.Name);
             return new BoundErrorExpression();
         }
 
-        for (int i = 0; i < syntax.Arguments.Count; i++)
+        if (argumentSyntaxes.Length != calleeType.ParameterTypes.Length)
         {
-            var argumentLocation = syntax.Arguments[i].Location;
-            var argument = boundArguments[i];
-            var parameter = function.Parameters[i];
-            boundArguments[i] = BindConversion(argumentLocation, argument, parameter.Type);
+            _diagnostics.ReportWrongArgumentCount(syntax.Location, callee.Name,
+                calleeType.ParameterTypes.Length, argumentSyntaxes.Length);
+            return new BoundErrorExpression();
         }
 
-        return new BoundCallExpression(function, boundArguments.ToImmutable());
+        var arguments = ImmutableArray.CreateBuilder<BoundExpression>(argumentSyntaxes.Length);
+
+        for (int i = 0; i < argumentSyntaxes.Length; i++)
+        {
+            var bound = BindExpression(argumentSyntaxes[i]);
+            arguments.Add(BindConversion(argumentSyntaxes[i].Location, bound, calleeType.ParameterTypes[i]));
+        }
+
+        return new BoundIndirectCallExpression(new BoundVariableExpression(callee), calleeType,
+            arguments.ToImmutable());
+    }
+
+    /// <summary>
+    /// Maps the arguments as written onto the parameter list, filling omitted optional parameters
+    /// with their defaults.
+    /// </summary>
+    /// <remarks>
+    /// Positional arguments are known to be a prefix of the list — <c>BindCallExpression</c> rejects
+    /// a positional argument after a named one — so a positional argument's index is its ordinal.
+    /// </remarks>
+    private bool TryReorderArguments(
+        CallExpressionSyntax syntax,
+        FunctionSymbol function,
+        SyntaxToken?[] argumentNames,
+        ImmutableArray<BoundExpression>.Builder boundArguments,
+        out ImmutableArray<BoundExpression>.Builder ordered,
+        out TextLocation[] locations)
+    {
+        var parameters = function.Parameters;
+        var slots = new BoundExpression?[parameters.Length];
+
+        ordered = ImmutableArray.CreateBuilder<BoundExpression>(parameters.Length);
+        locations = new TextLocation[parameters.Length];
+
+        for (int i = 0; i < boundArguments.Count; i++)
+        {
+            var location = syntax.Arguments[i].Location;
+            var name = argumentNames[i];
+            int target;
+
+            if (name == null)
+            {
+                if (i >= parameters.Length)
+                {
+                    _diagnostics.ReportWrongArgumentCount(syntax.Location, function.Name,
+                        parameters.Length, boundArguments.Count);
+                    return false;
+                }
+
+                target = i;
+            }
+            else
+            {
+                target = -1;
+
+                for (int p = 0; p < parameters.Length; p++)
+                {
+                    if (parameters[p].Name == name.Text)
+                    {
+                        target = p;
+                        break;
+                    }
+                }
+
+                if (target < 0)
+                {
+                    _diagnostics.ReportUndefinedArgumentName(name.Location, function.Name, name.Text);
+                    return false;
+                }
+            }
+
+            if (slots[target] != null)
+            {
+                _diagnostics.ReportArgumentAlreadyGiven(location, parameters[target].Name);
+                return false;
+            }
+
+            slots[target] = boundArguments[i];
+            locations[target] = location;
+        }
+
+        for (int p = 0; p < parameters.Length; p++)
+        {
+            if (slots[p] != null)
+            {
+                continue;
+            }
+
+            var parameter = parameters[p];
+
+            if (!parameter.IsOptional)
+            {
+                _diagnostics.ReportMissingRequiredArgument(syntax.Location, function.Name, parameter.Name);
+                return false;
+            }
+
+            // A fresh literal per call site: the default is a constant, so there is nothing to
+            // re-bind and no expression shared between two calls.
+            slots[p] = new BoundLiteralExpression(parameter.DefaultValue!);
+            locations[p] = syntax.Location;
+        }
+
+        foreach (var slot in slots)
+        {
+            ordered.Add(slot!);
+        }
+
+        return true;
     }
 
     private TypeSymbol[] InferTypeArguments(FunctionSymbol generic, ImmutableArray<BoundExpression> args)
@@ -1623,6 +2019,7 @@ internal sealed class Binder
     {
         { "length", BuiltInFunctions.StringLength },
         { "charAt", BuiltInFunctions.StringCharAt },
+        { "charCode", BuiltInFunctions.StringCharCode },
         { "substring", BuiltInFunctions.StringSubstring },
         { "indexOf", BuiltInFunctions.StringIndexOf },
     };

@@ -1,0 +1,83 @@
+/*
+ * Function values: a top-level function used as a value, and calls made through one.
+ *
+ * They capture nothing. That is the whole design, and it is what lets every backend implement them
+ * without a garbage collector: the .NET backend builds a BCL delegate over a *null* target
+ * (`ldnull; ldftn; newobj`), and the C and PSP backends use a plain function pointer, where the
+ * function's name decays to one on its own. Nothing is kept alive, so nothing has to be collected.
+ *
+ * The cost of that is real and deliberate: a handler cannot reach the state around it. Event
+ * handling in the UI toolkit therefore stays Elm-style — a widget carries an int action, the frame
+ * loop handles it against state the caller owns — and function values are reserved for the things
+ * that are genuinely pure, such as a custom painter or a list item builder.
+ *
+ * Two things are refused rather than half-supported, both in BindFunctionReference: a generic
+ * function, which has no single signature to point at, and a .NET method, which is not something
+ * the C backend could produce a pointer for.
+ */
+
+import "io"
+import "test"
+
+func double_it(x: int) : int { return x * 2 }
+
+func negate(x: int) : int { return 0 - x }
+
+func add(a: int, b: int) : int { return a + b }
+
+func always(seed: int) : int { return seed }
+
+// A function value as a parameter: the caller decides what `f` does.
+func apply(f: func(int) : int, v: int) : int {
+    return f(v)
+}
+
+// Calling through the value more than once, to check the delegate is not consumed.
+func apply_twice(f: func(int) : int, v: int) : int {
+    return f(f(v))
+}
+
+func combine(op: func(int, int) : int, a: int, b: int) : int {
+    return op(a, b)
+}
+
+// A void function type is written without a return clause, and becomes Action rather than Func.
+func run_into(handler: func(array<int>, int), buffer: array<int>, value: int) {
+    handler(buffer, value)
+}
+
+func store_first(buffer: array<int>, value: int) {
+    buffer[0] = value
+}
+
+// A function value alongside a default argument, since both features touch the call path.
+func apply_or_default(f: func(int) : int, v: int = 10) : int {
+    return f(v)
+}
+
+func main()
+{
+    assert(apply(double_it, 21) == 42, "call through a function parameter")
+    assert(apply(negate, 7) == 0 - 7, "a different function, same parameter")
+    assert(apply_twice(double_it, 3) == 12, "the value survives being called twice")
+    assert(combine(add, 40, 2) == 42, "two-parameter function value")
+
+    // A local of function type, reassigned. Nothing is captured either time.
+    let chosen: func(int) : int = negate
+    assert(chosen(5) == 0 - 5, "function value in a local")
+
+    chosen = double_it
+    assert(chosen(5) == 10, "the local can be reassigned")
+
+    // Void return: the effect is visible through the array, which is a real reference.
+    let buffer: array<int> = array_new(2)
+    run_into(store_first, buffer, 99)
+    assert(buffer[0] == 99, "void function value runs for its effect")
+
+    assert(apply_or_default(double_it) == 20, "a default argument beside a function value")
+    assert(apply_or_default(double_it, 3) == 6, "an explicit argument beside a function value")
+
+    assert(apply(always, 1) == 1, "a function value that ignores its input")
+
+    print("function values: ok")
+}

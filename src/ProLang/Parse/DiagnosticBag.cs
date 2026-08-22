@@ -129,6 +129,86 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Report(location, message);
     }
 
+    public void ReportDefaultValueMustBeConstant(TextLocation location, string parameterName)
+    {
+        var message =
+            $"The default value for parameter '{parameterName}' must be a constant — a literal, "
+            + "a negated literal, or an enum member.";
+
+        Report(location, message);
+    }
+
+    public void ReportRequiredParameterAfterOptional(TextLocation location, string parameterName)
+    {
+        var message =
+            $"Parameter '{parameterName}' has no default value, so it cannot follow one that does. "
+            + "Move it before every optional parameter.";
+
+        Report(location, message);
+    }
+
+    public void ReportPositionalArgumentAfterNamed(TextLocation location)
+    {
+        var message = "A positional argument cannot follow a named one.";
+
+        Report(location, message);
+    }
+
+    public void ReportUndefinedArgumentName(TextLocation location, string functionName, string argumentName)
+    {
+        var message = $"Function '{functionName}' has no parameter named '{argumentName}'.";
+
+        Report(location, message);
+    }
+
+    public void ReportArgumentAlreadyGiven(TextLocation location, string argumentName)
+    {
+        var message = $"Argument '{argumentName}' was already given a value in this call.";
+
+        Report(location, message);
+    }
+
+    public void ReportMissingRequiredArgument(TextLocation location, string functionName, string parameterName)
+    {
+        var message = $"Function '{functionName}' requires an argument for parameter '{parameterName}'.";
+
+        Report(location, message);
+    }
+
+    public void ReportFunctionValueTooManyParameters(TextLocation location, int maximum)
+    {
+        var message = $"A function value may take at most {maximum} parameters.";
+
+        Report(location, message);
+    }
+
+    public void ReportCannotUseAsFunctionValue(TextLocation location, string functionName)
+    {
+        var message =
+            $"'{functionName}' cannot be used as a function value. Only a non-generic ProLang "
+            + "function can be, because a function value is a plain pointer with nothing captured.";
+
+        Report(location, message);
+    }
+
+    public void ReportNamedArgumentThroughFunctionValue(TextLocation location, string calleeName)
+    {
+        var message =
+            $"'{calleeName}' holds a function value, which records parameter types but not their "
+            + "names or defaults. Pass its arguments positionally.";
+
+        Report(location, message);
+    }
+
+    public void ReportNamedArgumentNotSupported(TextLocation location, string functionName)
+    {
+        var message =
+            $"'{functionName}' is a .NET method, and named arguments are only supported for "
+            + "ProLang functions. Pass its arguments positionally.";
+
+        Report(location, message);
+    }
+
     public void ReportUndefinedType(TextLocation location, string name)
     {
         var message = $"Type '{name}' doesn't exist";

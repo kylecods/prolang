@@ -1,0 +1,239 @@
+/*
+ * ui/box — the layout pass.
+ *
+ * These assert *relationships* rather than particular pixel counts: that children fill their parent
+ * exactly, that a flexible child absorbs what is left, that padding is subtracted once. That is
+ * what survives the sizes being retuned, and it is what catches the errors that matter — a row
+ * whose children overrun it by a pixel per child looks fine until the tenth child.
+ *
+ * The font is monospace with an advance of 10 and a line height of 20, so a string's width is ten
+ * times its length and every expected number below is one anybody can check by eye.
+ */
+
+import "testing"
+import "ui/widget"
+import "ui/box"
+import "ui/font"
+
+func test_box_fonts() : FontSet {
+    let fonts: FontSet = font_new(1)
+
+    font_set_monospace(fonts, 0, 10, 20, 16)
+
+    return fonts
+}
+
+func test_box_run() : TestRun {
+    let run: TestRun = t_new()
+
+    run = test_box_natural(run)
+    run = test_box_row(run)
+    run = test_box_flex(run)
+    run = test_box_align(run)
+    run = test_box_nesting(run)
+
+    return run
+}
+
+// ── Natural sizes ────────────────────────────────────────────────────────────
+
+func test_box_natural(run: TestRun) : TestRun {
+    let fonts: FontSet = test_box_fonts()
+    let ui: Ui = ui_new(32)
+
+    ui_begin(ui, 0, 0, false)
+    let root: int = ui_col(ui, pad: 5)
+        let label: int = ui_text(ui, "abcd")
+    ui_end(ui)
+
+    box_measure(ui, fonts, root)
+
+    // Text takes its width from the font table and its height from the line height.
+    run = t_eq_int(run, "text width", box_w(ui, label), 40)
+    run = t_eq_int(run, "text height", box_h(ui, label), 20)
+
+    // A container wraps its content in its own padding, on both edges of each axis.
+    run = t_eq_int(run, "column adds padding to width", box_w(ui, root), 50)
+    run = t_eq_int(run, "column adds padding to height", box_h(ui, root), 30)
+
+    // A fixed size replaces the measurement outright.
+    ui_begin(ui, 0, 0, false)
+    let sized: int = ui_col(ui, pad: 5, width: 100, height: 7)
+        ui_text(ui, "ignored")
+    ui_end(ui)
+
+    box_measure(ui, fonts, sized)
+
+    run = t_eq_int(run, "fixed width wins", box_w(ui, sized), 100)
+    run = t_eq_int(run, "fixed height wins", box_h(ui, sized), 7)
+
+    return run
+}
+
+// ── Rows ─────────────────────────────────────────────────────────────────────
+
+func test_box_row(run: TestRun) : TestRun {
+    let fonts: FontSet = test_box_fonts()
+    let ui: Ui = ui_new(32)
+
+    ui_begin(ui, 0, 0, false)
+    let root: int = ui_row(ui, gap: 6)
+        let a: int = ui_text(ui, "ab")      // 20 wide
+        let b: int = ui_text(ui, "cdef")    // 40 wide
+    ui_end(ui)
+
+    box_measure(ui, fonts, root)
+
+    // Natural width is the children plus the gaps between them — one gap, not two.
+    run = t_eq_int(run, "row natural width", box_w(ui, root), 66)
+    run = t_eq_int(run, "row natural height", box_h(ui, root), 20)
+
+    box_layout(ui, fonts, root, 0, 0, 66, 20)
+
+    run = t_eq_int(run, "first child at the left edge", box_x(ui, a), 0)
+    run = t_eq_int(run, "second child clears the gap", box_x(ui, b), 26)
+
+    // The children and the gap account for every pixel of the row.
+    let spanned: int = (box_x(ui, b) + box_w(ui, b)) - box_x(ui, a)
+    run = t_eq_int(run, "children span the row exactly", spanned, box_w(ui, root))
+
+    return run
+}
+
+// ── Flexible children ────────────────────────────────────────────────────────
+
+func test_box_flex(run: TestRun) : TestRun {
+    let fonts: FontSet = test_box_fonts()
+    let ui: Ui = ui_new(32)
+
+    // One flexible child takes everything the fixed ones leave.
+    ui_begin(ui, 0, 0, false)
+    let root: int = ui_row(ui)
+        let left: int = ui_text(ui, "ab")           // 20 wide
+        let filler: int = ui_spacer(ui, flex: 1)
+        let right: int = ui_text(ui, "cd")          // 20 wide
+    ui_end(ui)
+
+    box_layout(ui, fonts, root, 0, 0, 200, 20)
+
+    run = t_eq_int(run, "fixed child keeps its width", box_w(ui, left), 20)
+    run = t_eq_int(run, "spacer absorbs the remainder", box_w(ui, filler), 160)
+    run = t_eq_int(run, "trailing child is pushed to the end", box_x(ui, right), 180)
+
+    // Three-way division: 100 does not divide by 3, and the remainder must not be lost.
+    ui_begin(ui, 0, 0, false)
+    let thirds: int = ui_row(ui)
+        let one: int = ui_spacer(ui, flex: 1)
+        let two: int = ui_spacer(ui, flex: 1)
+        let three: int = ui_spacer(ui, flex: 1)
+    ui_end(ui)
+
+    box_layout(ui, fonts, thirds, 0, 0, 100, 10)
+
+    let sum: int = box_w(ui, one) + box_w(ui, two) + box_w(ui, three)
+    run = t_eq_int(run, "thirds sum to the whole", sum, 100)
+    run = t_eq_int(run, "the last flexible child takes the remainder", box_w(ui, three), 34)
+
+    // Unequal weights divide in proportion.
+    ui_begin(ui, 0, 0, false)
+    let weighted: int = ui_row(ui)
+        let small: int = ui_spacer(ui, flex: 1)
+        let large: int = ui_spacer(ui, flex: 3)
+    ui_end(ui)
+
+    box_layout(ui, fonts, weighted, 0, 0, 80, 10)
+
+    run = t_eq_int(run, "weight 1 of 4", box_w(ui, small), 20)
+    run = t_eq_int(run, "weight 3 of 4", box_w(ui, large), 60)
+
+    return run
+}
+
+// ── Alignment ────────────────────────────────────────────────────────────────
+
+func test_box_align(run: TestRun) : TestRun {
+    let fonts: FontSet = test_box_fonts()
+    let ui: Ui = ui_new(32)
+
+    // A column stretches its children across the cross axis by default.
+    ui_begin(ui, 0, 0, false)
+    let stretched: int = ui_col(ui)
+        let wide: int = ui_text(ui, "ab")
+    ui_end(ui)
+
+    box_layout(ui, fonts, stretched, 0, 0, 90, 40)
+    run = t_eq_int(run, "stretch fills the cross axis", box_w(ui, wide), 90)
+
+    // Centring leaves equal space either side.
+    ui_begin(ui, 0, 0, false)
+    let centred: int = ui_col(ui, align: UiAlign.CENTER)
+        let middle: int = ui_text(ui, "ab")     // 20 wide
+    ui_end(ui)
+
+    box_layout(ui, fonts, centred, 0, 0, 90, 40)
+    run = t_eq_int(run, "centred keeps its natural width", box_w(ui, middle), 20)
+    run = t_eq_int(run, "centred is offset by half the slack", box_x(ui, middle), 35)
+
+    // END puts the child against the far edge.
+    ui_begin(ui, 0, 0, false)
+    let trailing: int = ui_col(ui, align: UiAlign.END)
+        let last: int = ui_text(ui, "ab")
+    ui_end(ui)
+
+    box_layout(ui, fonts, trailing, 0, 0, 90, 40)
+    run = t_eq_int(run, "END aligns to the far edge", box_x(ui, last), 70)
+
+    // With no flexible child, justify decides where the leftover main-axis space goes.
+    ui_begin(ui, 0, 0, false)
+    let pushed: int = ui_row(ui, justify: UiAlign.END)
+        let item: int = ui_text(ui, "ab")
+    ui_end(ui)
+
+    box_layout(ui, fonts, pushed, 0, 0, 100, 20)
+    run = t_eq_int(run, "justify END shifts along the main axis", box_x(ui, item), 80)
+
+    return run
+}
+
+// ── Nesting ──────────────────────────────────────────────────────────────────
+
+func test_box_nesting(run: TestRun) : TestRun {
+    let fonts: FontSet = test_box_fonts()
+    let ui: Ui = ui_new(64)
+
+    ui_begin(ui, 0, 0, false)
+    let root: int = ui_col(ui, pad: 10, gap: 5)
+        let header: int = ui_text(ui, "ab")
+        let body: int = ui_row(ui, gap: 4)
+            let leftCell: int = ui_spacer(ui, flex: 1)
+            let rightCell: int = ui_spacer(ui, flex: 1)
+        ui_end(ui)
+    ui_end(ui)
+
+    box_layout(ui, fonts, root, 0, 0, 200, 100)
+
+    // Padding is applied once, at the top of the tree.
+    run = t_eq_int(run, "content starts inside the padding", box_x(ui, header), 10)
+    run = t_eq_int(run, "content top is inside the padding", box_y(ui, header), 10)
+
+    // The nested row inherits the column's content width.
+    run = t_eq_int(run, "nested row fills the content width", box_w(ui, body), 180)
+    run = t_eq_int(run, "nested row clears the header and gap", box_y(ui, body), 35)
+
+    // The row's own children divide its width, minus its own gap.
+    let cells: int = box_w(ui, leftCell) + box_w(ui, rightCell) + 4
+    run = t_eq_int(run, "cells and gap fill the row", cells, box_w(ui, body))
+    run = t_eq_int(run, "cells divide evenly", box_w(ui, leftCell), 88)
+
+    // The right cell begins after the left one and its gap — no overlap, no drift.
+    run = t_eq_int(run, "second cell follows the first",
+        box_x(ui, rightCell), box_x(ui, leftCell) + box_w(ui, leftCell) + 4)
+
+    // Hit testing reads these rectangles, so containment has to agree with them.
+    run = t_true(run, "a point inside the header hits it", box_contains(ui, header, 12, 12))
+    run = t_false(run, "a point above the header misses", box_contains(ui, header, 12, 2))
+    run = t_false(run, "the far edge is exclusive",
+        box_contains(ui, header, box_x(ui, header) + box_w(ui, header), 12))
+
+    return run
+}

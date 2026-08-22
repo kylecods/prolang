@@ -610,6 +610,12 @@ namespace ProLang.Compiler
                 case BoundNodeKind.BoundEnumMemberExpression:
                     scope.IL.Emit(OpCodes.Ldc_I4, ((BoundEnumMemberExpression)node).Member.Value);
                     break;
+                case BoundNodeKind.BoundFunctionReference:
+                    EmitFunctionReference(scope, (BoundFunctionReference)node);
+                    break;
+                case BoundNodeKind.BoundIndirectCallExpression:
+                    EmitIndirectCallExpression(scope, (BoundIndirectCallExpression)node);
+                    break;
                 default:
                     throw new NotSupportedException($"Unexpected node kind {node.Kind}");
             }
@@ -999,6 +1005,45 @@ namespace ProLang.Compiler
                     scope.IL.Emit(OpCodes.Call, _methods[node.Function]);
                     return;
             }
+        }
+
+        /// <summary>
+        /// Emits a function used as a value, as a delegate over a null target.
+        /// </summary>
+        /// <remarks>
+        /// <c>ldnull</c> is the delegate's target, and it is what makes function values free of a
+        /// garbage collector's involvement in the C and PSP backends: nothing is captured, so there
+        /// is no object for the delegate to keep alive. Every referenced function is a static
+        /// method already in <c>_methods</c>, because methods are declared in a pass before any
+        /// body is emitted.
+        /// </remarks>
+        private void EmitFunctionReference(MethodBodyScope scope, BoundFunctionReference node)
+        {
+            var delegateType = GetTypeReference(node.Type);
+            var constructor = _references.GetGenericMethod(delegateType, ".ctor", 2);
+
+            scope.IL.Emit(OpCodes.Ldnull);
+            scope.IL.Emit(OpCodes.Ldftn, _methods[node.Function]);
+            scope.IL.Emit(OpCodes.Newobj, constructor);
+        }
+
+        /// <summary>
+        /// Emits a call through a function value: push the delegate, push the arguments, then
+        /// <c>Invoke</c>.
+        /// </summary>
+        private void EmitIndirectCallExpression(MethodBodyScope scope, BoundIndirectCallExpression node)
+        {
+            EmitExpression(scope, node.Target);
+
+            foreach (var argument in node.Arguments)
+            {
+                EmitExpression(scope, argument);
+            }
+
+            var delegateType = GetTypeReference(node.FunctionType);
+            var invoke = _references.GetGenericMethod(delegateType, "Invoke", node.Arguments.Length);
+
+            scope.IL.Emit(OpCodes.Callvirt, invoke);
         }
 
 

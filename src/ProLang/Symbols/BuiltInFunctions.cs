@@ -52,6 +52,12 @@ internal static class BuiltInFunctions
             new ParameterSymbol("index", TypeSymbol.Int, 1)),
         TypeSymbol.String);
 
+    public static readonly FunctionSymbol StringCharCode = new("charCode",
+        ImmutableArray.Create(
+            new ParameterSymbol("str", TypeSymbol.String, 0),
+            new ParameterSymbol("index", TypeSymbol.Int, 1)),
+        TypeSymbol.Int);
+
     public static readonly FunctionSymbol StringSubstring = new("substring",
         ImmutableArray.Create(
             new ParameterSymbol("str", TypeSymbol.String, 0),

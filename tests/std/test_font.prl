@@ -1,0 +1,46 @@
+/*
+ * ui/font — the metrics table.
+ */
+
+import "testing"
+import "ui/font"
+
+func test_font_run() : TestRun {
+    let run: TestRun = t_new()
+
+    let fonts: FontSet = font_new(2)
+
+    // A proportional font, filled in by hand the way a host would fill it from real measurements.
+    font_set_metrics(fonts, 0, 20, 15)
+    font_set_width(fonts, 0, 65, 12)     // 'A'
+    font_set_width(fonts, 0, 66, 10)     // 'B'
+    font_set_width(fonts, 0, 105, 4)     // 'i'
+    font_set_width(fonts, 0, 63, 9)      // '?', the fallback
+
+    run = t_eq_int(run, "line height", font_line_height(fonts, 0), 20)
+    run = t_eq_int(run, "ascent", font_ascent(fonts, 0), 15)
+    run = t_eq_int(run, "width of A", font_width(fonts, 0, 65), 12)
+
+    // Measuring is the sum of the advances, which is what the layout pass relies on.
+    run = t_eq_int(run, "measure AB", font_measure(fonts, 0, "AB"), 22)
+    run = t_eq_int(run, "measure ABi", font_measure(fonts, 0, "ABi"), 26)
+    run = t_eq_int(run, "measure empty", font_measure(fonts, 0, ""), 0)
+
+    // A character the table does not cover falls back rather than reading out of bounds. This is
+    // the check that matters: the alternative is an index crash on the first non-ASCII character.
+    run = t_eq_int(run, "high code falls back", font_width(fonts, 0, 8364), 9)
+    run = t_eq_int(run, "negative code falls back", font_width(fonts, 0, 0 - 5), 9)
+
+    // A second font is independent of the first.
+    font_set_monospace(fonts, 1, 8, 8, 7)
+    run = t_eq_int(run, "monospace advance", font_width(fonts, 1, 65), 8)
+    run = t_eq_int(run, "monospace is uniform", font_width(fonts, 1, 105), 8)
+    run = t_eq_int(run, "monospace measure", font_measure(fonts, 1, "abcd"), 32)
+    run = t_eq_int(run, "font 0 unaffected", font_width(fonts, 0, 65), 12)
+
+    // An out-of-range font reports nothing rather than indexing past the table.
+    run = t_eq_int(run, "unknown font width", font_width(fonts, 9, 65), 0)
+    run = t_eq_int(run, "unknown font height", font_line_height(fonts, 9), 0)
+
+    return run
+}

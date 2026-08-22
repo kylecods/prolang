@@ -1,0 +1,500 @@
+/*
+ * The widget tree, and the builder that constructs it.
+ *
+ * ── The shape of a tree in this language ─────────────────────────────────────
+ *
+ * A widget tree wants to be nodes holding references to other nodes, and ProLang has no way to say
+ * that. A struct cannot name itself — the binder resolves a field's type before it declares the
+ * struct, so `struct Node { kids: array<Node> }` is an undefined type. Generic structs vanish
+ * entirely on the C and PSP backends, which emit only non-generic ones. And a heterogeneous list
+ * through `array<any>` cannot be read back, because casting `any` to a struct emits `isinst`, which
+ * yields a boxed reference for a value type.
+ *
+ * So a node is an `int`, and the tree is one flat `array<int>` addressed as `node * ui_stride() +
+ * field`. Children hang off `FIRST_KID`/`NEXT_SIB`; "no node" is `-1`, never a `null` — writing
+ * `null` compiles to the integer 0, which is a perfectly valid node index and would silently mean
+ * the root.
+ *
+ * That is not a workaround so much as the representation this problem wanted anyway: one
+ * allocation for the whole frame, no pointer chasing, and a structure that transpiles unchanged to
+ * C, to the PSP, and to anything a browser backend would want.
+ *
+ * ── Why the builder opens and closes rather than nesting ─────────────────────
+ *
+ * Containers open a scope and are closed by `ui_end`:
+ *
+ *     ui_col(ui, pad: 16, gap: 12)
+ *         ui_text(ui, "Count: " + n, size: 24)
+ *         ui_row(ui, gap: 8)
+ *             ui_button(ui, "Increment", action: ACT_INC)
+ *         ui_end(ui)
+ *     ui_end(ui)
+ *
+ * The nested-call form that Flutter and JSX use would need an array literal of children passed
+ * inline as an argument, which nothing in this repository does today. This form needs no array
+ * literals, no nested call expressions and no recursive types, so it works on every backend as the
+ * language already stands — and a conditional child is an ordinary `if` around a statement rather
+ * than something that has to produce a list.
+ *
+ * Its one hazard is an unbalanced `ui_end`. That is checked rather than left to corrupt the tree:
+ * `ui_end` on an empty stack and a `ui_present` with a stack still open both assert.
+ *
+ * ── Mutation through a value type ────────────────────────────────────────────
+ *
+ * `Ui` is a struct, so it is copied into every one of these functions. Every field is an
+ * `array<T>`, which is a real reference, so writes *through* those arrays are visible to the
+ * caller. That is the whole reason the counters live in `st` rather than in scalar fields: a
+ * scalar `count` field would be incremented on a copy and thrown away.
+ */
+
+import "test"
+import "ui/color"
+import "ui/font"
+
+// ── Node kinds ───────────────────────────────────────────────────────────────
+
+enum UiKind {
+    NONE,
+    COL,
+    ROW,
+    BOX,
+    TEXT,
+    BUTTON,
+    SPACER,
+    IMAGE
+}
+
+// ── Field offsets within a node's slice of the arena ─────────────────────────
+
+enum UiF {
+    KIND,
+    FIRST_KID,
+    LAST_KID,
+    NEXT_SIB,
+    PARENT,
+    STR,            // index into `strs`, or -1
+    ACTION,         // the int a button reports when clicked; 0 means "not interactive"
+    ID,             // stable identity across frames, for hover and press tracking
+    BG,
+    FG,
+    RADIUS,
+    FONT,
+    PAD_L,
+    PAD_T,
+    PAD_R,
+    PAD_B,
+    GAP,
+    FIXED_W,        // -1 means "size to contents"
+    FIXED_H,
+    FLEX,           // share of the leftover main-axis space; 0 means "natural size"
+    ALIGN,          // cross-axis placement of children
+    JUSTIFY,        // main-axis placement when there is room left over
+    IMAGE_ID,       // backend handle for an IMAGE node
+    X,              // ── filled in by the layout pass ──
+    Y,
+    W,
+    H
+}
+
+func ui_stride() : int {
+    return 27
+}
+
+// ── Alignment ────────────────────────────────────────────────────────────────
+
+enum UiAlign {
+    START,
+    CENTER,
+    END,
+    STRETCH
+}
+
+// ── Interpreter state, kept in `st` so it survives the struct copy ───────────
+
+enum UiS {
+    NODE_COUNT,
+    STR_COUNT,
+    STACK_DEPTH,
+    CAPACITY,
+    STR_CAPACITY,
+    MOUSE_X,
+    MOUSE_Y,
+    MOUSE_DOWN,      // 1 while the primary button is held
+    MOUSE_WAS_DOWN,  // its state on the previous frame, so a press is an edge
+    HOT_ID,          // the node under the cursor
+    ACTIVE_ID,       // the node the press started on
+    FIRED_ACTION,    // set by hit_resolve, read by the frame loop
+    ROOT
+}
+
+func ui_state_slots() : int {
+    return 16
+}
+
+/*
+ * The arena.
+ *
+ * One `data` buffer for every node, a string table beside it, an explicit stack of open containers,
+ * and `st` for the counters and the pointer state. Four arrays rather than twenty-seven, because
+ * the struct is copied on every call and a node's fields are then contiguous in memory.
+ */
+struct Ui {
+    data: array<int>,
+    strs: array<string>,
+    stack: array<int>,
+    st: array<int>
+}
+
+/*
+ * Allocates an arena for up to `capacity` nodes.
+ *
+ * Nothing grows: a frame that overruns its arena asserts rather than reallocating, because the
+ * point of the arena is that a frame costs no allocations at all. Widget trees are small and their
+ * size is knowable — a few hundred nodes is a dense screen.
+ */
+func ui_new(capacity: int) : Ui {
+    let data: array<int> = array_new(capacity * ui_stride())
+    let strs: array<string> = array_new(capacity)
+    let stack: array<int> = array_new(capacity)
+    let st: array<int> = array_new(ui_state_slots())
+
+    st[UiS.CAPACITY] = capacity
+    st[UiS.STR_CAPACITY] = capacity
+    st[UiS.ROOT] = 0 - 1
+    st[UiS.HOT_ID] = 0
+    st[UiS.ACTIVE_ID] = 0
+
+    return Ui { data: data, strs: strs, stack: stack, st: st }
+}
+
+// ── Reading and writing a node's fields ──────────────────────────────────────
+
+func ui_get(ui: Ui, node: int, field: int) : int {
+    if (node < 0 || node >= ui.st[UiS.NODE_COUNT]) { return 0 }
+
+    return ui.data[(node * ui_stride()) + field]
+}
+
+func ui_set(ui: Ui, node: int, field: int, value: int) : void {
+    if (node < 0 || node >= ui.st[UiS.NODE_COUNT]) {
+        return
+    }
+
+    ui.data[(node * ui_stride()) + field] = value
+}
+
+func ui_node_count(ui: Ui) : int {
+    return ui.st[UiS.NODE_COUNT]
+}
+
+func ui_root(ui: Ui) : int {
+    return ui.st[UiS.ROOT]
+}
+
+func ui_kind(ui: Ui, node: int) : int {
+    return ui_get(ui, node, UiF.KIND)
+}
+
+func ui_text_of(ui: Ui, node: int) : string {
+    let index: int = ui_get(ui, node, UiF.STR)
+
+    if (index < 0 || index >= ui.st[UiS.STR_COUNT]) { return "" }
+
+    return ui.strs[index]
+}
+
+// ── Frame lifecycle ──────────────────────────────────────────────────────────
+
+/*
+ * Starts a frame, discarding the previous tree and taking this frame's pointer state.
+ *
+ * The hot and active ids deliberately survive: they are what makes a press followed by a release
+ * one gesture rather than two unrelated events, and the tree they refer to is rebuilt identically
+ * every frame.
+ */
+func ui_begin(ui: Ui, mouseX: int, mouseY: int, mouseDown: bool) : void {
+    ui.st[UiS.NODE_COUNT] = 0
+    ui.st[UiS.STR_COUNT] = 0
+    ui.st[UiS.STACK_DEPTH] = 0
+    ui.st[UiS.ROOT] = 0 - 1
+    ui.st[UiS.FIRED_ACTION] = 0
+
+    ui.st[UiS.MOUSE_WAS_DOWN] = ui.st[UiS.MOUSE_DOWN]
+    ui.st[UiS.MOUSE_X] = mouseX
+    ui.st[UiS.MOUSE_Y] = mouseY
+
+    if (mouseDown) {
+        ui.st[UiS.MOUSE_DOWN] = 1
+    } else {
+        ui.st[UiS.MOUSE_DOWN] = 0
+    }
+}
+
+/*
+ * Closes the innermost open container.
+ *
+ * Asserts rather than returning quietly when there is nothing open. An unbalanced `ui_end` means
+ * every widget after it is parented somewhere unintended, and a tree that is silently the wrong
+ * shape is far harder to see than a program that stops.
+ */
+func ui_end(ui: Ui) : void {
+    assert(ui.st[UiS.STACK_DEPTH] > 0, "ui_end without a matching container")
+
+    ui.st[UiS.STACK_DEPTH] = ui.st[UiS.STACK_DEPTH] - 1
+}
+
+// Whether every container opened this frame has been closed.
+func ui_is_balanced(ui: Ui) : bool {
+    return ui.st[UiS.STACK_DEPTH] == 0
+}
+
+// ── Building a node ──────────────────────────────────────────────────────────
+
+/*
+ * Allocates a node, links it to the open container, and returns its handle.
+ *
+ * Children are appended through a `LAST_KID` pointer rather than by walking the sibling chain, so
+ * building a container with many children stays linear.
+ */
+func ui_node(ui: Ui, kind: int) : int {
+    let node: int = ui.st[UiS.NODE_COUNT]
+
+    assert(node < ui.st[UiS.CAPACITY], "ui arena is full — raise the capacity given to ui_new")
+
+    ui.st[UiS.NODE_COUNT] = node + 1
+
+    let base: int = node * ui_stride()
+    let i: int = 0
+    while (i < ui_stride()) {
+        ui.data[base + i] = 0
+        i = i + 1
+    }
+
+    ui.data[base + UiF.KIND] = kind
+    ui.data[base + UiF.FIRST_KID] = 0 - 1
+    ui.data[base + UiF.LAST_KID] = 0 - 1
+    ui.data[base + UiF.NEXT_SIB] = 0 - 1
+    ui.data[base + UiF.PARENT] = 0 - 1
+    ui.data[base + UiF.STR] = 0 - 1
+    ui.data[base + UiF.FIXED_W] = 0 - 1
+    ui.data[base + UiF.FIXED_H] = 0 - 1
+
+    if (ui.st[UiS.STACK_DEPTH] > 0) {
+        let parent: int = ui.stack[ui.st[UiS.STACK_DEPTH] - 1]
+
+        ui.data[base + UiF.PARENT] = parent
+
+        let last: int = ui.data[(parent * ui_stride()) + UiF.LAST_KID]
+
+        if (last < 0) {
+            ui.data[(parent * ui_stride()) + UiF.FIRST_KID] = node
+        } else {
+            ui.data[(last * ui_stride()) + UiF.NEXT_SIB] = node
+        }
+
+        ui.data[(parent * ui_stride()) + UiF.LAST_KID] = node
+    } elif (ui.st[UiS.ROOT] < 0) {
+        ui.st[UiS.ROOT] = node
+    }
+
+    return node
+}
+
+// Pushes a node as the open container. Every container builder ends with this.
+func ui_open(ui: Ui, node: int) : void {
+    assert(ui.st[UiS.STACK_DEPTH] < ui.st[UiS.CAPACITY], "ui container nesting is too deep")
+
+    ui.stack[ui.st[UiS.STACK_DEPTH]] = node
+    ui.st[UiS.STACK_DEPTH] = ui.st[UiS.STACK_DEPTH] + 1
+}
+
+// Interns a string and returns its index, or -1 for the empty string.
+func ui_intern(ui: Ui, text: string) : int {
+    if (text.length() == 0) { return 0 - 1 }
+
+    let index: int = ui.st[UiS.STR_COUNT]
+
+    assert(index < ui.st[UiS.STR_CAPACITY], "ui string table is full")
+
+    ui.strs[index] = text
+    ui.st[UiS.STR_COUNT] = index + 1
+
+    return index
+}
+
+/*
+ * Applies the properties every widget shares.
+ *
+ * One function rather than a dozen setters at each call site, and the reason the builders below are
+ * each only a few lines. `pad` sets all four edges; a caller wanting them to differ sets the
+ * individual fields afterwards with `ui_set`.
+ */
+func ui_style(ui: Ui, node: int, pad: int, gap: int, bg: int, fg: int, radius: int,
+              width: int, height: int, flex: int, align: int, justify: int, font: int) : void {
+    let base: int = node * ui_stride()
+
+    ui.data[base + UiF.PAD_L] = pad
+    ui.data[base + UiF.PAD_T] = pad
+    ui.data[base + UiF.PAD_R] = pad
+    ui.data[base + UiF.PAD_B] = pad
+    ui.data[base + UiF.GAP] = gap
+    ui.data[base + UiF.BG] = bg
+    ui.data[base + UiF.FG] = fg
+    ui.data[base + UiF.RADIUS] = radius
+    ui.data[base + UiF.FIXED_W] = width
+    ui.data[base + UiF.FIXED_H] = height
+    ui.data[base + UiF.FLEX] = flex
+    ui.data[base + UiF.ALIGN] = align
+    ui.data[base + UiF.JUSTIFY] = justify
+    ui.data[base + UiF.FONT] = font
+}
+
+// ── The builders ─────────────────────────────────────────────────────────────
+
+/*
+ * A column: children stacked top to bottom, `gap` apart.
+ *
+ * Opens a container, so it must be closed with `ui_end`. Every property has a default, which is
+ * what lets a call name only what it changes.
+ */
+func ui_col(ui: Ui, pad: int = 0, gap: int = 0, bg: int = 0, fg: int = 0, radius: int = 0,
+            width: int = 0 - 1, height: int = 0 - 1, flex: int = 0,
+            align: int = UiAlign.STRETCH, justify: int = UiAlign.START) : int {
+    let node: int = ui_node(ui, UiKind.COL)
+
+    ui_style(ui, node, pad, gap, bg, fg, radius, width, height, flex, align, justify, 0)
+    ui_open(ui, node)
+
+    return node
+}
+
+// A row: children left to right. Closed with `ui_end`.
+func ui_row(ui: Ui, pad: int = 0, gap: int = 0, bg: int = 0, fg: int = 0, radius: int = 0,
+            width: int = 0 - 1, height: int = 0 - 1, flex: int = 0,
+            align: int = UiAlign.CENTER, justify: int = UiAlign.START) : int {
+    let node: int = ui_node(ui, UiKind.ROW)
+
+    ui_style(ui, node, pad, gap, bg, fg, radius, width, height, flex, align, justify, 0)
+    ui_open(ui, node)
+
+    return node
+}
+
+/*
+ * A single surface: a background, a border radius and padding around whatever it contains.
+ *
+ * Lays its children out exactly as a column does. It exists as its own kind because "a panel" and
+ * "a stack of things" are different intentions even when they are the same arithmetic, and the
+ * difference matters to anything reading the tree.
+ */
+func ui_box(ui: Ui, pad: int = 0, gap: int = 0, bg: int = 0, fg: int = 0, radius: int = 0,
+            width: int = 0 - 1, height: int = 0 - 1, flex: int = 0,
+            align: int = UiAlign.STRETCH, justify: int = UiAlign.START) : int {
+    let node: int = ui_node(ui, UiKind.BOX)
+
+    ui_style(ui, node, pad, gap, bg, fg, radius, width, height, flex, align, justify, 0)
+    ui_open(ui, node)
+
+    return node
+}
+
+// A run of text on one line. A leaf: it takes no children and needs no `ui_end`.
+func ui_text(ui: Ui, text: string, fg: int = 0, font: int = 0, pad: int = 0,
+             flex: int = 0, align: int = UiAlign.START) : int {
+    let node: int = ui_node(ui, UiKind.TEXT)
+
+    ui_style(ui, node, pad, 0, 0, fg, 0, 0 - 1, 0 - 1, flex, align, UiAlign.START, font)
+    ui_set(ui, node, UiF.STR, ui_intern(ui, text))
+
+    return node
+}
+
+/*
+ * A clickable label.
+ *
+ * `action` is the value `ui_present` returns when the button is clicked, and it doubles as the
+ * button's identity across frames — which is what lets a press and the release that follows it be
+ * recognised as the same gesture. Two buttons sharing an action would therefore share their
+ * pressed state; give one of them an explicit `id` when that matters.
+ */
+func ui_button(ui: Ui, label: string, action: int = 0, id: int = 0, bg: int = 0, fg: int = 0,
+               radius: int = 0, pad: int = 0, font: int = 0,
+               width: int = 0 - 1, height: int = 0 - 1, flex: int = 0) : int {
+    let node: int = ui_node(ui, UiKind.BUTTON)
+
+    ui_style(ui, node, pad, 0, bg, fg, radius, width, height, flex, UiAlign.CENTER, UiAlign.CENTER, font)
+    ui_set(ui, node, UiF.STR, ui_intern(ui, label))
+    ui_set(ui, node, UiF.ACTION, action)
+
+    if (id != 0) {
+        ui_set(ui, node, UiF.ID, id)
+    } else {
+        ui_set(ui, node, UiF.ID, action)
+    }
+
+    return node
+}
+
+/*
+ * Empty space.
+ *
+ * With the default `flex` of 1 it absorbs whatever the other children leave over, which is how
+ * something is pushed to the far end of a row. With `flex: 0` and a size it is a fixed gap.
+ */
+func ui_spacer(ui: Ui, size: int = 0, flex: int = 1) : int {
+    let node: int = ui_node(ui, UiKind.SPACER)
+
+    ui_style(ui, node, 0, 0, 0, 0, 0, size, size, flex, UiAlign.START, UiAlign.START, 0)
+
+    return node
+}
+
+/*
+ * A backend bitmap drawn at a given size.
+ *
+ * `image` is whatever handle the host uses — the toolkit never looks inside it. Icons reach the
+ * screen this way: `ui/icons` rasterises them once per theme and the display list refers to the
+ * result.
+ */
+func ui_image(ui: Ui, image: int, width: int, height: int, pad: int = 0, flex: int = 0) : int {
+    let node: int = ui_node(ui, UiKind.IMAGE)
+
+    ui_style(ui, node, pad, 0, 0, 0, 0, width, height, flex, UiAlign.CENTER, UiAlign.CENTER, 0)
+    ui_set(ui, node, UiF.IMAGE_ID, image)
+
+    return node
+}
+
+// ── Tree walking ─────────────────────────────────────────────────────────────
+
+func ui_first_child(ui: Ui, node: int) : int {
+    return ui_get(ui, node, UiF.FIRST_KID)
+}
+
+func ui_next_sibling(ui: Ui, node: int) : int {
+    return ui_get(ui, node, UiF.NEXT_SIB)
+}
+
+func ui_child_count(ui: Ui, node: int) : int {
+    let count: int = 0
+    let child: int = ui_first_child(ui, node)
+
+    while (child >= 0) {
+        count = count + 1
+        child = ui_next_sibling(ui, child)
+    }
+
+    return count
+}
+
+// Whether a container lays its children out along the x axis.
+func ui_is_horizontal(ui: Ui, node: int) : bool {
+    return ui_kind(ui, node) == UiKind.ROW
+}
+
+// Whether a node arranges children at all, as opposed to being a leaf.
+func ui_is_container(ui: Ui, node: int) : bool {
+    let kind: int = ui_kind(ui, node)
+
+    return kind == UiKind.COL || kind == UiKind.ROW || kind == UiKind.BOX
+}

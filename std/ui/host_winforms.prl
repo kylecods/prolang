@@ -1,0 +1,296 @@
+/*
+ * The Windows Forms host.
+ *
+ * ── The line this module sits on ─────────────────────────────────────────────
+ *
+ * Everything else in the toolkit — `ui/widget`, `ui/box`, `ui/hit`, `ui/draw`, `ui/font` — is pure
+ * ProLang and has no idea a window exists. This is the module that knows, and it is the only one
+ * that imports `winforms`.
+ *
+ * That boundary is not tidiness. The whole import graph compiles into one assembly, so a single
+ * edge to the shim makes a program need the Windows Desktop runtime pack. Keeping every edge in
+ * here is what lets `tests/std/run_tests.prl` exercise the layout engine and the display list under
+ * `dotnet test` on a machine with no window system at all.
+ *
+ * A PSP or browser host is a sibling of this file, not a change to anything above it: the same
+ * widget-building code, a different import.
+ *
+ * ── What a host actually has to do ───────────────────────────────────────────
+ *
+ * Four things, and they are all here:
+ *
+ *   1. Open a window with a surface filling it.
+ *   2. Measure the fonts once, into the table the layout pass reads.
+ *   3. Drain the event queue into a pointer position and a button state.
+ *   4. Lay out, hit test, flatten to a display list, and submit it — one interop call per frame.
+ *
+ * Nothing in that list mentions a widget, which is the point.
+ */
+
+import "winforms"
+import "ui/widget"
+import "ui/box"
+import "ui/hit"
+import "ui/draw"
+import "ui/font"
+
+// Event kinds, matching PrlEventKind in std/WinFormsHelper/EventQueue.cs. Their values are part of
+// the contract with the shim and must not be reordered.
+enum HostwEv {
+    NONE,
+    MOUSE_DOWN,
+    MOUSE_MOVE,
+    MOUSE_UP,
+    WHEEL,
+    KEY_DOWN,
+    KEY_UP,
+    MOUSE_LEAVE,
+    RESIZE,
+    QUIT,
+    COMMAND
+}
+
+// Slots in the host's mutable state array. Scalars would not survive the struct copy.
+enum HostwS {
+    RUNNING,
+    WIDTH,
+    HEIGHT,
+    MOUSE_X,
+    MOUSE_Y,
+    MOUSE_DOWN,
+    SCALE
+}
+
+func hostw_state_slots() : int {
+    return 8
+}
+
+/*
+ * A window and the buffers a frame is built in.
+ *
+ * `ops` is allocated once and reused for every frame, which is what makes a frame cost no
+ * allocations: the display list is rewritten in place and handed over by pointer.
+ */
+struct Host {
+    form: int,
+    surface: int,
+    ops: array<int>,
+    ev: array<int>,
+    st: array<int>
+}
+
+// ── Opening a window ─────────────────────────────────────────────────────────
+
+/*
+ * Creates the window, fills it with a surface, and wires input.
+ *
+ * `maxOps` bounds the display list. A frame that needs more is truncated rather than overrunning —
+ * `ui/draw` stops emitting — so a screen that comes out visibly incomplete means this was too
+ * small.
+ */
+func hostw_open(title: string, width: int, height: int, background: int = 0, maxOps: int = 4096) : Host {
+    WinFormsHelper.InitApplication()
+
+    let form: int = WinFormsHelper.CreateForm(title, width, height)
+
+    // CreateForm sizes the whole window, frame included, so ask for the client area explicitly —
+    // that is what the layout is written against. Then read it back rather than assuming it was
+    // granted: a size larger than the display is quietly reduced.
+    WinFormsHelper.SetClientSize(form, width, height)
+
+    let clientW: int = WinFormsHelper.GetClientWidth(form)
+    let clientH: int = WinFormsHelper.GetClientHeight(form)
+
+    let surface: int = WinFormsHelper.CreateSurface(0, 0, clientW, clientH)
+
+    WinFormsHelper.AddControl(form, surface)
+
+    if (background != 0) {
+        WinFormsHelper.SetBackColor(surface, background)
+        WinFormsHelper.SetBackColor(form, background)
+    }
+
+    // Mouse events come from the surface, keys and closing from the form, and the resize from the
+    // form too — a form reports its *client* size, which is what the layout wants.
+    WinFormsHelper.EnableMouseInput(surface)
+    WinFormsHelper.EnableKeyInput(form)
+    WinFormsHelper.EnableResizeInput(form)
+
+    let ops: array<int> = array_new(maxOps * dl_stride())
+    let ev: array<int> = array_new(8)
+    let st: array<int> = array_new(hostw_state_slots())
+
+    st[HostwS.RUNNING] = 1
+    st[HostwS.WIDTH] = width
+    st[HostwS.HEIGHT] = height
+    st[HostwS.MOUSE_X] = 0 - 1
+    st[HostwS.MOUSE_Y] = 0 - 1
+    st[HostwS.MOUSE_DOWN] = 0
+    st[HostwS.SCALE] = WinFormsHelper.GetDpiScalePercent()
+
+    WinFormsHelper.Show(form)
+
+    return Host { form: form, surface: surface, ops: ops, ev: ev, st: st }
+}
+
+/*
+ * Builds the font table the layout pass measures with.
+ *
+ * `families`, `sizes` and `bolds` describe the fonts positionally, and the index into them is the
+ * `font:` a widget refers to. Measuring happens once here rather than per frame — that is the whole
+ * bargain `ui/font` exists to make.
+ */
+func hostw_fonts(families: array<string>, sizes: array<int>, bolds: array<int>) : FontSet {
+    let count: int = families.length()
+    let fonts: FontSet = font_new(count)
+
+    let i: int = 0
+    while (i < count) {
+        let bold: bool = bolds[i] != 0
+        let registered: int = WinFormsHelper.SurfaceAddFont(families[i], sizes[i], bold)
+
+        WinFormsHelper.SurfaceMeasureFont(registered, fonts.widths, i * font_glyphs(),
+            fonts.metrics, i * 2)
+
+        i = i + 1
+    }
+
+    return fonts
+}
+
+// A single font, for programs that want one and do not want to build arrays to say so.
+func hostw_font(family: string = "Segoe UI", size: int = 10, bold: bool = false) : FontSet {
+    let fonts: FontSet = font_new(1)
+    let registered: int = WinFormsHelper.SurfaceAddFont(family, size, bold)
+
+    WinFormsHelper.SurfaceMeasureFont(registered, fonts.widths, 0, fonts.metrics, 0)
+
+    return fonts
+}
+
+// ── The frame loop ───────────────────────────────────────────────────────────
+
+func hostw_running(host: Host) : bool {
+    return host.st[HostwS.RUNNING] == 1
+}
+
+func hostw_width(host: Host) : int {
+    return host.st[HostwS.WIDTH]
+}
+
+func hostw_height(host: Host) : int {
+    return host.st[HostwS.HEIGHT]
+}
+
+func hostw_mouse_x(host: Host) : int {
+    return host.st[HostwS.MOUSE_X]
+}
+
+func hostw_mouse_y(host: Host) : int {
+    return host.st[HostwS.MOUSE_Y]
+}
+
+func hostw_mouse_down(host: Host) : bool {
+    return host.st[HostwS.MOUSE_DOWN] == 1
+}
+
+// The display's scaling factor as a percentage, for sizing a layout to the screen it is on.
+func hostw_scale(host: Host) : int {
+    return host.st[HostwS.SCALE]
+}
+
+/*
+ * Drains the event queue into the host's pointer and window state.
+ *
+ * Blocks for up to `timeoutMs` waiting for the first event, then takes everything else already
+ * queued without waiting. That is what keeps an idle program off the processor while still
+ * collapsing a burst of mouse-moves into one frame — the queue coalesces consecutive moves, and
+ * anything left after the first is drained here in a tight loop.
+ */
+func hostw_pump(host: Host, timeoutMs: int = 16) : void {
+    let kind: int = WinFormsHelper.WaitEventInto(host.ev, timeoutMs)
+
+    while (kind != HostwEv.NONE) {
+        if (kind == HostwEv.QUIT) {
+            host.st[HostwS.RUNNING] = 0
+        } elif (kind == HostwEv.RESIZE) {
+            // Guard on the source: the surface reports its own resize too, and it is resized *by*
+            // the handling of the form's.
+            if (host.ev[7] == host.form) {
+                host.st[HostwS.WIDTH] = host.ev[0]
+                host.st[HostwS.HEIGHT] = host.ev[1]
+
+                WinFormsHelper.SetBounds(host.surface, 0, 0, host.ev[0], host.ev[1])
+            }
+        } elif (kind == HostwEv.MOUSE_MOVE) {
+            host.st[HostwS.MOUSE_X] = host.ev[0]
+            host.st[HostwS.MOUSE_Y] = host.ev[1]
+        } elif (kind == HostwEv.MOUSE_DOWN) {
+            host.st[HostwS.MOUSE_X] = host.ev[0]
+            host.st[HostwS.MOUSE_Y] = host.ev[1]
+            host.st[HostwS.MOUSE_DOWN] = 1
+        } elif (kind == HostwEv.MOUSE_UP) {
+            host.st[HostwS.MOUSE_X] = host.ev[0]
+            host.st[HostwS.MOUSE_Y] = host.ev[1]
+            host.st[HostwS.MOUSE_DOWN] = 0
+        } elif (kind == HostwEv.MOUSE_LEAVE) {
+            // Off the window entirely: nothing can be hot, and a button held outside must not stay
+            // armed, or releasing over the desktop would click whatever it was over.
+            host.st[HostwS.MOUSE_X] = 0 - 1
+            host.st[HostwS.MOUSE_Y] = 0 - 1
+            host.st[HostwS.MOUSE_DOWN] = 0
+        }
+
+        kind = WinFormsHelper.PollEventInto(host.ev)
+    }
+}
+
+/*
+ * Starts a frame: pumps input, then opens the tree with this frame's pointer state.
+ *
+ * Pairing the two is what keeps them in step. Building a tree against last frame's pointer position
+ * is how a button lights up one frame behind the cursor.
+ */
+func hostw_begin(host: Host, ui: Ui, timeoutMs: int = 16) : void {
+    hostw_pump(host, timeoutMs)
+
+    ui_begin(ui, host.st[HostwS.MOUSE_X], host.st[HostwS.MOUSE_Y],
+        host.st[HostwS.MOUSE_DOWN] == 1)
+}
+
+/*
+ * Lays the tree out, resolves the pointer against it, paints it, and returns the action fired.
+ *
+ * The four steps have to happen in this order and none of them is optional: hit testing needs
+ * rectangles, and the display list needs to know what is hovered before it can choose a colour for
+ * it.
+ */
+func hostw_present(host: Host, ui: Ui, fonts: FontSet) : int {
+    assert(ui_is_balanced(ui), "a container was left open — every ui_col/ui_row/ui_box needs a ui_end")
+
+    let root: int = ui_root(ui)
+
+    if (root < 0) {
+        return 0
+    }
+
+    box_layout(ui, fonts, root, 0, 0, host.st[HostwS.WIDTH], host.st[HostwS.HEIGHT])
+
+    let fired: int = hit_resolve(ui)
+    let count: int = dl_build(ui, fonts, root, host.ops)
+
+    WinFormsHelper.SurfaceSubmit(host.surface, host.ops, count, ui.strs, ui.st[UiS.STR_COUNT])
+
+    return fired
+}
+
+func hostw_close(host: Host) : void {
+    host.st[HostwS.RUNNING] = 0
+
+    WinFormsHelper.CloseForm(host.form)
+}
+
+// Sets the smallest client area the window may be dragged to.
+func hostw_min_size(host: Host, width: int, height: int) : void {
+    WinFormsHelper.SetMinimumClientSize(host.form, width, height)
+}

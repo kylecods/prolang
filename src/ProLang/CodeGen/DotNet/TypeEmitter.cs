@@ -100,6 +100,47 @@ internal sealed class TypeEmitter
         return typeDef;
     }
 
+    /// <summary>
+    /// Maps a ProLang function type onto a BCL <c>Action</c> or <c>Func</c>.
+    /// </summary>
+    /// <remarks>
+    /// Reusing the BCL delegates rather than emitting a delegate type per signature keeps this to
+    /// one method: a bespoke type would need a runtime-provided <c>.ctor</c> and <c>Invoke</c>
+    /// declared with the right <c>RuntimeManaged</c> flags, all to describe something
+    /// <c>Action&lt;int&gt;</c> already describes.
+    /// </remarks>
+    private TypeReference ResolveFunctionType(FunctionTypeSymbol type)
+    {
+        var arity = type.ParameterTypes.Length;
+
+        // The binder caps this at FunctionTypeSymbol.MaxParameterCount, so reaching here means the
+        // check was bypassed rather than that a program asked for something reasonable.
+        if (arity > FunctionTypeSymbol.MaxParameterCount)
+        {
+            throw new InvalidOperationException(
+                $"Function type '{type.Name}' has more parameters than a BCL delegate covers.");
+        }
+
+        if (type.ReturnsVoid)
+        {
+            if (arity == 0)
+            {
+                return _references.GetRequiredType("System.Action");
+            }
+
+            var actionType = _references.GetRequiredType($"System.Action`{arity}");
+
+            return actionType.MakeGenericInstanceType(
+                type.ParameterTypes.Select(GetReference).ToArray());
+        }
+
+        // Func puts the return type last, so a 2-argument function is Func`3.
+        var funcType = _references.GetRequiredType($"System.Func`{arity + 1}");
+        var typeArguments = type.ParameterTypes.Select(GetReference).Append(GetReference(type.ReturnType));
+
+        return funcType.MakeGenericInstanceType(typeArguments.ToArray());
+    }
+
     private TypeReference Resolve(TypeSymbol type)
     {
         // Enums are erased to their underlying integer; members are constant-folded at their
@@ -116,6 +157,11 @@ internal sealed class TypeEmitter
                 : EmitStruct(structType);
 
             return _module.ImportReference(definition);
+        }
+
+        if (type is FunctionTypeSymbol functionType)
+        {
+            return ResolveFunctionType(functionType);
         }
 
         // A value obtained from .NET keeps its real type, so an instance call on it can be
