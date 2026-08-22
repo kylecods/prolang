@@ -270,6 +270,31 @@ public static partial class WinFormsHelper
         form.FormClosed += (_, _) => _events.Enqueue(new PrlEvent(PrlEventKind.Quit, Source: formId));
     }
 
+    /// <summary>
+    /// Routes a window's resizes into the queue, carrying the new <em>client</em> size.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The client size, not the window size, because that is the area a layout is written against;
+    /// the caller would otherwise have to subtract a frame it has no way to measure.
+    /// </para>
+    /// <para>
+    /// Separate from <see cref="EnableMouseInput"/>, which also reports resizes, because a program
+    /// wants its window's resizes and its canvas's for different reasons — and a canvas that
+    /// follows its window would otherwise report the same resize twice.
+    /// </para>
+    /// </remarks>
+    public static void EnableResizeInput(int controlId)
+    {
+        var control = _controls[controlId];
+
+        control.Resize += (_, _) =>
+        {
+            var size = control is Form form ? form.ClientSize : control.Size;
+            _events.Enqueue(new PrlEvent(PrlEventKind.Resize, size.Width, size.Height, Source: controlId));
+        };
+    }
+
     /// <summary>Wires mouse input on a canvas and key input on its form, the common case.</summary>
     public static void EnableInput(int formId, int canvasId)
     {

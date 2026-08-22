@@ -160,23 +160,99 @@ func layout_stack_chrome(scale: int, paletteHeight: int) : int {
 }
 
 /*
- * How wide the canvas should be, given the room available.
+ * The smallest canvas that is still comfortable to work in.
  *
- * Clamped at both ends. The lower bound is a canvas still worth drawing in when the window has
- * been squeezed onto a small screen; the upper bound stops the editor opening full-width on a
- * wide monitor, where a window occupying every pixel of a 34-inch display is not what anyone
- * wanted. Both bounds are themselves scaled, because they are sizes on a screen like any other.
+ * This is what the window's minimum size is built from: dragging the window smaller stops here,
+ * so there is always a drawing surface worth having rather than a sliver between the toolbars.
+ */
+func layout_workable_width(scale: int) : int {
+    return layout_px(scale, 560)
+}
+
+func layout_workable_height(scale: int) : int {
+    return layout_px(scale, 400)
+}
+
+/*
+ * The absolute floor on the canvas, which is a different thing from the workable size above.
+ *
+ * The window's minimum keeps the canvas at the workable size in the ordinary case, but that
+ * minimum is itself capped by the screen — on a display too small to hold it, the window can be
+ * smaller than the layout wants. This is the floor that keeps the arithmetic sane when that
+ * happens: a canvas is never given a negative width, which would place every control positioned
+ * after it on top of the ones before.
+ */
+func layout_min_canvas_width(scale: int) : int {
+    return layout_px(scale, 240)
+}
+
+func layout_min_canvas_height(scale: int) : int {
+    return layout_px(scale, 180)
+}
+
+/*
+ * How wide the canvas is inside a window whose client area is `clientWidth`.
+ *
+ * The canvas takes everything the chrome does not, which is what makes the editor follow a window
+ * being resized or maximised: this is called again with the new client size and every position
+ * below follows from it. The floor stops a window dragged very small from giving the canvas a
+ * negative width, which would put every control after it on top of the ones before.
+ */
+func layout_canvas_width_for(scale: int, clientWidth: int) : int {
+    return max(layout_min_canvas_width(scale), clientWidth - layout_side_chrome(scale))
+}
+
+func layout_canvas_height_for(scale: int, clientHeight: int, paletteHeight: int) : int {
+    return max(layout_min_canvas_height(scale), clientHeight - layout_stack_chrome(scale, paletteHeight))
+}
+
+/*
+ * How wide the canvas should be when the window first opens, given the room the screen has.
+ *
+ * Clamped at both ends, which the resizing form above deliberately is not. The lower bound is a
+ * canvas still worth drawing in on a small screen; the upper bound stops the editor *opening*
+ * full-width on a wide monitor, where a window occupying every pixel of a 34-inch display is not
+ * what anyone wanted. Dragging it that wide afterwards is a different matter — that was asked for.
  */
 func layout_canvas_width(scale: int, usableWidth: int) : int {
     let available: int = usableWidth - layout_side_chrome(scale)
 
-    return util_clamp(available, layout_px(scale, 420), layout_px(scale, 1040))
+    return util_clamp(available, layout_min_canvas_width(scale), layout_px(scale, 1040))
 }
 
 func layout_canvas_height(scale: int, usableHeight: int, paletteHeight: int) : int {
     let available: int = usableHeight - layout_stack_chrome(scale, paletteHeight)
 
-    return util_clamp(available, layout_px(scale, 300), layout_px(scale, 700))
+    return util_clamp(available, layout_min_canvas_height(scale), layout_px(scale, 700))
+}
+
+// ── Minimum size ─────────────────────────────────────────────────────────────
+
+/*
+ * The smallest client area the window may be resized to.
+ *
+ * Three things have a say, and they are combined in that order.
+ *
+ * The first is the workable canvas above: a window that can be dragged down to nothing leaves the
+ * editor unusable long before it looks broken.
+ *
+ * The second is the palette, which unlike everything else below the canvas has a width of its own
+ * rather than one taken from what is left — sixteen swatches are sixteen swatches. Sizing the
+ * window to the canvas alone lets the strip run off the right-hand edge, which is how this was
+ * found. `paletteWidth` is the whole row: the swatch, the gap and the strip.
+ *
+ * The third has the last word: a minimum larger than the screen is one the user cannot satisfy,
+ * and Windows will honour it anyway — leaving a window that cannot be made to fit its own display.
+ */
+func layout_min_width(scale: int, paletteWidth: int, usableWidth: int) : int {
+    let forCanvas: int = layout_window_width(scale, layout_workable_width(scale))
+    let forPalette: int = layout_content_x(scale) + paletteWidth + layout_gap(scale)
+
+    return min(max(forCanvas, forPalette), usableWidth)
+}
+
+func layout_min_height(scale: int, paletteHeight: int, usableHeight: int) : int {
+    return min(layout_window_height(scale, layout_workable_height(scale), paletteHeight), usableHeight)
 }
 
 // ── The window ───────────────────────────────────────────────────────────────

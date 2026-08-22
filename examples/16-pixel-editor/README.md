@@ -1,7 +1,7 @@
 # Pixel editor
 
-A pixel art editor written in ProLang, on Windows Forms. Sixteen modules, ~3,200 lines, with a
-432-check test suite also written in ProLang.
+A pixel art editor written in ProLang, on Windows Forms. Sixteen modules, ~3,300 lines, with a
+449-check test suite also written in ProLang.
 
 ```powershell
 .\build.ps1 -Run     # build and start it
@@ -67,6 +67,22 @@ design can keep.
 
 The window is also sized from the screen rather than to a constant, so it does not open taller than
 the display it is on, and does not span all of a very wide one either.
+
+**Resizing.** The layout is re-run from the new client size on every resize, so maximising fills
+the window instead of leaving a band of background down one side. Windows Forms can do this itself
+through docking and anchoring, but those are properties and interop cannot assign to a property —
+so it is arithmetic in `app_place_controls`, which is no loss: it is the same arithmetic
+`layout.prl` already does, and one expression of where things go beats two that have to agree.
+
+The image is re-centred in the canvas afterwards, keeping the zoom. Clamping the pan alone leaves
+it against whichever edge it was near, so making the window bigger pushes the artwork further from
+the middle than it was before.
+
+Three things set the window's minimum, in order: a canvas still comfortable to draw in; the
+palette, which unlike everything else below the canvas has a width of its own — sixteen swatches
+are sixteen swatches, and sizing to the canvas alone let the strip run off the right edge; and
+finally the screen, which has the last word, because a minimum larger than the display is one the
+user cannot satisfy and Windows honours it anyway.
 
 `test_layout.prl` checks the *relationships* at every factor Windows offers — the bar is wide
 enough for its own buttons, the window is exactly its parts, a hairline never rounds away to

@@ -142,11 +142,17 @@ func test_layout_run() : TestRun {
     // ── The canvas against the room available ────────────────────────────────
     let palette: int = layout_palette_cell(100) * 2
 
-    // A small screen gets the smallest canvas worth drawing in rather than a negative one.
-    r = t_eq_int(r, "a cramped screen falls back to the minimum width",
-                 layout_canvas_width(100, 200), layout_px(100, 420))
-    r = t_eq_int(r, "a cramped screen falls back to the minimum height",
-                 layout_canvas_height(100, 200, palette), layout_px(100, 300))
+    /*
+     * A screen too small for the chrome gets the floor rather than a negative canvas.
+     *
+     * The floor and not the workable size, deliberately. Opening at a size the screen cannot show
+     * would put the palette and the status bar under the taskbar; using everything the screen has
+     * is the honest answer, and the window's minimum is capped the same way for the same reason.
+     */
+    r = t_eq_int(r, "a cramped screen falls back to the floor width",
+                 layout_canvas_width(100, 200), layout_min_canvas_width(100))
+    r = t_eq_int(r, "a cramped screen falls back to the floor height",
+                 layout_canvas_height(100, 200, palette), layout_min_canvas_height(100))
 
     // A very wide monitor does not get a window spanning all of it.
     r = t_eq_int(r, "a wide screen is capped", layout_canvas_width(100, 6000), layout_px(100, 1040))
@@ -163,6 +169,128 @@ func test_layout_run() : TestRun {
     let atOne: int = layout_window_width(100, layout_canvas_width(100, 3000))
     let atTwo: int = layout_window_width(200, layout_canvas_width(200, 6000))
     r = t_eq_int(r, "the capped window doubles with the display", atTwo, atOne * 2)
+
+    // ── Following a resized window ───────────────────────────────────────────
+    /*
+     * The canvas takes whatever the chrome does not, so that maximising the window fills it
+     * rather than leaving a band of background down the right-hand side.
+     *
+     * The invariant is the same one the opening window has — the canvas plus the chrome is exactly
+     * the client area — but it has to hold at *every* size, not just the one the editor opened at.
+     */
+    let exact: int = 0
+    let noOverflow: int = 0
+    let widths: array<int> = test_layout_scales()
+
+    let s: int = 0
+    while (s < widths.length()) {
+        let factor: int = widths[s]
+        let cellSize: int = layout_palette_cell(factor)
+
+        // A spread of client sizes: cramped, ordinary, and a maximised ultrawide.
+        let client: int = layout_px(factor, 700)
+        while (client <= layout_px(factor, 3400)) {
+            let wide: int = layout_canvas_width_for(factor, client)
+            let high: int = layout_canvas_height_for(factor, client, cellSize)
+
+            if (layout_content_x(factor) + wide + layout_gap(factor) == client) {
+                exact = exact + 1
+            }
+
+            // Never larger than the window, whatever it is asked for.
+            if (wide <= client && high <= client) {
+                noOverflow = noOverflow + 1
+            }
+
+            client = client + layout_px(factor, 337)
+        }
+
+        s = s + 1
+    }
+
+    r = t_true(r, "the canvas fills the window at every size", exact > 40)
+    r = t_eq_int(r, "the canvas never overflows the window", noOverflow, exact)
+
+    // A window dragged below the minimum gives the canvas the minimum rather than a negative
+    // width, which would place every control after it on top of the ones before.
+    r = t_eq_int(r, "a tiny window still yields a usable canvas",
+                 layout_canvas_width_for(100, 10), layout_min_canvas_width(100))
+    r = t_eq_int(r, "a tiny window still yields a usable canvas height",
+                 layout_canvas_height_for(100, 10, 26), layout_min_canvas_height(100))
+
+    // Unlike the opening size, a resized canvas is not capped: dragging the window wider was
+    // asked for, where opening full-width on a wide monitor was not.
+    r = t_true(r, "a maximised window is not capped",
+               layout_canvas_width_for(100, 3000) > layout_canvas_width(100, 3000))
+
+    // ── The window's minimum ─────────────────────────────────────────────────
+    // The point of a minimum is that the editor is still usable at it, so the window stops while
+    // the canvas is a workable size rather than when it reaches the floor that keeps the
+    // arithmetic from going negative.
+    r = t_true(r, "the workable canvas is well clear of the floor",
+               layout_workable_width(100) > layout_min_canvas_width(100) * 2)
+    r = t_true(r, "the workable canvas height is well clear of the floor",
+               layout_workable_height(100) > layout_min_canvas_height(100) * 2)
+
+    let roomy: int = 4000
+
+    // At the minimum, the canvas is exactly the workable size — no more and no less.
+    r = t_eq_int(r, "the minimum window holds a workable canvas",
+                 layout_canvas_width_for(100, layout_min_width(100, 100, roomy)),
+                 layout_workable_width(100))
+    r = t_eq_int(r, "the minimum window holds a workable canvas height",
+                 layout_canvas_height_for(100, layout_min_height(100, 26, roomy), 26),
+                 layout_workable_height(100))
+
+    /*
+     * A palette wider than the workable canvas widens the window instead of being clipped.
+     *
+     * The palette is the one thing under the canvas whose width is its own rather than whatever is
+     * left — sixteen swatches are sixteen swatches. Sizing the window to the canvas alone let the
+     * strip run off the right-hand edge at the smallest size the window could be dragged to.
+     */
+    let wideStrip: int = 900
+    r = t_eq_int(r, "a wide palette sets the minimum instead",
+                 layout_canvas_width_for(100, layout_min_width(100, wideStrip, roomy)), wideStrip)
+    r = t_true(r, "a wide palette widens the window",
+               layout_min_width(100, wideStrip, roomy) > layout_min_width(100, 100, roomy))
+    r = t_eq_int(r, "a narrow palette does not narrow the window",
+                 layout_min_width(100, 10, roomy), layout_min_width(100, 100, roomy))
+
+    /*
+     * The screen has the last word.
+     *
+     * A minimum larger than the display is one the user cannot satisfy, and Windows honours it
+     * regardless — leaving a window that cannot be made to fit its own screen. That is reachable
+     * without anything exotic: a 200% laptop wants a minimum in physical pixels twice the size of
+     * one at 100%, on a panel that has not doubled.
+     */
+    r = t_eq_int(r, "a cramped screen caps the minimum width",
+                 layout_min_width(200, 400, 700), 700)
+    r = t_eq_int(r, "a cramped screen caps the minimum height",
+                 layout_min_height(200, 52, 500), 500)
+
+    let cappedFits: int = 0
+    let f: int = 0
+    while (f < widths.length()) {
+        let factor: int = widths[f]
+        let cellSize: int = layout_palette_cell(factor)
+
+        if (layout_min_width(factor, cellSize * 16, 1366) <= 1366
+            && layout_min_height(factor, cellSize, 720) <= 720) {
+            cappedFits = cappedFits + 1
+        }
+
+        f = f + 1
+    }
+    r = t_eq_int(r, "the minimum fits a small screen at every factor", cappedFits, widths.length())
+
+    // Below the floor the canvas stops shrinking, so a window smaller than its own minimum — which
+    // is what a capped minimum on a small screen leaves possible — still lays out.
+    r = t_eq_int(r, "the canvas stops at the floor",
+                 layout_canvas_width_for(100, 10), layout_min_canvas_width(100))
+    r = t_eq_int(r, "the canvas height stops at the floor",
+                 layout_canvas_height_for(100, 10, 26), layout_min_canvas_height(100))
 
     // ── Supersampling ────────────────────────────────────────────────────────
     // It deliberately does not depend on the display: it is about how many coverage levels an

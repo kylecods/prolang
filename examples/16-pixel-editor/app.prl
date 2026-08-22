@@ -125,7 +125,11 @@ func app_run() : void
      * The scaling factor is what the display is configured for — 150 on a 150% laptop screen — and
      * every size comes from it through layout.prl. The usable client area is the screen minus the
      * taskbar and the window's own frame, which is what stops the editor opening taller than the
-     * display it is on. Both are read once: the window is built from them and does not rebuild.
+     * display it is on.
+     *
+     * The scaling factor is read once, because it cannot change (see InitApplication). The window
+     * size is not: it is only the size to *open* at, and app_place_controls runs again from the new
+     * client size every time the window is resized or maximised.
      */
     let scale: int = layout_clamp_scale(WinFormsHelper.GetDpiScalePercent())
     let gap: int = layout_gap(scale)
@@ -219,6 +223,15 @@ func app_run() : void
     WinFormsHelper.EnableMouseInput(canvas)
     WinFormsHelper.EnableMouseInput(strip)
     WinFormsHelper.EnableKeyInput(form)
+    WinFormsHelper.EnableResizeInput(form)
+
+    // Below this the canvas stops being worth drawing in, or the palette runs off the edge, so
+    // the window refuses to go there. Capped by what the screen can give, so the minimum is
+    // never one the user has no way to satisfy.
+    WinFormsHelper.SetMinimumClientSize(
+        form,
+        layout_min_width(scale, stripH + gap + stripW, WinFormsHelper.GetUsableClientWidth()),
+        layout_min_height(scale, stripH, WinFormsHelper.GetUsableClientHeight()))
 
     render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
     render_palette(strip, stripImage, swatches, cell, columns, 0)
@@ -240,6 +253,29 @@ func app_run() : void
             // Idle: the wait already yielded, so there is nothing to do.
         } elif (kind == Ev.QUIT) {
             running = false
+        } elif (kind == Ev.RESIZE) {
+            /*
+             * The window changed size, so everything is placed again from what it now has.
+             *
+             * Only the form's own resizes are acted on. The canvas reports its resizes too, and
+             * since the canvas is resized by this very branch, acting on those as well would have
+             * the layout drive itself.
+             *
+             * The image is re-centred in the canvas afterwards, keeping the zoom. Merely clamping
+             * the pan leaves it against whichever edge it was already near, so maximising the
+             * window opens a band of empty backdrop on one side and pushes the artwork into the
+             * other — the drawing ends up further from the middle than before it was made bigger.
+             */
+            if (ev[7] == form) {
+                canvasW = layout_canvas_width_for(scale, ev[0])
+                canvasH = layout_canvas_height_for(scale, ev[1], stripH)
+
+                app_place_controls(scale, form, topBar, leftBar, canvas, swatch, strip, status,
+                                   buttons, dividers, ev[0], ev[1], canvasW, canvasH, stripW, stripH)
+
+                view = view_centre(view, doc.width, doc.height, canvasW, canvasH)
+                render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
+            }
         } elif (kind == Ev.MOUSE_DOWN) {
             if (ev[7] == strip) {
                 let picked: int = palette_index_at(ev[0], ev[1], cell, columns)
@@ -436,7 +472,7 @@ func app_run() : void
         }
 
         WinFormsHelper.SetText(status, render_status(stroke, view, doc, cursorX, cursorY, dirty)
-                                       + "   " + theme_name(activeTheme))
+                                       + "  " + theme_name(activeTheme))
     }
 
     render_free_icons(icons)
@@ -545,6 +581,55 @@ func app_build_toolbars(topBar: int, leftBar: int, buttons: array<int>, iconOf: 
     // One unused slot keeps app_button_count a round number and leaves room for the next command.
     buttons[21] = buttons[20]
     iconOf[21] = Icon.THEME
+}
+
+/*
+ * Places every control whose position or size depends on the window's.
+ *
+ * Called once when the window is built and again on every resize, which is what makes the editor
+ * follow a window being dragged or maximised. Windows Forms can do this itself through docking and
+ * anchoring, but those are properties, and interop cannot assign to a property — so the layout is
+ * arithmetic here instead, which is no loss: it is the same arithmetic layout.prl already does,
+ * and having one expression of where things go beats having two that must agree.
+ *
+ * Everything else keeps the position it was built with. A toolbar button sits at a fixed offset
+ * inside its bar, and the bar is what moves.
+ */
+func app_place_controls(scale: int, form: int, topBar: int, leftBar: int, canvas: int,
+                        swatch: int, strip: int, status: int, buttons: array<int>,
+                        dividers: array<int>, clientW: int, clientH: int,
+                        canvasW: int, canvasH: int, stripW: int, stripH: int) : void {
+    let gap: int = layout_gap(scale)
+    let rule: int = layout_divider(scale)
+    let topbar: int = layout_topbar(scale)
+    let leftbar: int = layout_leftbar(scale)
+    let size: int = layout_button(scale)
+
+    let contentX: int = layout_content_x(scale)
+    let contentY: int = layout_content_y(scale)
+    let paletteY: int = contentY + canvasH + gap
+
+    // One layout pass for the lot. Without this every SetBounds below is a separate pass, and the
+    // intermediate states are visible as tearing while a window is being dragged.
+    WinFormsHelper.BeginLayout(form)
+
+    WinFormsHelper.SetBounds(topBar, 0, 0, clientW, topbar)
+    WinFormsHelper.SetBounds(leftBar, 0, topbar, leftbar, clientH - topbar)
+
+    // The rules edging the bars span them, so each follows the bar it is on.
+    WinFormsHelper.SetBounds(dividers[0], 0, topbar - rule, clientW, rule)
+    WinFormsHelper.SetBounds(dividers[1], leftbar - rule, 0, rule, clientH - topbar)
+
+    // The theme button is the only one held against the right edge rather than packed from the
+    // left, because it is not one of the commands.
+    WinFormsHelper.SetBounds(buttons[20], clientW - size - gap, (topbar - size) / 2, size, size)
+
+    WinFormsHelper.SetBounds(canvas, contentX, contentY, canvasW, canvasH)
+    WinFormsHelper.SetBounds(swatch, contentX, paletteY, stripH, stripH)
+    WinFormsHelper.SetBounds(strip, contentX + stripH + gap, paletteY, stripW, stripH)
+    WinFormsHelper.SetBounds(status, contentX, paletteY + stripH + gap, canvasW, layout_status(scale))
+
+    WinFormsHelper.EndLayout(form)
 }
 
 /*

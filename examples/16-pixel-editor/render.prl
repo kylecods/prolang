@@ -175,11 +175,17 @@ func render_style_divider(controlId: int, activeTheme: int) : void {
 /*
  * Builds the status line.
  *
- * Coordinates are padded to a fixed width: the bar is rewritten on every mouse move, and without
- * padding a value going from 10 to 9 would leave the stale digit behind.
+ * Coordinates are padded to a fixed width, including when there are none to show: the bar is
+ * rewritten on every mouse move, and an unpadded value going from 10 to 9 leaves the stale digit
+ * behind while a shorter placeholder makes everything after it jump sideways.
+ *
+ * Kept compact on purpose. The label is as wide as the canvas, and the canvas at the window's
+ * minimum size is not wide: a Windows Forms label wraps rather than clipping, so a line a little
+ * too long does not trail off — it silently becomes two, and the second one is cut off by the
+ * bottom of the window.
  */
 func render_status(stroke: Stroke, view: View, doc: Document, x: int, y: int, dirty: bool) : string {
-    let position: string = "-, -"
+    let position: string = util_pad_left("-", 4) + "," + util_pad_left("-", 4)
 
     if (doc_in_bounds(doc, x, y)) {
         position = util_pad_left("" + x, 4) + "," + util_pad_left("" + y, 4)
@@ -187,14 +193,14 @@ func render_status(stroke: Stroke, view: View, doc: Document, x: int, y: int, di
 
     let modified: string = ""
     if (dirty) {
-        modified = "  *modified*"
+        modified = "  *"
     }
 
     return position
-        + "   " + doc.width + "x" + doc.height
-        + "   zoom " + view.zoom + "x"
-        + "   " + tool_name(stroke.tool)
+        + "  " + doc.width + "x" + doc.height
+        + "  zoom " + view.zoom + "x"
+        + "  " + tool_name(stroke.tool)
         + " " + stroke.size + "px"
-        + "   " + color_hex(stroke.colour)
+        + "  " + color_hex(stroke.colour)
         + modified
 }

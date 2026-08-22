@@ -177,6 +177,33 @@ public static partial class WinFormsHelper
     public static void SetSize(int id, int width, int height)
         => _controls[id].Size = new Size(width, height);
 
+    /// <summary>Moves and resizes a control in one call.</summary>
+    /// <remarks>
+    /// Not just shorthand for <see cref="SetLocation"/> followed by <see cref="SetSize"/>. Those
+    /// are two changes, and a control laid out again while its window is being dragged is seen in
+    /// the intermediate state — moved but not yet resized — which reads as a flicker along the
+    /// edge being dragged. <see cref="Control.SetBounds(int, int, int, int)"/> is one change.
+    /// </remarks>
+    public static void SetBounds(int id, int x, int y, int width, int height)
+        => _controls[id].SetBounds(x, y, Math.Max(0, width), Math.Max(0, height));
+
+    /// <summary>
+    /// Sets the smallest <em>client</em> area the window may be resized to.
+    /// </summary>
+    /// <remarks>
+    /// Windows Forms states a minimum in whole-window terms, but a layout is written against the
+    /// client area — so the frame is measured here rather than guessed at the call site. Without a
+    /// minimum, a window dragged small enough gives the layout negative room, and every control
+    /// positioned from what is left lands on top of the ones before it.
+    /// </remarks>
+    public static void SetMinimumClientSize(int formId, int width, int height)
+    {
+        var form = Get<Form>(formId);
+        var frame = form.Size - form.ClientSize;
+
+        form.MinimumSize = new Size(width + frame.Width, height + frame.Height);
+    }
+
     /// <summary>
     /// Sets the back-color from a packed ARGB int.
     /// prolang int ↔ System.Drawing.Color is one-to-one via Color.FromArgb / Color.ToArgb.
