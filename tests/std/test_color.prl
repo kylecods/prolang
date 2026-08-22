@@ -2,8 +2,8 @@
  * Pixel editor tests — color.prl
  */
 
-import "testing.prl"
-import "../color.prl"
+import "testing"
+import "ui/color"
 
 func test_color_run() : TestRun {
     let r: TestRun = t_new()

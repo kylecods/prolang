@@ -32,10 +32,9 @@
  */
 
 import "array"
-import "document.prl"
-import "shape.prl"
-import "color.prl"
-import "tools.prl"
+import "ui/document"
+import "ui/shape"
+import "ui/color"
 
 enum Icon {
     PENCIL,
@@ -89,26 +88,6 @@ func icon_count() : int {
  */
 func icon_u(target: Document, units: int) : int {
     return (target.width * units) / icon_grid()
-}
-
-/*
- * The icon for a tool, so the toolbar does not need its own mapping.
- *
- * The tool enum and the icon enum agree for the first nine entries by construction, but this is
- * written out rather than relying on that: they are separate enums, and a reordering of either
- * would otherwise silently put the wrong picture on every tool button.
- */
-func icon_for_tool(tool: int) : int {
-    if (tool == Tool.PENCIL)         { return Icon.PENCIL }
-    if (tool == Tool.ERASER)         { return Icon.ERASER }
-    if (tool == Tool.FILL)           { return Icon.FILL }
-    if (tool == Tool.LINE)           { return Icon.LINE }
-    if (tool == Tool.RECT)           { return Icon.RECT }
-    if (tool == Tool.RECT_FILLED)    { return Icon.RECT_FILLED }
-    if (tool == Tool.ELLIPSE)        { return Icon.ELLIPSE }
-    if (tool == Tool.ELLIPSE_FILLED) { return Icon.ELLIPSE_FILLED }
-    if (tool == Tool.PICKER)         { return Icon.PICKER }
-    return Icon.PENCIL
 }
 
 // ── Unit-space drawing ───────────────────────────────────────────────────────

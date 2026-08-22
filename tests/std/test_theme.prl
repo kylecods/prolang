@@ -7,9 +7,9 @@
  * distinct from the surface it sits on, a grid that does not vanish.
  */
 
-import "testing.prl"
-import "../theme.prl"
-import "../color.prl"
+import "testing"
+import "ui/theme"
+import "ui/color"
 
 func test_theme_run() : TestRun {
     let r: TestRun = t_new()

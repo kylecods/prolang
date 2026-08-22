@@ -5,10 +5,12 @@
  * the state machine rather than the rasterisers underneath it.
  */
 
-import "testing.prl"
+import "array"
+import "testing"
 import "../tools.prl"
-import "../document.prl"
-import "../color.prl"
+import "ui/document"
+import "ui/color"
+import "ui/icons"
 
 func test_tools_run() : TestRun {
     let r: TestRun = t_new()
@@ -150,6 +152,43 @@ func test_tools_run() : TestRun {
     r = t_eq_int(r, "size change takes effect", stroke_with_size(sel, 5).size, 5)
     r = t_eq_int(r, "size is clamped low", stroke_with_size(sel, 0).size, 1)
     r = t_eq_int(r, "size is clamped high", stroke_with_size(sel, 999).size, 16)
+
+    // ── The icon each tool shows ─────────────────────────────────────────────
+    /*
+     * This mapping is the editor's, not the library's: `ui/icons` draws a pencil without knowing
+     * that this program has a pencil tool. So it is checked here, where it lives.
+     *
+     * No two tools may share an icon — a duplicate would put the same picture on two toolbar
+     * buttons — and every one must be a real icon rather than an index off the end of the set,
+     * which is what a tool added without a case in tool_icon would produce.
+     */
+    let icons: array<int> = array_new(tool_count())
+    let inRange: int = 0
+    let t: int = 0
+
+    while (t < tool_count()) {
+        icons[t] = tool_icon(t)
+        if (icons[t] >= 0 && icons[t] < icon_count()) {
+            inRange = inRange + 1
+        }
+        t = t + 1
+    }
+
+    r = t_eq_int(r, "every tool maps to a real icon", inRange, tool_count())
+
+    let duplicates: int = 0
+    let a: int = 0
+    while (a < tool_count()) {
+        let b: int = a + 1
+        while (b < tool_count()) {
+            if (icons[a] == icons[b]) {
+                duplicates = duplicates + 1
+            }
+            b = b + 1
+        }
+        a = a + 1
+    }
+    r = t_eq_int(r, "each tool has its own icon", duplicates, 0)
 
     return r
 }

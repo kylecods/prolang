@@ -14,8 +14,8 @@
  */
 
 import "array"
-import "document.prl"
-import "util.prl"
+import "ui/document"
+import "util"
 
 /*
  * Sets one pixel and records its index.

@@ -16,7 +16,7 @@
 
 import "io"
 import "test"
-import "../util.prl"
+import "util"
 
 struct TestRun {
     passed: int;

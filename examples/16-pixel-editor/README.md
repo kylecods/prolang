@@ -1,12 +1,16 @@
 # Pixel editor
 
-A pixel art editor written in ProLang, on Windows Forms. Sixteen modules, ~3,300 lines, with a
-449-check test suite also written in ProLang.
+A pixel art editor written in ProLang, on Windows Forms. Four modules of its own, built on the
+`ui/` toolkit in [the standard library](../../std/README.md), with a 450-check test suite also
+written in ProLang.
 
 ```powershell
-.\build.ps1 -Run     # build and start it
-.\build.ps1 -Test    # build and run the test suite
+.\build.ps1 -Run      # build and start it
+.\build.ps1 -Test     # build and run the test suite
+.\build.ps1 -Install  # install it, with a Start Menu entry
 ```
+
+The build produces `bin/pixel-editor.exe` — a real executable, not a `dotnet` invocation.
 
 Tools: pencil, eraser, flood fill, line, rectangle (outline and filled), ellipse (outline and
 filled), colour picker. Sixteen-colour palette, integer zoom with a pixel grid, undo and redo,
@@ -42,6 +46,33 @@ ignores the theme, and any two that come out identical. It also checks the prope
 set resolution independent — the same glyph at twice the size covers the same *share* of its box —
 which is what catches a coordinate accidentally written in pixels, since that looks perfectly
 correct at whatever size the author happened to try.
+
+## The program icon is drawn too
+
+`appicon.prl` is a stepped diagonal — three blocks climbing left to right with two filling in
+behind them. It is a picture of the thing the program is for, the staircase an angled line turns
+into when it is made of pixels, and it survives being shrunk to sixteen, which is the only test of
+an application icon that matters.
+
+It deliberately does not reuse a toolbar glyph. A program whose icon is one of its own buttons
+reads as a button, and at 16 pixels in a taskbar there is no context to say otherwise.
+
+It ends up in two places, which are genuinely different:
+
+- **In `pixel-editor.exe`**, embedded as a Win32 resource by `prolang --icon=`. This is what
+  Explorer, the taskbar and the Start Menu shortcut read. `makeicon.prl` writes the `.ico` at six
+  resolutions and `build.ps1` runs it before compiling the editor — the icon has to exist before
+  the executable that carries it.
+- **On the window**, set at runtime through `chrome_window_icon`. This one is rebuilt on every
+  theme change, which the embedded one cannot be.
+
+Nothing is committed: `bin/pixel-editor.ico` is build output, drawn from source like everything
+else here.
+
+Unlike a toolbar glyph the icon fills its box edge to edge, and it has to. A margin given in units
+is a fraction of a pixel at sixteen and truncates away entirely, so the icon would have one at the
+large sizes and none at the small ones — `test_appicon.prl` checks that every size covers the same
+share of its box, which is what caught that.
 
 ## It sizes itself to the display
 
@@ -107,31 +138,32 @@ white canvas every new image starts as.
 
 ## Layout
 
-Everything above `render.prl` is pure ProLang with no reference to Windows Forms. That is what
-makes it testable: `tests/run_tests.prl` compiles the whole import graph into one assembly, so a
-single edge to the shim would make the suite require the Windows Desktop runtime pack and stop it
-being runnable under `dotnet test`.
+Most of what this editor was built from is no longer here. Everything general moved into the
+standard library at `std/`, and the editor is what is left once you take it away:
 
 | Module | |
 |---|---|
-| `util.prl` | integer helpers the ~25-function standard library does not have |
-| `color.prl` | ARGB packing and unpacking |
-| `document.prl` | the image: a flat pixel buffer and its size |
-| `intstack.prl` | an explicit stack, for the flood fill |
-| `raster.prl` | lines, rectangles, ellipses, brushes — for the image being edited |
-| `shape.prl` | discs, arcs, round-capped strokes, polygons — for the interface |
-| `fill.prl` | flood fill |
-| `history.prl` | undo and redo, as a ring of whole-image snapshots |
-| `palette.prl` | the sixteen colours and the swatch strip |
-| `view.prl` | zoom and pan arithmetic |
-| `tools.prl` | the press / drag / release state machine |
-| `theme.prl` | the four themes, as a colour per role |
-| `icons.prl` | every toolbar icon, as geometry on a 48-unit square |
-| `layout.prl` | every size in the interface, as a function of the display |
-| `render.prl` | the boundary: hands model state to the shim |
-| `app.prl` | window construction and the event loop |
+| `tools.prl` | the press / drag / release state machine, and which icon each tool shows |
+| `appicon.prl` | the program's own icon, drawn on the same 48-unit grid as the toolbar glyphs |
+| `render.prl` | the two things that know what this program is: which document to draw, and the status line |
+| `app.prl` | window construction, the layout pass, and the event loop |
+| `main.prl` | `func main()` — the only file the compiler needs to be given, since `import` is transitive |
+| `makeicon.prl` | a build step, not part of the editor: writes `bin/pixel-editor.ico` before the executable that carries it is built |
 
-`main.prl` is the only file the compiler needs to be given — `import` is transitive.
+Everything else comes from [`std/ui/`](../../std/README.md): `ui/document`, `ui/raster`,
+`ui/shape`, `ui/fill`, `ui/view`, `ui/history`, `ui/palette`, `ui/theme`, `ui/icons`, `ui/layout`
+and `ui/chrome`, plus `util` and `intstack`.
+
+The extraction was worth doing for a reason beyond tidiness: it found real coupling. `icons.prl`
+imported the editor's `Tool` enum so it could offer `icon_for_tool`, which meant a general icon set
+depended on one application's idea of what a tool is. That mapping is now `tool_icon` in
+`tools.prl`, where it belongs — the library draws a pencil without knowing this program has a
+pencil tool.
+
+**The boundary is `ui/chrome`.** It is the only module that imports `winforms`, and nothing a test
+suite can reach may import it: the whole import graph compiles into one assembly, so a single edge
+to the shim would make the suite need the Windows Desktop runtime pack and stop it being runnable
+under `dotnet test`.
 
 ## What the language forced
 
@@ -183,8 +215,13 @@ and the pixel buffer is what crosses to C# as an `int[]` for the bulk blit.
 
 ## Tests
 
-`tests/run_tests.prl` is the single entry point and the only file here classified `Runnable` in
-`src/ProLang.Tests/Infrastructure/TestCorpus.cs`, so `dotnet test` compiles it, runs it, and
+Two suites, split the same way the code is. `tests/std/run_tests.prl` at the repository root covers
+the library — 395 checks over shapes, documents, themes, icons, layout and the rest — and
+`tests/run_tests.prl` here covers what the editor still owns, which is the drag state machine and
+the tool-to-icon mapping.
+
+Both are entry points classified `Runnable` in
+`src/ProLang.Tests/Infrastructure/TestCorpus.cs`, so `dotnet test` compiles each, runs it, and
 compares its output against a golden file.
 
 Failures are real failures: `t_report` calls the `assert` builtin, which throws, and the execution
@@ -200,5 +237,6 @@ and that two calls agree, which is what the layout depends on because it reads t
 ## Notes
 
 There is no `.prlproj` here. The MSBuild integration under `examples/` replaces `CoreCompile` with
-a fixed compiler invocation that cannot pass `--target=winexe`, so it would produce a
-console-subsystem assembly requesting the wrong framework. `build.ps1` is the supported path.
+a fixed compiler invocation that cannot pass `--target=winexe` or `--apphost`, so it would produce
+a console-subsystem assembly requesting the wrong framework and no launcher. `build.ps1` is the
+supported path.

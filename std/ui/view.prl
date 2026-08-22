@@ -15,7 +15,7 @@
  * the tool rather than in the coordinate transform.
  */
 
-import "util.prl"
+import "util"
 
 struct View {
     zoom: int;

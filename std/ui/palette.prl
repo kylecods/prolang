@@ -9,10 +9,10 @@
  * and value. An arbitrary set of primaries does not.
  */
 
-import "color.prl"
-import "util.prl"
-import "document.prl"
-import "raster.prl"
+import "ui/color"
+import "util"
+import "ui/document"
+import "ui/raster"
 
 func palette_count() : int {
     return 16

@@ -6,10 +6,10 @@
  * than checking each function in isolation.
  */
 
-import "testing.prl"
-import "../history.prl"
-import "../document.prl"
-import "../color.prl"
+import "testing"
+import "ui/history"
+import "ui/document"
+import "ui/color"
 
 func test_history_run() : TestRun {
     let r: TestRun = t_new()

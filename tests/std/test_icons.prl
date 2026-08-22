@@ -12,11 +12,10 @@
  */
 
 import "array"
-import "testing.prl"
-import "../icons.prl"
-import "../document.prl"
-import "../color.prl"
-import "../tools.prl"
+import "testing"
+import "ui/icons"
+import "ui/document"
+import "ui/color"
 
 // How many pixels of `glyph` are not transparent.
 func test_icons_painted(glyph: Document) : int {
@@ -65,29 +64,6 @@ func test_icons_run() : TestRun {
     r = t_eq_int(r, "a unit scales with the target", icon_u(probe, 24), 48)
     r = t_eq_int(r, "the origin stays the origin", icon_u(probe, 0), 0)
     r = t_eq_int(r, "the far edge stays the far edge", icon_u(probe, icon_grid()), 96)
-
-    // Every tool maps to an icon, and no two tools share one — a duplicate would put the same
-    // picture on two toolbar buttons.
-    let toolIcons: array<int> = array_new(tool_count())
-    let t: int = 0
-    while (t < tool_count()) {
-        toolIcons[t] = icon_for_tool(t)
-        t = t + 1
-    }
-
-    let duplicateTools: int = 0
-    let a: int = 0
-    while (a < tool_count()) {
-        let b: int = a + 1
-        while (b < tool_count()) {
-            if (toolIcons[a] == toolIcons[b]) {
-                duplicateTools = duplicateTools + 1
-            }
-            b = b + 1
-        }
-        a = a + 1
-    }
-    r = t_eq_int(r, "each tool has its own icon", duplicateTools, 0)
 
     // ── Properties every icon must satisfy ───────────────────────────────────
     let drawn: int = 0

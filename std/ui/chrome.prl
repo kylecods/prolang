@@ -1,0 +1,302 @@
+/*
+ * ui/chrome — the boundary between a prolang UI and Windows Forms
+ *
+ * Everything else under `ui/` is pure prolang: it computes colours, sizes and pixels and can be
+ * tested exactly. This is the one module that talks to the shim, and it is deliberately thin —
+ * each function hands an already-computed result to Windows Forms and does no arithmetic of its
+ * own. The error-prone code stays where a test can reach it.
+ *
+ * Importing this pulls in `winforms`, which makes the program need the Windows Desktop runtime
+ * pack. A test suite must not import it, or the suite stops being runnable under `dotnet test`.
+ * That is why the split is drawn here rather than anywhere more convenient.
+ */
+
+import "array"
+import "winforms"
+import "ui/document"
+import "ui/view"
+import "ui/palette"
+import "ui/color"
+import "ui/theme"
+import "ui/icons"
+
+// ── Images ───────────────────────────────────────────────────────────────────
+
+/*
+ * Pushes a document's pixels into a bitmap.
+ *
+ * One interop call for the whole image. A prolang `array<int>` is a real CLR `int[]`, so the
+ * buffer is handed over rather than copied element by element — the alternative is one call per
+ * pixel, which at 256x256 is 65,536 of them per repaint.
+ */
+func chrome_blit(bitmapId: int, doc: Document) : void {
+    WinFormsHelper.SetPixels(bitmapId, doc.pixels, doc.width, doc.height)
+}
+
+/*
+ * Applies a zoom and pan to a canvas control.
+ *
+ * The grid colour is passed fully transparent below the zoom threshold, which is how the canvas is
+ * told not to draw it: at low zoom the lines occupy as much space as the pixels.
+ */
+func chrome_set_view(canvasId: int, view: View, activeTheme: int) : void {
+    let grid: int = 0
+
+    if (view_show_grid(view)) {
+        grid = theme_grid(activeTheme)
+    }
+
+    WinFormsHelper.CanvasSetView(canvasId, view.zoom, view.panX, view.panY, grid, 1)
+}
+
+// Draws a palette strip into its own canvas, with `selected` ringed.
+func chrome_palette(canvasId: int, bitmapId: int, strip: Document, cell: int, columns: int, selected: int) : void {
+    palette_draw(strip, cell, columns, selected)
+    chrome_blit(bitmapId, strip)
+    WinFormsHelper.CanvasRefresh(canvasId)
+}
+
+// ── Icons ────────────────────────────────────────────────────────────────────
+
+/*
+ * Draws one icon at `pixels` square and hands it to the shim as a bitmap.
+ *
+ * Drawn `supersample` times larger and averaged down, which is where the smooth edges come from.
+ * Nothing in ui/shape or ui/icons knows this is happening: they write solid pixels, and every
+ * intermediate shade in the finished glyph is produced here by doc_downsample_into.
+ *
+ * Supersampling rather than an anti-aliasing rasteriser because it is a dozen lines that apply to
+ * every shape at once, including the places where two of them overlap. A rasteriser that computed
+ * coverage per shape would have to decide what happens where an outline crosses its own fill, and
+ * would get it visibly wrong along every such seam.
+ *
+ * Pixels the icon did not draw stay fully transparent, which is what lets a button's own
+ * background — hover, pressed, selected — show through the glyph.
+ */
+func chrome_icon_bitmap(icon: int, ink: int, accent: int, pixels: int, supersample: int) : int {
+    let oversized: Document = doc_new(pixels * supersample, pixels * supersample, 0)
+    icon_draw(oversized, icon, ink, accent)
+
+    let glyph: Document = doc_new(pixels, pixels, 0)
+    doc_downsample_into(oversized, glyph, supersample)
+
+    let bitmap: int = WinFormsHelper.CreateBitmap(glyph.width, glyph.height)
+    WinFormsHelper.SetPixels(bitmap, glyph.pixels, glyph.width, glyph.height)
+
+    return bitmap
+}
+
+/*
+ * Rebuilds every icon at the display's size in a theme's colours, filling `bitmaps` by icon id.
+ *
+ * Icons are redrawn rather than tinted because they are drawn from theme colours in the first
+ * place; a theme switch is just another pass over the same code. Redrawing is also what keeps them
+ * sharp, since there is no source resolution to enlarge from — a glyph is described in units and
+ * only becomes pixels here.
+ */
+func chrome_build_icons(bitmaps: array<int>, activeTheme: int, pixels: int, supersample: int) : void {
+    let ink: int = theme_text(activeTheme)
+    let accent: int = theme_accent(activeTheme)
+
+    let i: int = 0
+    while (i < icon_count()) {
+        bitmaps[i] = chrome_icon_bitmap(i, ink, accent, pixels, supersample)
+        i = i + 1
+    }
+}
+
+// Releases the GDI bitmaps behind a set of icons, before rebuilding them in another theme.
+func chrome_free_icons(bitmaps: array<int>) : void {
+    let i: int = 0
+    while (i < icon_count()) {
+        if (bitmaps[i] != 0) {
+            WinFormsHelper.DisposeBitmap(bitmaps[i])
+            bitmaps[i] = 0
+        }
+        i = i + 1
+    }
+}
+
+// ── Program icons ────────────────────────────────────────────────────────────
+//
+// A program's icon appears in three places and each wants a different size: the title bar at 16
+// pixels, Alt-Tab at 32, the desktop at up to 256. So an icon is several images, not one, and
+// handing Windows a single one to rescale is what produces the blurry application icons that give
+// away a program nobody finished.
+//
+// That is a problem for image files and not for this library. Everything under ui/ is described in
+// units and rasterised at whatever size is asked for, so drawing the same artwork at six
+// resolutions costs six calls.
+
+/*
+ * The sizes a program icon should carry.
+ *
+ * 16 for a title bar and small list views, 32 for Alt-Tab and the taskbar, 48 for medium icons in
+ * Explorer, 64 and 128 for the larger views, 256 for the desktop and the Start Menu tile. Windows
+ * picks the nearest and scales down from it, so the gaps between these are what matter rather than
+ * the exact values.
+ */
+func chrome_icon_sizes() : array<int> {
+    let sizes: array<int> = array_new(6)
+    sizes[0] = 16
+    sizes[1] = 32
+    sizes[2] = 48
+    sizes[3] = 64
+    sizes[4] = 128
+    sizes[5] = 256
+    return sizes
+}
+
+/*
+ * The sizes a running *window* needs, which is a shorter list.
+ *
+ * A window shows its icon in the title bar, the taskbar button and Alt-Tab, none of which go above
+ * 48 pixels. Explorer's larger sizes belong in the file on disk and never apply here, and drawing
+ * a 256-pixel icon at start-up costs more than every other size put together.
+ */
+func chrome_window_icon_sizes() : array<int> {
+    let sizes: array<int> = array_new(4)
+    sizes[0] = 16
+    sizes[1] = 24
+    sizes[2] = 32
+    sizes[3] = 48
+    return sizes
+}
+
+// Hands a drawn document to the shim as a bitmap, and returns its handle.
+func chrome_bitmap_from(doc: Document) : int {
+    let bitmap: int = WinFormsHelper.CreateBitmap(doc.width, doc.height)
+    WinFormsHelper.SetPixels(bitmap, doc.pixels, doc.width, doc.height)
+    return bitmap
+}
+
+/*
+ * Averages a supersampled drawing down to `pixels` square and hands it over as a bitmap.
+ *
+ * The route for artwork a program draws itself, where chrome_icon_bitmap only knows the library's
+ * own icon set. The caller draws into a document `pixels * supersample` on a side and passes it
+ * here; the smoothing happens on the way out, exactly as it does for a toolbar glyph.
+ */
+func chrome_bitmap_downsampled(oversized: Document, pixels: int, supersample: int) : int {
+    let reduced: Document = doc_new(pixels, pixels, 0)
+    doc_downsample_into(oversized, reduced, supersample)
+    return chrome_bitmap_from(reduced)
+}
+
+/*
+ * Renders one of the library's icons at every size in `sizes`, filling `bitmaps` with the handles.
+ *
+ * The caller owns what comes back and must pass it to chrome_free_bitmaps. These are GDI handles,
+ * and a program that builds an icon on every theme change and never releases them accumulates a
+ * few dozen per switch.
+ */
+func chrome_render_icon_sizes(bitmaps: array<int>, sizes: array<int>, icon: int, ink: int, accent: int, supersample: int) : void {
+    let i: int = 0
+    while (i < sizes.length() && i < bitmaps.length()) {
+        bitmaps[i] = chrome_icon_bitmap(icon, ink, accent, sizes[i], supersample)
+        i = i + 1
+    }
+}
+
+// Releases a set of bitmap handles and blanks the array, so it cannot be used after the fact.
+func chrome_free_bitmaps(bitmaps: array<int>) : void {
+    let i: int = 0
+    while (i < bitmaps.length()) {
+        if (bitmaps[i] != 0) {
+            WinFormsHelper.DisposeBitmap(bitmaps[i])
+            bitmaps[i] = 0
+        }
+        i = i + 1
+    }
+}
+
+/*
+ * Writes a multi-resolution .ico file from bitmaps already drawn.
+ *
+ * This is what `prolang --icon=...` embeds into a program's launcher, so a build that wants an
+ * icon runs a small program like this one first and passes the result to the compiler. Nothing is
+ * committed to the repository: the icon is drawn from source like everything else.
+ */
+func chrome_save_icon(path: string, bitmaps: array<int>) : bool {
+    return WinFormsHelper.SaveIcon(bitmaps, path)
+}
+
+/*
+ * Sets the icon a window shows in its title bar, the taskbar and Alt-Tab.
+ *
+ * Worth doing even when the executable already carries an embedded icon: that one is what Explorer
+ * and the Start Menu show, and this is what the running window shows. Setting only one of them
+ * leaves the program looking finished in half the places it appears.
+ */
+func chrome_window_icon(formId: int, bitmaps: array<int>) : bool {
+    return WinFormsHelper.SetWindowIcon(formId, bitmaps)
+}
+
+// ── Styling ──────────────────────────────────────────────────────────────────
+
+/*
+ * Applies a theme's colours to one button.
+ *
+ * `selected` marks the active one: a filled background and an accent border, rather than a
+ * different icon, so the state is visible without the icon having to encode it.
+ *
+ * An unselected button has no border at all. Outlining every one turns a toolbar into a grid of
+ * boxes, and the boxes carry no information — which button the pointer is over and which one is
+ * active are both already said by the background. Leaving the border to the selected button alone
+ * means the one box on screen is the one worth looking at.
+ */
+func chrome_style_button(buttonId: int, activeTheme: int, selected: bool) : void {
+    WinFormsHelper.SetFlatStyle(buttonId,
+                                theme_border(activeTheme),
+                                theme_hover(activeTheme),
+                                theme_pressed(activeTheme))
+
+    if (selected) {
+        WinFormsHelper.SetBackColor(buttonId, theme_selected(activeTheme))
+        WinFormsHelper.SetFlatBorder(buttonId, theme_accent(activeTheme), 2)
+    } else {
+        WinFormsHelper.SetBackColor(buttonId, theme_surface(activeTheme))
+        WinFormsHelper.SetFlatBorder(buttonId, theme_border(activeTheme), 0)
+    }
+
+    WinFormsHelper.SetForeColor(buttonId, theme_text(activeTheme))
+    WinFormsHelper.SetHandCursor(buttonId, true)
+}
+
+// Paints a panel in the theme's surface colour, for a toolbar.
+func chrome_style_surface(controlId: int, activeTheme: int) : void {
+    WinFormsHelper.SetBackColor(controlId, theme_surface(activeTheme))
+}
+
+// Paints a thin panel in the theme's border colour, for a separator or rule.
+func chrome_style_divider(controlId: int, activeTheme: int) : void {
+    WinFormsHelper.SetBackColor(controlId, theme_border(activeTheme))
+}
+
+/*
+ * Creates a flat icon button on `parent`, wires its command tag, and gives it hover text.
+ *
+ * The tooltip is not decoration once a toolbar is icons: an icon button with no tooltip is a
+ * guess. Buttons are parented to the bar they sit on rather than to the form, because Windows
+ * Forms adds each new control to the *back* of the z-order — a button added to the form after a
+ * panel is covered by it, which silently produces empty toolbars.
+ */
+func chrome_add_button(parent: int, x: int, y: int, width: int, height: int, tag: int, tip: string) : int {
+    let button: int = WinFormsHelper.CreateButton("", x, y, width, height)
+    WinFormsHelper.AddControl(parent, button)
+    WinFormsHelper.EnableCommand(button, tag)
+    WinFormsHelper.SetToolTip(button, tip)
+    return button
+}
+
+/*
+ * Creates a hairline rule on `parent`, for edging a bar or separating groups within one.
+ *
+ * Returned so it can be collected and recoloured with the theme; a rule left at the Windows
+ * default is a light grey line that only looks right against one background.
+ */
+func chrome_add_divider(parent: int, x: int, y: int, width: int, height: int) : int {
+    let rule: int = WinFormsHelper.CreatePanel(x, y, width, height)
+    WinFormsHelper.AddControl(parent, rule)
+    return rule
+}

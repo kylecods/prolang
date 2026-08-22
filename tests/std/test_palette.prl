@@ -2,9 +2,9 @@
  * Pixel editor tests — palette.prl
  */
 
-import "testing.prl"
-import "../palette.prl"
-import "../color.prl"
+import "testing"
+import "ui/palette"
+import "ui/color"
 
 func test_palette_run() : TestRun {
     let r: TestRun = t_new()

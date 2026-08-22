@@ -14,7 +14,7 @@
  * call site testing which theme is active.
  */
 
-import "color.prl"
+import "ui/color"
 
 enum Theme {
     MIDNIGHT,

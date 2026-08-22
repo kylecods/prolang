@@ -20,7 +20,7 @@
 
 import "array"
 import "math"
-import "document.prl"
+import "ui/document"
 
 struct History {
     cells:  array<int>;

@@ -1,0 +1,70 @@
+/*
+ * Pixel editor — writes the program's .ico
+ *
+ * A build step, not part of the editor. It renders appicon.prl at every size Windows asks for and
+ * writes one multi-resolution icon file, which build.ps1 then hands to the compiler as
+ * `--icon=...` so it ends up inside pixel-editor.exe.
+ *
+ * It is a separate program because of the order things have to happen in: an icon has to exist
+ * before the executable that carries it is built. Nothing about it is specific to this editor —
+ * any prolang application wanting its own icon writes twenty lines like these.
+ *
+ * The .ico it produces is build output and is not committed. The icon is drawn from source like
+ * everything else here.
+ */
+
+import "io"
+import "array"
+import "ui/document"
+import "ui/chrome"
+import "ui/theme"
+import "appicon.prl"
+
+// Where build.ps1 expects to find the result.
+func makeicon_path() : string {
+    return "bin/pixel-editor.ico"
+}
+
+/*
+ * How many times oversized each size is drawn before being averaged down.
+ *
+ * The same factor the toolbar icons use. It matters most at 16 pixels, where the rounded corners
+ * and the staircase's edges are a fraction of a pixel wide and would otherwise be lost entirely.
+ */
+func makeicon_supersample() : int {
+    return 4
+}
+
+func main()
+{
+    // Midnight's colours, because that is the theme the editor opens in. An icon cannot follow the
+    // theme the way the toolbar does — it is baked into the executable at build time — so it is
+    // drawn in the one the program starts with.
+    let base: int = theme_background(Theme.MIDNIGHT)
+    let body: int = theme_text_dim(Theme.MIDNIGHT)
+    let edge: int = theme_accent(Theme.MIDNIGHT)
+
+    let sizes: array<int> = chrome_icon_sizes()
+    let bitmaps: array<int> = array_new(sizes.length())
+
+    let i: int = 0
+    while (i < sizes.length()) {
+        let scale: int = makeicon_supersample()
+        let oversized: Document = doc_new(sizes[i] * scale, sizes[i] * scale, 0)
+
+        appicon_draw(oversized, base, body, edge)
+
+        bitmaps[i] = chrome_bitmap_downsampled(oversized, sizes[i], scale)
+        i = i + 1
+    }
+
+    let written: bool = chrome_save_icon(makeicon_path(), bitmaps)
+
+    chrome_free_bitmaps(bitmaps)
+
+    if (written) {
+        print("wrote " + makeicon_path() + " with " + sizes.length() + " resolutions")
+    } else {
+        print("failed to write " + makeicon_path())
+    }
+}

@@ -2,8 +2,8 @@
  * Pixel editor tests — view.prl
  */
 
-import "testing.prl"
-import "../view.prl"
+import "testing"
+import "ui/view"
 
 func test_view_run() : TestRun {
     let r: TestRun = t_new()

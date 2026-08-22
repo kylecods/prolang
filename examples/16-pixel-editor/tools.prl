@@ -15,10 +15,11 @@
  */
 
 import "array"
-import "document.prl"
-import "raster.prl"
-import "fill.prl"
-import "color.prl"
+import "ui/document"
+import "ui/raster"
+import "ui/fill"
+import "ui/color"
+import "ui/icons"
 
 enum Tool {
     PENCIL,
@@ -108,6 +109,32 @@ func tool_name(tool: int) : string {
 
 func tool_count() : int {
     return 9
+}
+
+/*
+ * The icon that stands for a tool.
+ *
+ * This mapping lives with the tools rather than with the icons. `ui/icons` is a general icon set
+ * that knows nothing about this editor: it draws a pencil, and whether this program happens to
+ * have a pencil *tool* is not its business. Putting the mapping there would make a shared library
+ * depend on one application's enum, which is exactly the coupling that keeps a library from being
+ * reusable.
+ *
+ * It is also written out rather than relying on the two enums agreeing. They do agree for the
+ * first nine entries by construction, but they are separate enums in separate files, and a
+ * reordering of either would otherwise silently put the wrong picture on every tool button.
+ */
+func tool_icon(tool: int) : int {
+    if (tool == Tool.PENCIL)         { return Icon.PENCIL }
+    if (tool == Tool.ERASER)         { return Icon.ERASER }
+    if (tool == Tool.FILL)           { return Icon.FILL }
+    if (tool == Tool.LINE)           { return Icon.LINE }
+    if (tool == Tool.RECT)           { return Icon.RECT }
+    if (tool == Tool.RECT_FILLED)    { return Icon.RECT_FILLED }
+    if (tool == Tool.ELLIPSE)        { return Icon.ELLIPSE }
+    if (tool == Tool.ELLIPSE_FILLED) { return Icon.ELLIPSE_FILLED }
+    if (tool == Tool.PICKER)         { return Icon.PICKER }
+    return Icon.PENCIL
 }
 
 // ── Drag lifecycle ───────────────────────────────────────────────────────────

@@ -2,9 +2,9 @@
  * Pixel editor tests — document.prl
  */
 
-import "testing.prl"
-import "../document.prl"
-import "../color.prl"
+import "testing"
+import "ui/document"
+import "ui/color"
 
 func test_document_run() : TestRun {
     let r: TestRun = t_new()

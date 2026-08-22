@@ -24,8 +24,8 @@
 
 import "array"
 import "math"
-import "document.prl"
-import "util.prl"
+import "ui/document"
+import "util"
 
 // ── Rectangles ───────────────────────────────────────────────────────────────
 

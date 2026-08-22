@@ -20,17 +20,19 @@
 import "io"
 import "array"
 import "winforms"
-import "document.prl"
-import "color.prl"
-import "palette.prl"
-import "view.prl"
+import "ui/document"
+import "ui/color"
+import "ui/palette"
+import "ui/view"
 import "tools.prl"
-import "history.prl"
+import "ui/history"
+import "ui/chrome"
 import "render.prl"
-import "theme.prl"
-import "icons.prl"
-import "layout.prl"
-import "util.prl"
+import "ui/theme"
+import "ui/icons"
+import "ui/layout"
+import "appicon.prl"
+import "util"
 
 // Event kinds, matching PrlEventKind in std/WinFormsHelper/EventQueue.cs.
 enum Ev {
@@ -234,7 +236,7 @@ func app_run() : void
         layout_min_height(scale, stripH, WinFormsHelper.GetUsableClientHeight()))
 
     render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
-    render_palette(strip, stripImage, swatches, cell, columns, 0)
+    chrome_palette(strip, stripImage, swatches, cell, columns, 0)
     WinFormsHelper.SetBackColor(swatch, stroke.colour)
     WinFormsHelper.Show(form)
 
@@ -282,7 +284,7 @@ func app_run() : void
                 if (picked >= 0) {
                     selected = picked
                     stroke = stroke_with_colour(stroke, palette_colour(picked))
-                    render_palette(strip, stripImage, swatches, cell, columns, selected)
+                    chrome_palette(strip, stripImage, swatches, cell, columns, selected)
                     WinFormsHelper.SetBackColor(swatch, stroke.colour)
                 }
             } else {
@@ -373,7 +375,7 @@ func app_run() : void
                 activeTheme = theme_next(activeTheme)
                 app_apply_theme(activeTheme, scale, form, topBar, leftBar, canvas, status, swatch,
                                 buttons, iconOf, dividers, icons, stroke.tool)
-                render_palette(strip, stripImage, swatches, cell, columns, selected)
+                chrome_palette(strip, stripImage, swatches, cell, columns, selected)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (ev[3] == Key.Z && (ev[5] & Mod.CONTROL) != 0) {
                 history = hist_undo(history, doc)
@@ -402,7 +404,7 @@ func app_run() : void
                 activeTheme = theme_next(activeTheme)
                 app_apply_theme(activeTheme, scale, form, topBar, leftBar, canvas, status, swatch,
                                 buttons, iconOf, dividers, icons, stroke.tool)
-                render_palette(strip, stripImage, swatches, cell, columns, selected)
+                chrome_palette(strip, stripImage, swatches, cell, columns, selected)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.UNDO) {
                 history = hist_undo(history, doc)
@@ -475,7 +477,7 @@ func app_run() : void
                                        + "  " + theme_name(activeTheme))
     }
 
-    render_free_icons(icons)
+    chrome_free_icons(icons)
     WinFormsHelper.DisposeBitmap(image)
     WinFormsHelper.DisposeBitmap(stripImage)
 }
@@ -503,8 +505,8 @@ func app_build_toolbars(topBar: int, leftBar: int, buttons: array<int>, iconOf: 
     let step: int = size + layout_button_gap(scale)
 
     // The rules edging each bar, parented to the bar so they sit in front of it.
-    dividers[0] = app_add_divider(topBar, 0, topbar - rule, formW, rule)
-    dividers[1] = app_add_divider(leftBar, layout_leftbar(scale) - rule, 0, rule, formH - topbar)
+    dividers[0] = chrome_add_divider(topBar, 0, topbar - rule, formW, rule)
+    dividers[1] = chrome_add_divider(leftBar, layout_leftbar(scale) - rule, 0, rule, formH - topbar)
 
     // ── Left: tools, in a two-column grid ────────────────────────────────────
     // Coordinates are relative to the bar, which is the control they are parented to.
@@ -515,9 +517,9 @@ func app_build_toolbars(topBar: int, leftBar: int, buttons: array<int>, iconOf: 
         let x: int = gap + ((tool % columns) * step)
         let y: int = gap + ((tool / columns) * step)
 
-        buttons[tool] = app_add_button(leftBar, x, y, size, size,
+        buttons[tool] = chrome_add_button(leftBar, x, y, size, size,
                                        Cmd.TOOL_BASE + tool, tool_name(tool))
-        iconOf[tool] = icon_for_tool(tool)
+        iconOf[tool] = tool_icon(tool)
         tool = tool + 1
     }
 
@@ -525,11 +527,11 @@ func app_build_toolbars(topBar: int, leftBar: int, buttons: array<int>, iconOf: 
     let toolRows: int = (tool_count() + columns - 1) / columns
     let sizeRowY: int = gap + (toolRows * step) + group
 
-    dividers[2] = app_add_divider(leftBar, gap, sizeRowY - (group / 2), step + size, rule)
+    dividers[2] = chrome_add_divider(leftBar, gap, sizeRowY - (group / 2), step + size, rule)
 
-    buttons[9] = app_add_button(leftBar, gap, sizeRowY, size, size, Cmd.SIZE_DOWN, "Smaller brush")
+    buttons[9] = chrome_add_button(leftBar, gap, sizeRowY, size, size, Cmd.SIZE_DOWN, "Smaller brush")
     iconOf[9] = Icon.SIZE_DOWN
-    buttons[10] = app_add_button(leftBar, gap + step, sizeRowY, size, size, Cmd.SIZE_UP, "Larger brush")
+    buttons[10] = chrome_add_button(leftBar, gap + step, sizeRowY, size, size, Cmd.SIZE_UP, "Larger brush")
     iconOf[10] = Icon.SIZE_UP
 
     // ── Top: file, edit, view, theme ─────────────────────────────────────────
@@ -539,43 +541,43 @@ func app_build_toolbars(topBar: int, leftBar: int, buttons: array<int>, iconOf: 
     let inset: int = size / 5
     let x: int = gap
 
-    buttons[11] = app_add_button(topBar, x, y, size, size, Cmd.NEW, "New image")
+    buttons[11] = chrome_add_button(topBar, x, y, size, size, Cmd.NEW, "New image")
     iconOf[11] = Icon.NEW
     x = x + step
-    buttons[12] = app_add_button(topBar, x, y, size, size, Cmd.OPEN, "Open a PNG")
+    buttons[12] = chrome_add_button(topBar, x, y, size, size, Cmd.OPEN, "Open a PNG")
     iconOf[12] = Icon.OPEN
     x = x + step
-    buttons[13] = app_add_button(topBar, x, y, size, size, Cmd.SAVE, "Save as PNG")
+    buttons[13] = chrome_add_button(topBar, x, y, size, size, Cmd.SAVE, "Save as PNG")
     iconOf[13] = Icon.SAVE
 
     x = x + size + group
-    dividers[3] = app_add_divider(topBar, x, y + inset, rule, size - (inset * 2))
+    dividers[3] = chrome_add_divider(topBar, x, y + inset, rule, size - (inset * 2))
     x = x + group
 
-    buttons[14] = app_add_button(topBar, x, y, size, size, Cmd.UNDO, "Undo (Ctrl+Z)")
+    buttons[14] = chrome_add_button(topBar, x, y, size, size, Cmd.UNDO, "Undo (Ctrl+Z)")
     iconOf[14] = Icon.UNDO
     x = x + step
-    buttons[15] = app_add_button(topBar, x, y, size, size, Cmd.REDO, "Redo (Ctrl+Y)")
+    buttons[15] = chrome_add_button(topBar, x, y, size, size, Cmd.REDO, "Redo (Ctrl+Y)")
     iconOf[15] = Icon.REDO
     x = x + step
-    buttons[16] = app_add_button(topBar, x, y, size, size, Cmd.CLEAR, "Clear the canvas")
+    buttons[16] = chrome_add_button(topBar, x, y, size, size, Cmd.CLEAR, "Clear the canvas")
     iconOf[16] = Icon.CLEAR
 
     x = x + size + group
-    dividers[4] = app_add_divider(topBar, x, y + inset, rule, size - (inset * 2))
+    dividers[4] = chrome_add_divider(topBar, x, y + inset, rule, size - (inset * 2))
     x = x + group
 
-    buttons[17] = app_add_button(topBar, x, y, size, size, Cmd.ZOOM_OUT, "Zoom out (-)")
+    buttons[17] = chrome_add_button(topBar, x, y, size, size, Cmd.ZOOM_OUT, "Zoom out (-)")
     iconOf[17] = Icon.ZOOM_OUT
     x = x + step
-    buttons[18] = app_add_button(topBar, x, y, size, size, Cmd.ZOOM_IN, "Zoom in (+)")
+    buttons[18] = chrome_add_button(topBar, x, y, size, size, Cmd.ZOOM_IN, "Zoom in (+)")
     iconOf[18] = Icon.ZOOM_IN
     x = x + step
-    buttons[19] = app_add_button(topBar, x, y, size, size, Cmd.ZOOM_FIT, "Fit to window")
+    buttons[19] = chrome_add_button(topBar, x, y, size, size, Cmd.ZOOM_FIT, "Fit to window")
     iconOf[19] = Icon.ZOOM_FIT
 
     // Theme sits on the right, away from the commands, because it changes appearance not content.
-    buttons[20] = app_add_button(topBar, formW - size - gap, y, size, size, Cmd.THEME, "Change theme (T)")
+    buttons[20] = chrome_add_button(topBar, formW - size - gap, y, size, size, Cmd.THEME, "Change theme (T)")
     iconOf[20] = Icon.THEME
 
     // One unused slot keeps app_button_count a round number and leaves room for the next command.
@@ -632,32 +634,6 @@ func app_place_controls(scale: int, form: int, topBar: int, leftBar: int, canvas
     WinFormsHelper.EndLayout(form)
 }
 
-/*
- * Creates a button, wires its command tag, and gives it hover text.
- *
- * The tooltip is not decoration once the toolbar is icons: an icon button with no tooltip is a
- * guess. This is where the labels that used to be on the buttons went.
- */
-func app_add_button(parent: int, x: int, y: int, width: int, height: int, tag: int, tip: string) : int {
-    let button: int = WinFormsHelper.CreateButton("", x, y, width, height)
-    WinFormsHelper.AddControl(parent, button)
-    WinFormsHelper.EnableCommand(button, tag)
-    WinFormsHelper.SetToolTip(button, tip)
-    return button
-}
-
-/*
- * A hairline rule, used both to edge a toolbar and to separate groups of buttons within one.
- *
- * Returned so it can be collected and recoloured with the theme; a divider left at the Windows
- * default is a light grey line that only looks right on one of the four.
- */
-func app_add_divider(parent: int, x: int, y: int, width: int, height: int) : int {
-    let rule: int = WinFormsHelper.CreatePanel(x, y, width, height)
-    WinFormsHelper.AddControl(parent, rule)
-    return rule
-}
-
 // ── Theme ────────────────────────────────────────────────────────────────────
 
 /*
@@ -673,8 +649,8 @@ func app_apply_theme(activeTheme: int, scale: int, form: int, topBar: int, leftB
     WinFormsHelper.BeginLayout(form)
 
     WinFormsHelper.SetBackColor(form, theme_background(activeTheme))
-    render_style_surface(topBar, activeTheme)
-    render_style_surface(leftBar, activeTheme)
+    chrome_style_surface(topBar, activeTheme)
+    chrome_style_surface(leftBar, activeTheme)
 
     WinFormsHelper.SetBackColor(canvas, theme_canvas_backdrop(activeTheme))
     WinFormsHelper.SetBackColor(status, theme_background(activeTheme))
@@ -683,12 +659,14 @@ func app_apply_theme(activeTheme: int, scale: int, form: int, topBar: int, leftB
 
     let d: int = 0
     while (d < app_divider_count()) {
-        render_style_divider(dividers[d], activeTheme)
+        chrome_style_divider(dividers[d], activeTheme)
         d = d + 1
     }
 
-    render_free_icons(icons)
-    render_build_icons(icons, activeTheme, layout_icon(scale), layout_supersample())
+    chrome_free_icons(icons)
+    chrome_build_icons(icons, activeTheme, layout_icon(scale), layout_supersample())
+
+    app_apply_window_icon(form, activeTheme)
 
     let i: int = 0
     while (i < app_button_count()) {
@@ -696,7 +674,7 @@ func app_apply_theme(activeTheme: int, scale: int, form: int, topBar: int, leftB
 
         if (button != 0) {
             WinFormsHelper.SetButtonImage(button, icons[iconOf[i]])
-            render_style_button(button, activeTheme, i < tool_count() && i == selectedTool)
+            chrome_style_button(button, activeTheme, i < tool_count() && i == selectedTool)
         }
 
         i = i + 1
@@ -705,11 +683,47 @@ func app_apply_theme(activeTheme: int, scale: int, form: int, topBar: int, leftB
     WinFormsHelper.EndLayout(form)
 }
 
+/*
+ * Draws the program's icon and gives it to the window.
+ *
+ * This is the icon the title bar, the taskbar button and Alt-Tab show, and it is a different thing
+ * from the one inside pixel-editor.exe — that one belongs to the file and is what Explorer and the
+ * Start Menu display. A program that sets only one of them looks finished in half the places it
+ * appears, so both are drawn from the same appicon.prl.
+ *
+ * It is rebuilt on every theme change, which the embedded one cannot be: that is fixed at build
+ * time, and this is not.
+ */
+func app_apply_window_icon(form: int, activeTheme: int) : void {
+    let sizes: array<int> = chrome_window_icon_sizes()
+    let bitmaps: array<int> = array_new(sizes.length())
+    let scale: int = layout_supersample()
+
+    let i: int = 0
+    while (i < sizes.length()) {
+        let oversized: Document = doc_new(sizes[i] * scale, sizes[i] * scale, 0)
+
+        appicon_draw(oversized,
+                     theme_background(activeTheme),
+                     theme_text_dim(activeTheme),
+                     theme_accent(activeTheme))
+
+        bitmaps[i] = chrome_bitmap_downsampled(oversized, sizes[i], scale)
+        i = i + 1
+    }
+
+    chrome_window_icon(form, bitmaps)
+
+    // The shim copies the images into an icon of its own, so these have served their purpose.
+    // They are GDI handles, and a theme change that leaked four of them every time would add up.
+    chrome_free_bitmaps(bitmaps)
+}
+
 // Moves the selected highlight to the active tool, leaving every other button unstyled.
 func app_mark_selected_tool(buttons: array<int>, activeTheme: int, selectedTool: int) : void {
     let i: int = 0
     while (i < tool_count()) {
-        render_style_button(buttons[i], activeTheme, i == selectedTool)
+        chrome_style_button(buttons[i], activeTheme, i == selectedTool)
         i = i + 1
     }
 }
@@ -819,7 +833,7 @@ func app_save(doc: Document, image: int) : bool {
 
     // The canvas bitmap already holds the current image, but it is refreshed here so a save is
     // never one repaint behind what is on screen.
-    render_image(image, doc)
+    chrome_blit(image, doc)
 
     if (!WinFormsHelper.SaveBitmapPng(image, path)) {
         WinFormsHelper.MessageBoxShow("Could not write " + path, "Save failed")

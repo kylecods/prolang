@@ -1,0 +1,88 @@
+/*
+ * Pixel editor — the program's own icon
+ *
+ * The picture Windows shows for the editor: in Explorer, on the taskbar, in Alt-Tab, and on the
+ * Start Menu entry `tools/install-app.ps1` creates. Pure prolang; exercised by
+ * tests/test_appicon.prl.
+ *
+ * Drawn rather than shipped, for the same reason the toolbar icons are. A program icon is not one
+ * image but six, from 16 pixels to 256, and every one of them has to be drawn at its own size or
+ * Windows scales the nearest and the result is soft. Six sizes of a committed .ico is six binary
+ * files to keep in step; six sizes of a description in units is a loop.
+ *
+ * ── The design ───────────────────────────────────────────────────────────────
+ *
+ * A stepped diagonal: three square blocks climbing left to right, with two more filling in behind
+ * them. It is a picture of the thing this program is for — the staircase an angled line turns into
+ * when it is made of pixels — and it survives being shrunk to sixteen, which is the only test of an
+ * application icon that matters. Anything with a pencil in it does not.
+ *
+ * It deliberately does not reuse a toolbar glyph. A program whose icon is one of its own buttons
+ * reads as a button, and at 16 pixels in a taskbar there is no context to say otherwise.
+ */
+
+import "ui/document"
+import "ui/shape"
+import "ui/icons"
+
+/*
+ * The side of one block, in the same 48-unit design space `ui/icons` uses.
+ *
+ * Eleven units, on an eleven-unit pitch, so neighbouring blocks touch exactly. Touching is the
+ * point: separated blocks read as three dots, and it is the unbroken stepped edge that reads as a
+ * jagged diagonal.
+ */
+func appicon_block() : int {
+    return 11
+}
+
+// Where the three steps start, in units. Each is one block further right and one further up.
+func appicon_step(index: int) : int {
+    return 7 + (index * appicon_block())
+}
+
+// One block of the staircase, addressed by its cell rather than its pixels.
+func appicon_cell(target: Document, column: int, row: int, colour: int) : void {
+    let x: int = appicon_step(column)
+    let y: int = appicon_step(row)
+    let side: int = appicon_block()
+
+    shape_fill_rect(target,
+                    icon_u(target, x), icon_u(target, y),
+                    icon_u(target, x + side) - 1, icon_u(target, y + side) - 1,
+                    colour)
+}
+
+/*
+ * Draws the icon into `target`, which should be square and is filled edge to edge.
+ *
+ * Unlike a toolbar glyph this one has a background of its own. A program icon sits on a desktop,
+ * a taskbar or a file listing, any of which may be any colour, so it cannot rely on what is behind
+ * it the way a button's icon relies on the button.
+ *
+ * The corners are rounded rather than square, which is what every icon on a modern desktop does;
+ * a full square reads as a screenshot rather than as an application.
+ */
+func appicon_draw(target: Document, base: int, body: int, edge: int) : void {
+    /*
+     * The tile runs edge to edge rather than inside a margin, which is what every application icon
+     * on a modern desktop does — the operating system provides whatever spacing is wanted.
+     *
+     * It also has to. A margin given in units is a fraction of a pixel at sixteen and truncates
+     * away entirely, so the icon would have one at the large sizes and none at the small ones, and
+     * the shape would change as it shrank. Full bleed is the same shape at every size.
+     */
+    shape_round_rect_filled(target,
+                            0, 0,
+                            target.width - 1, target.height - 1,
+                            icon_u(target, 11),
+                            base)
+
+    // Row 2 is the bottom of the design space; the staircase climbs to row 0 at the top right.
+    appicon_cell(target, 1, 2, body)
+    appicon_cell(target, 2, 1, body)
+
+    appicon_cell(target, 0, 2, edge)
+    appicon_cell(target, 1, 1, edge)
+    appicon_cell(target, 2, 0, edge)
+}

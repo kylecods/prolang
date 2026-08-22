@@ -16,9 +16,11 @@ internal sealed class Program
         string? cOutputDir = null;
         string? target = null;
         string? framework = null;
+        string? iconPath = null;
         var referencePaths = new List<string>();
         var sourcePaths = new List<string>();
         var helpRequested = false;
+        var appHost = false;
         var disassemble = false;
         var emitC = false;
         var emitPsp = false;
@@ -38,6 +40,8 @@ internal sealed class Program
             {"c-output=", "Override output directory for C transpilation", v => cOutputDir = v },
             {"target=", "Subsystem of the emitted assembly: {library} (default), console, or winexe", v => target = v },
             {"framework=", "Shared framework to request: {name}, or the shorthand 'windowsdesktop'", v => framework = v },
+            {"apphost", "Also write a native launcher next to the assembly, so it runs without 'dotnet'", v => appHost = true },
+            {"icon=", "Embed an .ico {path} in the launcher, as the program's icon. Implies --apphost", v => iconPath = v },
             {"h|help", "Prints help", v=>helpRequested = true},
             {"<>", v=>sourcePaths.Add(v) }
         };
@@ -229,6 +233,40 @@ internal sealed class Program
             {
                 Console.Error.WriteDiagnostics(diagnostics);
                 return 1;
+            }
+
+            // The launcher is written after the assembly it launches, and a failure to write one
+            // is reported but not fatal: the .dll is still a complete program, runnable with
+            // `dotnet`. Refusing to have compiled at all because a packaging step did not work
+            // would be the wrong trade.
+            //
+            // An icon needs a launcher to live in, so asking for one asks for the other. The
+            // alternative — rejecting `--icon` without `--apphost` — would be a rule to remember
+            // in exchange for nothing.
+            if (appHost || iconPath != null)
+            {
+                var wantsWindow = emitOptions.TargetKind == EmitTargetKind.WindowsApplication;
+
+                if (AppHost.TryCreate(outputPath, wantsWindow, out var executablePath, out var appHostError))
+                {
+                    Console.WriteLine($"launcher written to: {executablePath}");
+
+                    if (iconPath != null)
+                    {
+                        if (IconEmbedder.TryEmbed(executablePath, iconPath, out var iconError))
+                        {
+                            Console.WriteLine($"icon embedded from: {iconPath}");
+                        }
+                        else
+                        {
+                            Console.Error.WriteLine($"warning: no icon embedded — {iconError}");
+                        }
+                    }
+                }
+                else
+                {
+                    Console.Error.WriteLine($"warning: no launcher written — {appHostError}");
+                }
             }
 
             return 0;

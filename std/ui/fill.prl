@@ -16,8 +16,8 @@
  */
 
 import "array"
-import "document.prl"
-import "intstack.prl"
+import "ui/document"
+import "intstack"
 
 /*
  * Recolours the connected region of matching pixels containing (x, y), four-connected.

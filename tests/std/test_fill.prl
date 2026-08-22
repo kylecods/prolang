@@ -2,11 +2,11 @@
  * Pixel editor tests — fill.prl
  */
 
-import "testing.prl"
-import "../fill.prl"
-import "../document.prl"
-import "../raster.prl"
-import "../color.prl"
+import "testing"
+import "ui/fill"
+import "ui/document"
+import "ui/raster"
+import "ui/color"
 
 func test_fill_run() : TestRun {
     let r: TestRun = t_new()

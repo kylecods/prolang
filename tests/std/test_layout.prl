@@ -12,8 +12,8 @@
  */
 
 import "array"
-import "testing.prl"
-import "../layout.prl"
+import "testing"
+import "ui/layout"
 
 // The factors the Windows display settings offer, plus the two extremes of the clamp.
 func test_layout_scales() : array<int> {

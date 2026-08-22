@@ -22,7 +22,7 @@
 
 import "array"
 import "math"
-import "color.prl"
+import "ui/color"
 
 struct Document {
     pixels: array<int>;

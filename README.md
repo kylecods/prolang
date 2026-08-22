@@ -24,18 +24,88 @@ func main() {
 }
 ```
 
-## Getting started
+## Installing
 
-Requires the **.NET 10 SDK**.
+Requires the **.NET 10 SDK**. Either route installs for the current user only — no administrator
+rights, nothing machine-wide.
+
+```powershell
+# From a clone. Builds, installs to %LOCALAPPDATA%\Programs\ProLang, puts it on PATH.
+.\install.ps1
+
+# Or as a .NET global tool.
+dotnet pack src/ProLang/ProLang.csproj -c Release
+dotnet tool install --global --add-source ./artifacts/nupkg ProLang.Compiler
+```
+
+Both give you `prolang` on the command line, with the standard library beside it:
+
+```powershell
+prolang hello.prl --target=console --apphost -o hello.dll
+.\hello.exe
+```
+
+`.\install.ps1 -Uninstall` removes it and its PATH entry;
+`dotnet tool uninstall --global ProLang.Compiler` removes the tool. Installing both is fine, but
+whichever comes first on PATH is the one `prolang` runs — `(Get-Command prolang).Source` says
+which.
+
+### Building applications
+
+`--apphost` writes a native launcher next to the assembly, so a compiled program starts like any
+other rather than as `dotnet app.dll`. For a GUI program it is what keeps the console window away:
+`dotnet` is itself a console application, so starting a window through it opens one regardless.
+
+```powershell
+# A console tool
+prolang tool.prl --target=console --apphost -o bin/tool.dll
+
+# A Windows Forms application, with its own icon
+prolang app.prl --target=winexe --apphost --icon=bin/app.ico -o bin/app.dll
+```
+
+`--icon` embeds a multi-resolution `.ico` into the launcher, which is what Explorer, the taskbar
+and Start Menu shortcuts read. The library can draw one: `ui/chrome` renders artwork at each size
+Windows asks for and writes the file, so an application's icon is drawn from source like the rest
+of it rather than committed as a binary. `examples/16-pixel-editor/makeicon.prl` is twenty lines
+doing exactly that.
+
+The icon a *running window* shows is a separate thing, set with `chrome_window_icon`. Both are
+worth setting: a program that sets only one looks finished in half the places it appears.
+
+`tools/install-app.ps1` then installs what you built — a Start Menu entry for a windowed program,
+a PATH entry for a command-line one:
+
+```powershell
+.\tools\install-app.ps1 -Path bin\app.exe -Name "My Application"
+.\tools\install-app.ps1 -Path bin\tool.exe -AddToPath
+.\tools\install-app.ps1 -Name "My Application" -Uninstall
+```
+
+### Working from a clone, without installing
 
 ```bash
-# Build the compiler
 dotnet build src/ProLang.sln -c Release
-
-# Compile and run a program
 dotnet run --project src/ProLang/ProLang.csproj -- examples/hello/hello.prl -o hello.dll
 dotnet hello.dll
 ```
+
+## Standard library
+
+Modules ship beside the compiler and are imported by name from anywhere:
+
+```prolang
+import "util"
+import "ui/shape"
+import "ui/theme"
+```
+
+`util`, `intstack`, `dynarray` and `testing`, plus `ui/` — a toolkit for drawing interfaces:
+colours, pixel buffers, two rasterisers, flood fill, zoom and pan, undo history, palettes, themes,
+a resolution-independent icon set, DPI-aware layout metrics, and the Windows Forms boundary.
+
+See [std/README.md](std/README.md). `examples/16-pixel-editor/` is the worked example: after the
+library was extracted it is four files, and everything else comes from `std/`.
 
 ## Command line
 
@@ -46,6 +116,8 @@ dotnet hello.dll
 | `-r PATH` | Reference a .NET assembly |
 | `--target=KIND` | Subsystem of the emitted assembly: `library` (default), `console`, or `winexe` |
 | `--framework=NAME` | Shared framework to request, or the shorthand `windowsdesktop` |
+| `--apphost` | Also write a native launcher, so the program runs without `dotnet` |
+| `--icon=PATH` | Embed an `.ico` in the launcher as the program's icon. Implies `--apphost` |
 | `-d`, `--disassemble` | Print the lowered intermediate representation |
 | `--msil=PATH` | Print an MSIL listing for a compiled assembly |
 | `--emit-c` | Transpile to C99 |
@@ -113,9 +185,12 @@ src/ProLang.Tests/      xUnit suite: IL snapshots, execution tests, IL validity
 src/ProLang.Benchmarks/ BenchmarkDotNet suite covering each compiler phase
 src/WinFormsHelper.Tests/ xUnit suite for the Windows Forms shim (Windows only)
 native/                 C runtime headers for the C99 and PSP backends
-std/                    Standard library written in ProLang
+std/                    Standard library, shipped beside the compiler and imported by name
+std/ui/                 UI toolkit: shapes, themes, icons, layout, the Windows Forms boundary
+tools/                  install-app.ps1, for installing a compiled ProLang application
 examples/               Example programs
 tests/                  ProLang test programs used as the test corpus
+tests/std/              The standard library's own test suite
 docs/                   Architecture, contributing, and performance documentation
 ```
 
@@ -125,6 +200,14 @@ docs/                   Architecture, contributing, and performance documentatio
 dotnet test src/ProLang.Tests/ProLang.Tests.csproj -c Release
 dotnet test src/WinFormsHelper.Tests/WinFormsHelper.Tests.csproj -c Release   # Windows only
 dotnet run -c Release --project src/ProLang.Benchmarks -- --filter "*"
+```
+
+The standard library's own suite is written in ProLang and runs as part of the corpus, but is
+worth running on its own while working on it:
+
+```bash
+dotnet run --project src/ProLang/ProLang.csproj -- tests/std/run_tests.prl -o bin/std-tests.dll
+dotnet bin/std-tests.dll
 ```
 
 Test baselines (IL snapshots and expected program output) are generated rather than committed:

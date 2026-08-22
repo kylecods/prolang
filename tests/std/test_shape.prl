@@ -10,10 +10,10 @@
  * pixels; the intermediate shades in a finished glyph are produced later by doc_downsample_into.
  */
 
-import "testing.prl"
-import "../shape.prl"
-import "../document.prl"
-import "../color.prl"
+import "testing"
+import "ui/shape"
+import "ui/document"
+import "ui/color"
 
 func test_shape_run() : TestRun {
     let r: TestRun = t_new()

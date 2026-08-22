@@ -2,8 +2,8 @@
  * Pixel editor tests — intstack.prl
  */
 
-import "testing.prl"
-import "../intstack.prl"
+import "testing"
+import "intstack"
 
 func test_intstack_run() : TestRun {
     let r: TestRun = t_new()
