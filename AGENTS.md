@@ -124,7 +124,8 @@ prolang/
 │   ├── 13-winforms/               # Windows Forms interop
 │   ├── 14-chip-8/                 # CHIP-8 emulator
 │   ├── 15-psp-demo/               # PlayStation Portable target
-│   └── 16-pixel-editor/           # Pixel editor: 4 modules over the std/ui toolkit
+│   ├── 16-pixel-editor/           # Pixel editor: 4 modules over the std/ui toolkit
+│   └── 17-widgets/                # The widget toolkit: one counter, on Windows Forms and on PSP
 │
 ├── std/                           # Standard library, shipped beside the compiler
 │   ├── ui/                        # UI toolkit: shapes, themes, icons, layout, WinForms boundary
@@ -730,6 +731,60 @@ func add(a: int, b: int) : int {
 let result = add(3, 5)
 ```
 
+#### Default and named arguments
+
+A parameter may declare a default, and an argument may be given by name:
+
+```prolang
+func box(label: string, width: int = 10, pad: int = 0, bold: bool = false) : string { ... }
+
+box("a")                        // every default applies
+box("b", 20)                    // positional, as usual
+box("c", pad: 4)                // skip a parameter by naming a later one
+box("d", bold: true, width: 7)  // named arguments may be in any order
+```
+
+Rules worth knowing:
+
+- **A default must be a constant** — a literal, an enum member, or an expression that folds to one
+  (`0 - 5`, `4 * 16`). A default that could name a variable would have to be re-bound in the
+  *caller's* scope, where the name may not exist or, worse, may mean something else.
+- **Optional parameters must come last.** Otherwise omitting one in the middle would silently shift
+  every positional argument after it.
+- **A positional argument cannot follow a named one.**
+- Named arguments are for ProLang functions. A `.NET` method is matched by metadata signature,
+  where parameter names are not part of the contract, so its arguments stay positional.
+
+Everything is resolved in the binder: the argument list reaching the backends is always complete
+and positional, so this works identically under `--emit-c` and `--emit-psp`.
+
+#### Function values
+
+A top-level function can be used as a value, and a parameter can have a function type:
+
+```prolang
+func double_it(x: int) : int { return x * 2 }
+
+func apply(f: func(int) : int, v: int) : int {
+    return f(v)
+}
+
+let chosen: func(int) : int = double_it
+print(apply(chosen, 21))            // 42
+```
+
+`func(A, B) : R` is the type; the return clause is optional and means `void`. Types are structural,
+so any function with a matching signature is assignable.
+
+**They capture nothing.** That restriction is the whole design: with nothing captured, the .NET
+backend can bind one to a BCL delegate over a null target (`ldnull; ldftn; newobj`) and the C and
+PSP backends can use a plain function pointer — no garbage collector is involved on any target.
+
+The consequence is that a handler cannot reach the state around it, so function values do *not*
+replace the event-tag pattern; they are for things that are genuinely pure, such as a custom
+painter. Refused rather than half-supported: generic functions, which have no single signature to
+point at, and .NET methods, which no C backend could take a pointer to. At most 8 parameters.
+
 ### Control Flow
 
 ```prolang
@@ -755,8 +810,8 @@ for(let i = 0 to 10) {
 ```
 
 There is no `match`, `switch`, `do`/`while`, or foreach. A multi-way branch is an `if`/`elif`
-chain, which — with no closures or function values in the language — is also how callbacks and
-dispatch tables are expressed.
+chain, which is also how callbacks and dispatch tables are expressed — function values exist (see
+below) but capture nothing, so a handler still cannot reach the state it would need to change.
 
 ### Structs
 
@@ -801,6 +856,32 @@ let name = map["name"]
 
 > `map<K, V>` is thinly exercised — two uses in the whole repository. Prefer `array<T>`.
 
+### Time
+
+```prolang
+import "console"
+
+let start: int = time_millis()
+thread_sleep(120)
+let elapsed: int = time_millis() - start    // 120, give or take the scheduler
+```
+
+`time_millis()` and `thread_sleep(ms)` are the whole of the language's relationship with time, which
+is why they share a module.
+
+The clock is **monotonic**, not a wall clock, so an interval can never come out negative because the
+system time was adjusted underneath it. It counts from an arbitrary origin — only differences mean
+anything — and it is a 32-bit `int` like everything else, so it wraps after about twenty-five days.
+Always **subtract two readings** rather than comparing them: two's-complement subtraction gives the
+right interval straight through a wrap, while `if (now > then)` does not.
+
+Backed by `Stopwatch` on .NET, `QueryPerformanceCounter` on Windows under `--emit-c`,
+`clock_gettime(CLOCK_MONOTONIC)` on POSIX, and `sceKernelGetSystemTimeLow` on the PSP. All four are
+fine-grained; `GetTickCount` was deliberately not used, because its ~15ms resolution is most of a
+frame at 60fps.
+
+`std/ui/fps.prl` is the worked example — a frame-rate counter built on it.
+
 ### Assertions
 
 ```prolang
@@ -825,6 +906,7 @@ is a worked example: 295 checks across ten modules, run by `dotnet test` through
 let s = "hello"
 print(s.length())           // 5
 print(s.charAt(0))          // h
+print(s.charCode(0))        // 104 — the only way to do arithmetic on text
 print(s.substring(1, 3))    // el
 print(s.indexOf("l"))       // 2
 ```
@@ -911,6 +993,7 @@ Output: [result]
 
 - `README.md` - Overview, CLI reference, repository layout
 - `docs/architecture/dotnet-backend.md` - How source becomes a .NET assembly
+- `docs/architecture/ui-toolkit.md` - The framework-independent widget toolkit and its display list
 - `docs/contributing/adding-a-builtin.md` - Worked example of adding a builtin function
 - `docs/perf/baseline-2026-08-15.md` - Compiler performance baseline and methodology
 

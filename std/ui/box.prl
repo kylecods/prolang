@@ -1,0 +1,268 @@
+/*
+ * Layout: turning a widget tree into rectangles.
+ *
+ * Two passes, the arrangement Flutter uses, in integers.
+ *
+ *   1. `box_measure` walks bottom-up and asks every node how big it would like to be. A text node
+ *      answers from the font table, a container from its children plus its own padding and gaps.
+ *   2. `box_place` walks top-down and hands each node the rectangle it actually gets, dividing any
+ *      space left over between the children that asked for it.
+ *
+ * Splitting it in two is what makes `flex` possible at all: a child's share of the leftover cannot
+ * be known until every one of its siblings has said what it needs.
+ *
+ * ── Everything here is arithmetic ────────────────────────────────────────────
+ *
+ * There is no platform in this module and no call out of it. That is deliberate and it is what the
+ * font table buys: layout runs identically on Windows Forms, on the PSP, and inside `dotnet test`
+ * on a machine with no window system at all. The tests assert relationships — a row's children fill
+ * it exactly, a flexible child absorbs the remainder — rather than pixel counts, which is what
+ * survives the sizes being retuned.
+ *
+ * ── Integer division and the missing pixel ───────────────────────────────────
+ *
+ * Splitting 100 pixels between three flexible children gives 33 each and loses one. A layout that
+ * loses a pixel per row is visibly ragged down the right-hand edge, so the remainder is handed to
+ * the last flexible child and the children always sum to exactly the space available.
+ */
+
+import "ui/widget"
+import "ui/font"
+
+/*
+ * Lays the tree out within the given rectangle.
+ *
+ * The root is placed at the origin of that rectangle and given all of it, so a window's client area
+ * maps onto the tree by calling this with its size.
+ */
+func box_layout(ui: Ui, fonts: FontSet, root: int, x: int, y: int, width: int, height: int) : void {
+    if (root < 0) {
+        return
+    }
+
+    box_measure(ui, fonts, root)
+    box_place(ui, root, x, y, width, height)
+}
+
+// ── Pass one: natural size ───────────────────────────────────────────────────
+
+/*
+ * Computes what `node` would like to be, and stores it in its W and H fields.
+ *
+ * The fields are reused by `box_place` for the final size. Nothing reads a natural size after
+ * placement, so there is no need for a second pair of them.
+ */
+func box_measure(ui: Ui, fonts: FontSet, node: int) : void {
+    let contentW: int = 0
+    let contentH: int = 0
+    let kind: int = ui_kind(ui, node)
+
+    if (kind == UiKind.TEXT || kind == UiKind.BUTTON) {
+        let font: int = ui_get(ui, node, UiF.FONT)
+
+        contentW = font_measure(fonts, font, ui_text_of(ui, node))
+        contentH = font_line_height(fonts, font)
+    } elif (ui_is_container(ui, node)) {
+        let gap: int = ui_get(ui, node, UiF.GAP)
+        let horizontal: bool = ui_is_horizontal(ui, node)
+        let child: int = ui_first_child(ui, node)
+        let seen: int = 0
+
+        while (child >= 0) {
+            box_measure(ui, fonts, child)
+
+            let childW: int = ui_get(ui, child, UiF.W)
+            let childH: int = ui_get(ui, child, UiF.H)
+
+            if (horizontal) {
+                contentW = contentW + childW
+                if (childH > contentH) { contentH = childH }
+            } else {
+                contentH = contentH + childH
+                if (childW > contentW) { contentW = childW }
+            }
+
+            seen = seen + 1
+            child = ui_next_sibling(ui, child)
+        }
+
+        if (seen > 1) {
+            if (horizontal) {
+                contentW = contentW + (gap * (seen - 1))
+            } else {
+                contentH = contentH + (gap * (seen - 1))
+            }
+        }
+    }
+
+    // A fixed size wins over the measurement, but padding is still added around content that was
+    // measured — so `width:` on a row means the row's outer width, which is what a caller expects.
+    let fixedW: int = ui_get(ui, node, UiF.FIXED_W)
+    let fixedH: int = ui_get(ui, node, UiF.FIXED_H)
+
+    let naturalW: int = contentW + ui_get(ui, node, UiF.PAD_L) + ui_get(ui, node, UiF.PAD_R)
+    let naturalH: int = contentH + ui_get(ui, node, UiF.PAD_T) + ui_get(ui, node, UiF.PAD_B)
+
+    if (fixedW >= 0) { naturalW = fixedW }
+    if (fixedH >= 0) { naturalH = fixedH }
+
+    ui_set(ui, node, UiF.W, naturalW)
+    ui_set(ui, node, UiF.H, naturalH)
+}
+
+// ── Pass two: placement ──────────────────────────────────────────────────────
+
+// Assigns `node` its final rectangle and lays its children out inside it.
+func box_place(ui: Ui, node: int, x: int, y: int, width: int, height: int) : void {
+    ui_set(ui, node, UiF.X, x)
+    ui_set(ui, node, UiF.Y, y)
+    ui_set(ui, node, UiF.W, width)
+    ui_set(ui, node, UiF.H, height)
+
+    if (!ui_is_container(ui, node)) {
+        return
+    }
+
+    let innerX: int = x + ui_get(ui, node, UiF.PAD_L)
+    let innerY: int = y + ui_get(ui, node, UiF.PAD_T)
+    let innerW: int = width - ui_get(ui, node, UiF.PAD_L) - ui_get(ui, node, UiF.PAD_R)
+    let innerH: int = height - ui_get(ui, node, UiF.PAD_T) - ui_get(ui, node, UiF.PAD_B)
+
+    if (innerW < 0) { innerW = 0 }
+    if (innerH < 0) { innerH = 0 }
+
+    box_place_children(ui, node, innerX, innerY, innerW, innerH)
+}
+
+/*
+ * Distributes the content rectangle between a container's children.
+ *
+ * Handles both axes through `horizontal`, rather than as two near-identical functions: the two
+ * differ only in which of each pair of numbers is the main axis, and keeping them together is what
+ * stops a fix applied to a row from being forgotten for a column.
+ */
+func box_place_children(ui: Ui, node: int, innerX: int, innerY: int, innerW: int, innerH: int) : void {
+    let horizontal: bool = ui_is_horizontal(ui, node)
+    let gap: int = ui_get(ui, node, UiF.GAP)
+    let align: int = ui_get(ui, node, UiF.ALIGN)
+    let justify: int = ui_get(ui, node, UiF.JUSTIFY)
+
+    let mainSpace: int = innerH
+    if (horizontal) { mainSpace = innerW }
+
+    let childCount: int = ui_child_count(ui, node)
+    if (childCount == 0) {
+        return
+    }
+
+    // What the children asked for along the main axis, and how much of it is flexible.
+    let naturalMain: int = gap * (childCount - 1)
+    let flexTotal: int = 0
+    let child: int = ui_first_child(ui, node)
+
+    while (child >= 0) {
+        if (horizontal) {
+            naturalMain = naturalMain + ui_get(ui, child, UiF.W)
+        } else {
+            naturalMain = naturalMain + ui_get(ui, child, UiF.H)
+        }
+
+        flexTotal = flexTotal + ui_get(ui, child, UiF.FLEX)
+        child = ui_next_sibling(ui, child)
+    }
+
+    let leftover: int = mainSpace - naturalMain
+    if (leftover < 0) { leftover = 0 }
+
+    // With nothing flexible, the leftover becomes leading space according to `justify`.
+    let pen: int = 0
+    if (flexTotal == 0) {
+        if (justify == UiAlign.CENTER) { pen = leftover / 2 }
+        elif (justify == UiAlign.END) { pen = leftover }
+    }
+
+    // The last flexible child takes the remainder, so the children sum to the space exactly.
+    let lastFlexChild: int = 0 - 1
+    if (flexTotal > 0) {
+        child = ui_first_child(ui, node)
+        while (child >= 0) {
+            if (ui_get(ui, child, UiF.FLEX) > 0) { lastFlexChild = child }
+            child = ui_next_sibling(ui, child)
+        }
+    }
+
+    let handedOut: int = 0
+
+    child = ui_first_child(ui, node)
+    while (child >= 0) {
+        let mainSize: int = ui_get(ui, child, UiF.H)
+        if (horizontal) { mainSize = ui_get(ui, child, UiF.W) }
+
+        let flex: int = ui_get(ui, child, UiF.FLEX)
+
+        if (flex > 0 && flexTotal > 0) {
+            let share: int = (leftover * flex) / flexTotal
+
+            if (child == lastFlexChild) {
+                share = leftover - handedOut
+            }
+
+            handedOut = handedOut + share
+            mainSize = mainSize + share
+        }
+
+        // The cross axis: stretch to fill, or sit at one end of the space.
+        let crossSpace: int = innerH
+        if (horizontal == false) { crossSpace = innerW }
+
+        let crossSize: int = ui_get(ui, child, UiF.W)
+        if (horizontal) { crossSize = ui_get(ui, child, UiF.H) }
+
+        if (align == UiAlign.STRETCH) {
+            crossSize = crossSpace
+        }
+
+        let crossOffset: int = 0
+        if (align == UiAlign.CENTER) { crossOffset = (crossSpace - crossSize) / 2 }
+        elif (align == UiAlign.END) { crossOffset = crossSpace - crossSize }
+
+        if (crossOffset < 0) { crossOffset = 0 }
+
+        if (horizontal) {
+            box_place(ui, child, innerX + pen, innerY + crossOffset, mainSize, crossSize)
+        } else {
+            box_place(ui, child, innerX + crossOffset, innerY + pen, crossSize, mainSize)
+        }
+
+        pen = pen + mainSize + gap
+        child = ui_next_sibling(ui, child)
+    }
+}
+
+// ── Reading the result ───────────────────────────────────────────────────────
+
+func box_x(ui: Ui, node: int) : int {
+    return ui_get(ui, node, UiF.X)
+}
+
+func box_y(ui: Ui, node: int) : int {
+    return ui_get(ui, node, UiF.Y)
+}
+
+func box_w(ui: Ui, node: int) : int {
+    return ui_get(ui, node, UiF.W)
+}
+
+func box_h(ui: Ui, node: int) : int {
+    return ui_get(ui, node, UiF.H)
+}
+
+// Whether a point falls inside a node's laid-out rectangle.
+func box_contains(ui: Ui, node: int, px: int, py: int) : bool {
+    let x: int = ui_get(ui, node, UiF.X)
+    let y: int = ui_get(ui, node, UiF.Y)
+
+    return px >= x && py >= y
+        && px < (x + ui_get(ui, node, UiF.W))
+        && py < (y + ui_get(ui, node, UiF.H))
+}

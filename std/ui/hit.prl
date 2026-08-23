@@ -1,0 +1,125 @@
+/*
+ * Interaction: which widget is under the cursor, and which one was clicked.
+ *
+ * ── A click is two events, and the gesture between them ──────────────────────
+ *
+ * A button does not fire when it is pressed. It fires when the press *and* the release both happen
+ * on it — which is what lets someone press a button, think better of it, slide off, and release
+ * without anything happening. That requires remembering, between two frames, which widget the press
+ * started on.
+ *
+ * The tree is thrown away and rebuilt every frame, so a node index cannot carry that memory: the
+ * same button is a different index the moment a widget above it appears or disappears. What is
+ * remembered instead is the widget's `id`, which the caller chooses and which is stable by
+ * construction — by default it is the button's own action.
+ *
+ * Two states are kept in `Ui.st` across frames:
+ *
+ *   HOT_ID     the widget under the cursor now, which is what a hover looks like
+ *   ACTIVE_ID  the widget a press landed on and has not yet been released
+ *
+ * ── Why the search runs backwards ────────────────────────────────────────────
+ *
+ * Nodes are allocated in the order they were built, and the display list paints them in that same
+ * order, so a later node is drawn over an earlier one. Walking the arena backwards therefore visits
+ * the topmost widget first, and the first interactive hit is the one the user can actually see.
+ * Walking forwards would let a widget report a click through whatever is covering it.
+ */
+
+import "ui/widget"
+import "ui/box"
+
+/*
+ * Resolves this frame's pointer state against the laid-out tree.
+ *
+ * Call it after `box_layout` and before building the display list, so that the hover and pressed
+ * colours drawn this frame are the ones the pointer is actually producing. Returns the action of a
+ * widget that was clicked, or 0 if none was.
+ */
+func hit_resolve(ui: Ui) : int {
+    let mouseX: int = ui.st[UiS.MOUSE_X]
+    let mouseY: int = ui.st[UiS.MOUSE_Y]
+    let down: bool = ui.st[UiS.MOUSE_DOWN] == 1
+    let wasDown: bool = ui.st[UiS.MOUSE_WAS_DOWN] == 1
+
+    let target: int = hit_topmost(ui, mouseX, mouseY)
+    let hotId: int = 0
+
+    if (target >= 0) {
+        hotId = ui_get(ui, target, UiF.ID)
+    }
+
+    ui.st[UiS.HOT_ID] = hotId
+
+    let fired: int = 0
+
+    if (down && !wasDown) {
+        // The press: remember what it landed on. Nothing fires yet.
+        ui.st[UiS.ACTIVE_ID] = hotId
+    } elif (!down && wasDown) {
+        // The release: a click only if it landed on the same widget the press did.
+        if (ui.st[UiS.ACTIVE_ID] != 0 && ui.st[UiS.ACTIVE_ID] == hotId && target >= 0) {
+            fired = ui_get(ui, target, UiF.ACTION)
+        }
+
+        ui.st[UiS.ACTIVE_ID] = 0
+    }
+
+    ui.st[UiS.FIRED_ACTION] = fired
+
+    return fired
+}
+
+/*
+ * The topmost interactive node containing the point, or -1.
+ *
+ * Only nodes with an id are considered — a container is not something to be clicked, and letting
+ * one answer would mean a click near a button reported the panel behind it.
+ */
+func hit_topmost(ui: Ui, px: int, py: int) : int {
+    let node: int = ui_node_count(ui) - 1
+
+    while (node >= 0) {
+        if (ui_get(ui, node, UiF.ID) != 0 && box_contains(ui, node, px, py)) {
+            return node
+        }
+
+        node = node - 1
+    }
+
+    return 0 - 1
+}
+
+// ── What the display list asks ───────────────────────────────────────────────
+
+// Whether the cursor is over this widget.
+func hit_is_hot(ui: Ui, node: int) : bool {
+    let id: int = ui_get(ui, node, UiF.ID)
+
+    return id != 0 && ui.st[UiS.HOT_ID] == id
+}
+
+/*
+ * Whether this widget is being held down.
+ *
+ * Both conditions matter: the widget must be the one the press landed on *and* the cursor must
+ * still be over it, so that sliding off a held button lifts its pressed appearance — feedback that
+ * the release is no longer going to do anything.
+ */
+func hit_is_active(ui: Ui, node: int) : bool {
+    let id: int = ui_get(ui, node, UiF.ID)
+
+    return id != 0 && ui.st[UiS.ACTIVE_ID] == id && ui.st[UiS.HOT_ID] == id
+}
+
+func hit_hot_id(ui: Ui) : int {
+    return ui.st[UiS.HOT_ID]
+}
+
+func hit_active_id(ui: Ui) : int {
+    return ui.st[UiS.ACTIVE_ID]
+}
+
+func hit_fired_action(ui: Ui) : int {
+    return ui.st[UiS.FIRED_ACTION]
+}

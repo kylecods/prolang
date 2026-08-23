@@ -74,6 +74,29 @@ func color_luma(c: int) : int {
     return ((color_r(c) * 30) + (color_g(c) * 59) + (color_b(c) * 11)) / 100
 }
 
+/*
+ * Moves a colour towards white or black by `delta` (positive lightens, negative darkens), keeping
+ * its alpha.
+ *
+ * This is what gives a widget its hover and pressed states without every caller having to name
+ * three colours for every surface. It shifts towards the extreme rather than scaling the channels,
+ * because scaling cannot lighten black — a dark theme's pressed state would have no feedback at all.
+ */
+func color_shade(c: int, delta: int) : int {
+    return color_argb(color_a(c),
+        color_shade_channel(color_r(c), delta),
+        color_shade_channel(color_g(c), delta),
+        color_shade_channel(color_b(c), delta))
+}
+
+// One channel of color_shade, clamped so a bright colour cannot wrap round to a dark one.
+func color_shade_channel(value: int, delta: int) : int {
+    let shifted: int = value + delta
+    if (shifted < 0) { return 0 }
+    if (shifted > 255) { return 255 }
+    return shifted
+}
+
 // ── Formatting ───────────────────────────────────────────────────────────────
 
 /*

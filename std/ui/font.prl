@@ -1,0 +1,160 @@
+/*
+ * Text metrics, as data.
+ *
+ * ── Why the metrics are a table and not a call into the host ─────────────────
+ *
+ * Laying out text needs its width before anything is drawn, and the only thing that truly knows a
+ * string's width is the thing that will draw it. The obvious design is for the layout pass to call
+ * back into the host and ask. That is what this module exists to avoid.
+ *
+ * A callback would put a platform dependency in the middle of the layout engine — the one part of
+ * the toolkit that most needs to stay pure. It could then only be tested on a machine with that
+ * platform, it could not run at all on the PSP path, and every text node would cost an interop
+ * call on every relayout.
+ *
+ * So the host measures each glyph *once*, at start-up, into a table of widths, and hands that
+ * table over. Layout is then integer arithmetic over an array: portable, testable anywhere, and
+ * free of the platform entirely. `font_measure` is a loop over `charCode`.
+ *
+ * ── What it costs ────────────────────────────────────────────────────────────
+ *
+ * Summing per-character advances ignores kerning, so a proportional font measures a few pixels
+ * wide on a long run of text. That is the right trade here: UI strings are short, the error is
+ * always in the direction of reserving *too much* room rather than clipping, and it buys a layout
+ * engine with no platform in it. A backend that cares can pad its glyph widths to compensate.
+ *
+ * Codes are UTF-16 units on .NET and bytes on the C backends. They agree over ASCII, which is what
+ * the table covers; anything above falls back to the width of `?` rather than reading out of
+ * bounds.
+ */
+
+// ── Shape of the table ───────────────────────────────────────────────────────
+
+// How many character codes each font carries a width for. ASCII, plus the control range so that a
+// code can index the table directly without subtracting an offset.
+func font_glyphs() : int {
+    return 128
+}
+
+// The code whose width stands in for anything the table does not cover.
+func font_fallback_code() : int {
+    return 63
+}
+
+/*
+ * A set of fonts, each identified by a small integer.
+ *
+ * `widths` is one flat buffer of `count * font_glyphs()` advances, and `metrics` holds a line
+ * height and an ascent per font. Flat rather than nested because `array<array<int>>` does not
+ * parse — `>>` lexes as one shift token — and because one buffer is one allocation.
+ *
+ * `count` is a scalar, so it is fixed at construction: a struct is a value type and assigning to a
+ * scalar field of a parameter would change only the callee's copy. The arrays are real references,
+ * which is why the setters below can write through them at all.
+ */
+struct FontSet {
+    widths: array<int>,
+    metrics: array<int>,
+    count: int
+}
+
+func font_new(count: int) : FontSet {
+    let widths: array<int> = array_new(count * font_glyphs())
+    let metrics: array<int> = array_new(count * 2)
+
+    return FontSet { widths: widths, metrics: metrics, count: count }
+}
+
+// ── Filling it in ────────────────────────────────────────────────────────────
+
+/*
+ * Sets one font's line height and ascent.
+ *
+ * The ascent is the distance from the top of the line box to the baseline. It is kept separately
+ * from the line height because a backend draws text from one or the other — GDI+ takes the top of
+ * the box, a bitmap font on the PSP takes the baseline — and the display list should not have to
+ * care which.
+ */
+func font_set_metrics(fonts: FontSet, font: int, lineHeight: int, ascent: int) : void {
+    if (font < 0 || font >= fonts.count) {
+        return
+    }
+
+    fonts.metrics[font * 2] = lineHeight
+    fonts.metrics[(font * 2) + 1] = ascent
+}
+
+func font_set_width(fonts: FontSet, font: int, code: int, width: int) : void {
+    if (font < 0 || font >= fonts.count) {
+        return
+    }
+    if (code < 0 || code >= font_glyphs()) {
+        return
+    }
+
+    fonts.widths[(font * font_glyphs()) + code] = width
+}
+
+/*
+ * Gives every glyph the same advance.
+ *
+ * The PSP's 8x8 bitmap font is exactly this, and it is also a usable stand-in on any backend whose
+ * measurements are not available yet — a layout built on it is wrong only in the width of its text,
+ * not in its structure, which is enough to test everything else.
+ */
+func font_set_monospace(fonts: FontSet, font: int, advance: int, lineHeight: int, ascent: int) : void {
+    font_set_metrics(fonts, font, lineHeight, ascent)
+
+    let code: int = 0
+    while (code < font_glyphs()) {
+        font_set_width(fonts, font, code, advance)
+        code = code + 1
+    }
+}
+
+// ── Reading it ───────────────────────────────────────────────────────────────
+
+func font_line_height(fonts: FontSet, font: int) : int {
+    if (font < 0 || font >= fonts.count) { return 0 }
+
+    return fonts.metrics[font * 2]
+}
+
+func font_ascent(fonts: FontSet, font: int) : int {
+    if (font < 0 || font >= fonts.count) { return 0 }
+
+    return fonts.metrics[(font * 2) + 1]
+}
+
+// The advance of one character code, falling back for anything outside the table.
+func font_width(fonts: FontSet, font: int, code: int) : int {
+    if (font < 0 || font >= fonts.count) { return 0 }
+
+    let index: int = code
+
+    if (index < 0 || index >= font_glyphs()) {
+        index = font_fallback_code()
+    }
+
+    return fonts.widths[(font * font_glyphs()) + index]
+}
+
+/*
+ * The width of a whole string, as the sum of its characters' advances.
+ *
+ * This is the hot path of the layout pass — every text node calls it on every relayout — which is
+ * why `charCode` exists as a builtin. Without it, deciding which of ninety-five widths applies to a
+ * character would mean ninety-five string comparisons, per character.
+ */
+func font_measure(fonts: FontSet, font: int, text: string) : int {
+    let total: int = 0
+    let i: int = 0
+    let length: int = text.length()
+
+    while (i < length) {
+        total = total + font_width(fonts, font, text.charCode(i))
+        i = i + 1
+    }
+
+    return total
+}

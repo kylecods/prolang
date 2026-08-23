@@ -39,7 +39,7 @@ public class FunctionSymbol : Symbol
             substitution[TypeParameters[i].Name] = args[i];
 
         var concreteParams = Parameters.Select(p =>
-            new ParameterSymbol(p.Name, SubstituteType(p.Type, substitution), p.Ordinal)
+            new ParameterSymbol(p.Name, SubstituteType(p.Type, substitution), p.Ordinal, p.DefaultValue)
         ).ToImmutableArray();
 
         var concreteReturn = SubstituteType(Type, substitution);

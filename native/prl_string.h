@@ -38,6 +38,18 @@ static inline PrlString prl_string_char_at(PrlString s, INT32 i) {
     return (PrlString){buf, 1};
 }
 
+/*
+ * The character at `i` as an integer, or 0 when out of range.
+ *
+ * Cast through unsigned char first: `char` is signed on most targets, so a byte above 127 would
+ * otherwise arrive negative and index a width table out of bounds. The .NET side returns a UTF-16
+ * code unit; for the ASCII range the two agree, which is what generated code relies on.
+ */
+static inline INT32 prl_string_char_code(PrlString s, INT32 i) {
+    if (i < 0 || i >= s.len) return 0;
+    return (INT32)(unsigned char)s.data[i];
+}
+
 static inline PrlString prl_string_substring(PrlString s, INT32 start, INT32 end) {
     if (start < 0) start = 0;
     if (end > s.len) end = s.len;

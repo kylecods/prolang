@@ -1,0 +1,66 @@
+/*
+ * Default values for parameters, and arguments passed by name.
+ *
+ * Both are resolved entirely in the binder: it reorders the arguments into parameter order and
+ * materialises a literal for every parameter the caller left out, so the argument list reaching
+ * BoundCallExpression is always complete and positional. No backend knows this feature exists,
+ * which is why it works identically under --emit-c and --emit-psp.
+ *
+ * A default has to fold to a constant. That is not a limitation of the folder so much as the point
+ * of the rule: a default that could name a variable would be re-bound in the *caller's* scope,
+ * where that name may not exist — or, far worse, may exist and mean something else.
+ *
+ * `0 - 5` rather than `-5` because that is how this repository writes a negative literal; it also
+ * checks that binary folding works, since a default is otherwise never a compound expression.
+ */
+
+import "io"
+import "test"
+
+enum Align { START, CENTER, END }
+
+func describe(label: string, w: int = 10, h: int = 4, align: int = Align.CENTER, bold: bool = false) : string {
+    let flag: string = "n"
+    if (bold) { flag = "y" }
+    return label + " " + w + "x" + h + " a" + align + " b" + flag
+}
+
+func offset(base: int, delta: int = 0 - 5) : int {
+    return base + delta
+}
+
+// A default may also be a folded expression, not just a literal.
+func capacity(slots: int = 4 * 16) : int {
+    return slots
+}
+
+func main()
+{
+    // Every optional parameter omitted.
+    assert(describe("a") == "a 10x4 a1 bn", "all defaults apply")
+
+    // A positional argument overrides the first default; the rest still apply.
+    assert(describe("b", 20) == "b 20x4 a1 bn", "positional overrides one default")
+
+    // Skipping a middle parameter by naming a later one.
+    assert(describe("c", h: 9) == "c 10x9 a1 bn", "named argument skips a default")
+
+    // Positional and named mixed, in that order.
+    assert(describe("d", 30, align: Align.END) == "d 30x4 a2 bn", "positional then named")
+
+    // Named arguments out of declaration order.
+    assert(describe("e", bold: true, w: 7) == "e 7x4 a1 by", "named arguments reorder")
+
+    // Nothing omitted at all — the ordinary positional path still works.
+    assert(describe("f", 1, 2, Align.START, true) == "f 1x2 a0 by", "fully positional")
+
+    // A negative default, written the way this language writes one.
+    assert(offset(100) == 95, "negative default folds")
+    assert(offset(100, 1) == 101, "explicit argument beats the default")
+
+    // A folded arithmetic default.
+    assert(capacity() == 64, "arithmetic default folds")
+    assert(capacity(8) == 8, "explicit argument beats a folded default")
+
+    print("default and named arguments: ok")
+}

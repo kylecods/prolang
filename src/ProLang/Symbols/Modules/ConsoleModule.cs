@@ -1,4 +1,4 @@
-namespace ProLang.Symbols.Modules;
+﻿namespace ProLang.Symbols.Modules;
 
 public sealed class ConsoleModule : BuiltInModule
 {
@@ -14,5 +14,6 @@ public sealed class ConsoleModule : BuiltInModule
         BuiltInFunctions.ConsoleKeyAvailable,
         BuiltInFunctions.ConsoleReadKey,
         BuiltInFunctions.ThreadSleep,
+        BuiltInFunctions.TimeMillis,
     ];
 }

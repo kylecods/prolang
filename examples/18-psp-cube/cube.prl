@@ -1,0 +1,328 @@
+/*
+ * A rotating wireframe cube, as a pluggable scene component.
+ *
+ * ── This file names no platform ──────────────────────────────────────────────
+ *
+ * It imports no host and calls nothing that draws. `cube_paint` is a scene painter: it is handed
+ * the rectangle the layout gave the scene and *appends display-list records* — twelve LINE records
+ * for the twelve edges. Those are the same records a button's background produces, so every backend
+ * already executes them.
+ *
+ * That is what makes the cube pluggable rather than special. The same file drives psp_cube.prl on
+ * the hardware and cube_desktop.prl on Windows Forms, it composites in tree order with the buttons
+ * around it, and it resizes with its container because it derives its size from the rectangle it is
+ * given rather than from a constant.
+ *
+ * ── Fixed point, and the bug that hid the cube ───────────────────────────────
+ *
+ * ProLang has no floating point, so everything here is integers scaled by `cube_one()` = 4096.
+ * `cube_fp_mul` multiplies two of them and divides the scale back out.
+ *
+ * The first version of this demo built its cube from vertices at plus or minus **1** rather than
+ * plus or minus 4096. Every product then went through `(1 * cosine) / 4096`, and since a cosine is
+ * at most 4096, integer division truncated all of them to zero. All eight vertices projected to
+ * exactly the centre of the screen, the twelve edges became twelve zero-length lines, and the cube
+ * was invisible — with no error anywhere, because nothing had gone wrong arithmetically.
+ *
+ * A unit in fixed point is `cube_one()`, never 1. That is the whole fix.
+ */
+
+// The display list is the only thing this file touches from outside itself: `dl_emit` and the
+// opcodes. Imported here rather than left to whoever imports this, so the module compiles alone.
+import "ui/draw"
+
+// ── Fixed point ──────────────────────────────────────────────────────────────
+
+// One whole unit. A "unit cube" therefore has vertices at plus or minus this, not plus or minus 1.
+func cube_one() : int {
+    return 4096
+}
+
+func cube_fp_mul(a: int, b: int) : int {
+    return (a * b) / cube_one()
+}
+
+// ── Angles ───────────────────────────────────────────────────────────────────
+
+// A full turn, so an angle is 0..255 rather than 0..359. A power of two makes wrapping a mask.
+func cube_turn() : int {
+    return 256
+}
+
+func cube_wrap(a: int) : int {
+    return a & (cube_turn() - 1)
+}
+
+/*
+ * Sine of `a`, where `a` is 0..255 over a full turn, scaled by `cube_one()`.
+ *
+ * Only the first quadrant is stored — sixty-five values — and the rest is reflected out of it. A
+ * full table would be four times the size for numbers that are already there, and the symmetry is
+ * exact rather than approximate, so nothing is lost.
+ */
+func cube_sin(state: array<int>, a: int) : int {
+    let i: int = cube_wrap(a)
+
+    // The table is a slice of the state array, not the whole of it, so every read goes through the
+    // base offset. Reading from index 0 instead returns the angles and the colour as though they
+    // were sine values — which is wrong by a plausible-looking amount rather than an obvious one,
+    // and is what the exact quadrant checks in the test suite are there to catch.
+    if (i <= 64) {
+        return state[cube_sin_base() + i]
+    }
+    if (i <= 128) {
+        return state[cube_sin_base() + (128 - i)]
+    }
+    if (i <= 192) {
+        return 0 - state[cube_sin_base() + (i - 128)]
+    }
+
+    return 0 - state[cube_sin_base() + (256 - i)]
+}
+
+func cube_cos(state: array<int>, a: int) : int {
+    return cube_sin(state, a + 64)
+}
+
+// ── The painter's state ──────────────────────────────────────────────────────
+
+/*
+ * Everything `cube_paint` needs, in one `array<int>`.
+ *
+ * It arrives as a parameter because a ProLang function value captures nothing — which is precisely
+ * what lets one compile to a bare function pointer on the PSP with no garbage collector. So the
+ * angles, the sine table and the projection scratch live in an array the caller owns, and the
+ * painter reads them by index.
+ *
+ * The scratch buffer is part of the state for the same reason the arena is: allocating sixteen ints
+ * per frame would be a leak on the PSP, where the generated C mallocs and never frees.
+ */
+enum CubeS {
+    ANG_X,
+    ANG_Y,
+    ANG_Z,
+    COLOUR
+}
+
+// Where the 65-entry first-quadrant sine table starts.
+func cube_sin_base() : int {
+    return 4
+}
+
+// Where the sixteen ints of projected x/y scratch start.
+func cube_proj_base() : int {
+    return cube_sin_base() + 65
+}
+
+func cube_state_size() : int {
+    return cube_proj_base() + 16
+}
+
+/*
+ * Allocates the state and fills in the sine table.
+ *
+ * The quarter table is `sin(i * 90 / 64)` scaled by 4096, so `quarter[64]` is exactly one unit.
+ */
+func cube_state_new() : array<int> {
+    let state: array<int> = array_new(cube_state_size())
+
+    let quarter: array<int> = [
+           0,  101,  201,  301,  401,  501,  601,  700,  799,  897,  995, 1092, 1189,
+        1285, 1380, 1474, 1567, 1660, 1751, 1842, 1931, 2019, 2106, 2191, 2276, 2359,
+        2440, 2520, 2598, 2675, 2751, 2824, 2896, 2967, 3035, 3102, 3166, 3229, 3290,
+        3349, 3406, 3461, 3513, 3564, 3612, 3659, 3703, 3745, 3784, 3822, 3857, 3889,
+        3920, 3948, 3973, 3996, 4017, 4036, 4052, 4065, 4076, 4085, 4091, 4095, 4096
+    ]
+
+    let i: int = 0
+    while (i < 65) {
+        state[cube_sin_base() + i] = quarter[i]
+        i = i + 1
+    }
+
+    return state
+}
+
+func cube_set_angles(state: array<int>, x: int, y: int, z: int) : void {
+    state[CubeS.ANG_X] = cube_wrap(x)
+    state[CubeS.ANG_Y] = cube_wrap(y)
+    state[CubeS.ANG_Z] = cube_wrap(z)
+}
+
+func cube_turn_by(state: array<int>, dx: int, dy: int, dz: int) : void {
+    cube_set_angles(state,
+        state[CubeS.ANG_X] + dx,
+        state[CubeS.ANG_Y] + dy,
+        state[CubeS.ANG_Z] + dz)
+}
+
+func cube_set_colour(state: array<int>, colour: int) : void {
+    state[CubeS.COLOUR] = colour
+}
+
+// ── Geometry ─────────────────────────────────────────────────────────────────
+
+/*
+ * One of the eight corners of a unit cube, as plus or minus one whole unit per axis.
+ *
+ * The three bits of `i` are the three signs, which is why the vertices come out in an order that
+ * makes `cube_edge_*` below readable: two corners share an edge exactly when their indices differ
+ * in one bit.
+ */
+func cube_vertex_axis(i: int, bit: int) : int {
+    if ((i & bit) == 0) {
+        return 0 - cube_one()
+    }
+
+    return cube_one()
+}
+
+/*
+ * How far the eye sits from the centre of the cube, in whole units.
+ *
+ * The cube's half-extent is one unit, so this number alone decides how strong the perspective is —
+ * and it decides whether the thing on screen reads as a cube at all.
+ *
+ * Turned to a corner, the nearest and furthest corners sit `sqrt(3)` units either side of the
+ * centre, so their distances from the eye are in the ratio `(D + 1.73) / (D - 1.73)`. At four that
+ * is 2.5 and at six it is 1.8: both draw a shape whose front face towers over its back one, which
+ * the eye reads as a truncated pyramid rather than a cube in perspective. At twelve the ratio is
+ * 1.34, which is enough depth to be obviously three-dimensional and little enough to still be
+ * square.
+ *
+ * This was worth getting right rather than leaving: the geometry was correct at four, every test
+ * passed, and it still looked wrong.
+ */
+func cube_eye_distance() : int {
+    return 12
+}
+
+/*
+ * Rotates all eight corners and projects them into the scratch buffer.
+ *
+ * `limit` is the largest distance from the centre, in pixels, that any corner may end up at — the
+ * *projected* half-extent, not the geometric one. Stating it that way is what lets a caller size
+ * the cube to the rectangle it was given and be sure it stays inside: the alternative is to pass
+ * the unprojected size and be surprised when perspective pushes the near face a third further out.
+ */
+func cube_project(state: array<int>, cx: int, cy: int, limit: int) : void {
+    let cosX: int = cube_cos(state, state[CubeS.ANG_X])
+    let sinX: int = cube_sin(state, state[CubeS.ANG_X])
+    let cosY: int = cube_cos(state, state[CubeS.ANG_Y])
+    let sinY: int = cube_sin(state, state[CubeS.ANG_Y])
+    let cosZ: int = cube_cos(state, state[CubeS.ANG_Z])
+    let sinZ: int = cube_sin(state, state[CubeS.ANG_Z])
+
+    // Keeping the eye distance in the same fixed point as the geometry matters as much as the
+    // vertices being scaled: mixing a raw 6 with scaled coordinates would put the eye a
+    // seven-hundredth of a unit away and turn the cube inside out.
+    let dist: int = cube_eye_distance() * cube_one()
+
+    /*
+     * The worst case is not the unrotated cube.
+     *
+     * Sizing to the front face — `limit * (dist - 1)` — is the obvious choice and it is wrong: a
+     * corner sits sqrt(3) units from the centre rather than 1, so turning the cube swings that
+     * diagonal into view *and* brings it closer to the eye at the same time. At forty-five degrees
+     * of yaw a corner reaches about 1.17 times what the front face did, and the cube quietly draws
+     * outside the rectangle the layout gave it, over whatever is next to it.
+     *
+     * The worst case is a corner at its full sqrt(3) units, turned towards the eye: it lands at
+     * `sqrt(3) / dist` of the scale, which at twelve is a little under a sixth. Multiplying by six
+     * therefore fills about seven eighths of `limit` at the worst angle and never exceeds it. The
+     * unrotated cube is smaller than its box and a turned one nearly fills it, which is the right
+     * way round — a cube is looked at while it is turning.
+     *
+     * `test_cube_projection` sweeps the angles and checks the bound, because this factor and
+     * `cube_eye_distance` have to be changed together.
+     */
+    let scale: int = limit * 6
+
+    let i: int = 0
+    while (i < 8) {
+        let vx: int = cube_vertex_axis(i, 4)
+        let vy: int = cube_vertex_axis(i, 2)
+        let vz: int = cube_vertex_axis(i, 1)
+
+        // Yaw, then pitch, then roll.
+        let ax: int = cube_fp_mul(vx, cosY) + cube_fp_mul(vz, sinY)
+        let az: int = cube_fp_mul(vz, cosY) - cube_fp_mul(vx, sinY)
+
+        let by: int = cube_fp_mul(vy, cosX) - cube_fp_mul(az, sinX)
+        let bz: int = cube_fp_mul(vy, sinX) + cube_fp_mul(az, cosX)
+
+        let px: int = cube_fp_mul(ax, cosZ) - cube_fp_mul(by, sinZ)
+        let py: int = cube_fp_mul(ax, sinZ) + cube_fp_mul(by, cosZ)
+
+        let d: int = bz + dist
+        if (d < 1) {
+            d = 1
+        }
+
+        state[cube_proj_base() + (i * 2)] = cx + ((px * scale) / d)
+        state[cube_proj_base() + (i * 2) + 1] = cy - ((py * scale) / d)
+
+        i = i + 1
+    }
+}
+
+// ── The scene painter ────────────────────────────────────────────────────────
+
+/*
+ * Draws the cube into the rectangle the layout assigned, by appending LINE records.
+ *
+ * This signature is the scene contract — see `dl_build_scenes`. It never draws and never names a
+ * backend; it only writes records, which is why one copy of it serves both hosts.
+ *
+ * The cube is sized from the shorter side of its rectangle, so it fills whatever space it is given
+ * and stays inside it when the window is resized.
+ */
+func cube_paint(ops: array<int>, at: int, tag: int,
+                x: int, y: int, w: int, h: int, state: array<int>) : int {
+    let shorter: int = w
+    if (h < shorter) {
+        shorter = h
+    }
+
+    // Two fifths of the shorter side, so the cube spans four fifths of it and keeps a margin.
+    // `cube_project` treats this as the *projected* limit, so perspective is already accounted for
+    // and nothing reaches outside the rectangle the layout handed over.
+    let limit: int = (shorter * 2) / 5
+    if (limit < 2) {
+        return at
+    }
+
+    cube_project(state, x + (w / 2), y + (h / 2), limit)
+
+    // Two corners share an edge exactly when their indices differ in one bit, so pairing every
+    // corner with its neighbour along each axis — and only when that bit is clear, to count each
+    // edge once — enumerates all twelve without a table.
+    let next: int = at
+    let i: int = 0
+
+    while (i < 8) {
+        if ((i & 1) == 0) {
+            next = cube_edge(ops, next, state, i, i | 1)
+        }
+        if ((i & 2) == 0) {
+            next = cube_edge(ops, next, state, i, i | 2)
+        }
+        if ((i & 4) == 0) {
+            next = cube_edge(ops, next, state, i, i | 4)
+        }
+
+        i = i + 1
+    }
+
+    return next
+}
+
+// One edge, as a LINE record between two projected corners.
+func cube_edge(ops: array<int>, at: int, state: array<int>, a: int, b: int) : int {
+    return dl_emit(ops, at, DlOp.LINE,
+        state[cube_proj_base() + (a * 2)],
+        state[cube_proj_base() + (a * 2) + 1],
+        state[cube_proj_base() + (b * 2)],
+        state[cube_proj_base() + (b * 2) + 1],
+        state[CubeS.COLOUR], 1)
+}

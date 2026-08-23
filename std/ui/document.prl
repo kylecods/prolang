@@ -6,13 +6,16 @@
  *
  * Why the buffer is flat, and why the struct holds no other struct:
  *
- *   - `array<array<int>>` does not parse at all: prolang lexes `>>` as a single shift token.
- *   - `array<SomeStruct>` compiles but emits invalid IL — element access falls through to the
- *     reference-type opcodes for a value-type element, and the assembly fails at JIT time.
- *   - A struct-typed *field* is worse than either, because `outer.inner.field = x` writes into a
- *     temporary copy of `inner` and is then discarded, with no diagnostic.
+ *   - `array<array<int>>` does not parse at all: prolang lexes `>>` as a single shift token. This
+ *     one is still true.
+ *   - `array<SomeStruct>` and `outer.inner.field = x` used to miscompile silently — the first to
+ *     invalid IL that failed at JIT time, the second by writing into a discarded copy. **Both were
+ *     fixed in August 2026**, with regression tests in `tests/language/structs/`. They are no
+ *     longer reasons to avoid either construct.
  *
- * So: scalars and `array<int>`, nothing else.
+ * A flat buffer is still the right representation here, for a reason that outlived the bugs: it is
+ * one allocation, it never reallocates, and it is what crosses to the shim as an `int[]` for the
+ * bulk blit without a copy.
  *
  * The copy semantics that follow are the useful half of the same rule. A prolang struct is a .NET
  * value type, so passing a Document copies its three fields — but `pixels` is a reference to a

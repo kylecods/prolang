@@ -42,13 +42,60 @@ runtime pack.
 | `ui/theme` | four themes, as a colour per *role* rather than a struct of colours |
 | `ui/icons` | 21 icons described as geometry on a 48-unit square, rasterised at any size |
 | `ui/layout` | every size in an interface as a function of the display's scaling factor and the room available |
-| `ui/chrome` | **the only module that talks to Windows Forms.** Blitting, canvas views, icon bitmaps, flat buttons, toolbars, program icons |
+| `ui/chrome` | **talks to Windows Forms.** Blitting, canvas views, icon bitmaps, flat buttons, toolbars, program icons |
 
-### The line at `ui/chrome`
+### The widget toolkit
 
-Importing `ui/chrome` pulls in `winforms`, which makes a program need the Windows Desktop runtime
-pack. A test suite must not import it, or the suite stops being runnable under `dotnet test` — the
+A second, higher-level way to build an interface: describe a tree of widgets and let it lay itself
+out, rather than placing controls at pixel positions. It is additive — `ui/chrome` and the pixel
+editor built on it are unchanged — and it is framework-independent, so the same widget code runs on
+Windows Forms and on the PSP.
+
+| Module | |
+|---|---|
+| `ui/widget` | the node arena and the open/close builder: `ui_col`, `ui_row`, `ui_box`, `ui_text`, `ui_button`, `ui_spacer`, `ui_image`, `ui_scene`, `ui_end` |
+| `ui/box` | layout — measure bottom-up, place top-down, divide leftover space between `flex:` children |
+| `ui/hit` | hover, press and click, tracked across frames by a widget's id |
+| `ui/draw` | flattens a laid-out tree into a display list: a flat `array<int>` of drawing commands |
+| `ui/font` | character-width tables, so the layout pass can measure text without asking a window |
+| `ui/fps` | a frame-rate counter, averaged over a window, with the worst frame of each window |
+| `ui/host_winforms` | **imports `winforms`.** Opens a window and submits each frame in one interop call |
+| `ui/host_psp` | **imports `psp`.** Executes the same display list through the GU, with a D-pad cursor |
+
+```prolang
+import "ui/host_winforms"
+
+let host: Host = hostw_open("Counter", 480, 300)
+let fonts: FontSet = hostw_font("Segoe UI", 10)
+let ui: Ui = ui_new(256)
+
+while (hostw_running(host)) {
+    hostw_begin(host, ui)
+
+    ui_col(ui, pad: 16, gap: 8)
+        ui_text(ui, "Count: " + count[0])
+        ui_button(ui, "Increment", action: 1, bg: 4473924, fg: 0 - 1, pad: 8)
+    ui_end(ui)
+
+    if (hostw_present(host, ui, fonts) == 1) { count[0] = count[0] + 1 }
+}
+```
+
+`examples/17-widgets/` is the worked example, and
+[`docs/architecture/ui-toolkit.md`](../docs/architecture/ui-toolkit.md) explains the design — why
+the tree is an arena of ints, why the builder opens and closes rather than nesting, and what a
+backend has to implement.
+
+### The line at `ui/chrome` and `ui/host_winforms`
+
+Importing either pulls in `winforms`, which makes a program need the Windows Desktop runtime pack.
+A test suite must not import them, or the suite stops being runnable under `dotnet test` — the
 whole import graph compiles into one assembly, so a single reference is enough.
+
+That is why the toolkit is split where it is: `ui/widget`, `ui/box`, `ui/hit`, `ui/draw` and
+`ui/font` are pure prolang and carry the whole of `tests/std/run_tests.prl`'s coverage of the
+toolkit, while the two host modules have none — each of their functions hands an already-computed
+result to a backend and does no arithmetic of its own.
 
 That constraint is why the split is drawn where it is rather than somewhere more convenient, and
 why `ui/chrome` is the one module with no tests. Each of its functions hands an already-computed
@@ -148,4 +195,5 @@ instead of reporting that the function does not exist.
 3. Add tests to `tests/std/`, import them from `tests/std/run_tests.prl`, and classify both files
    in `src/ProLang.Tests/Infrastructure/TestCorpus.cs` — the corpus integrity test fails the whole
    suite otherwise. Files under `std/` itself are not scanned.
-4. If it touches Windows Forms it belongs in `ui/chrome`, or the test suite stops being runnable.
+4. If it touches Windows Forms it belongs in `ui/chrome` or `ui/host_winforms`, or the test suite
+   stops being runnable.

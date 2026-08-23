@@ -22,6 +22,26 @@ public static class StringOps
     public static string CharAt(string str, int index) => str[index].ToString();
 
     /// <summary>
+    /// Returns the code unit at <paramref name="index"/> as an integer.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The counterpart to <see cref="CharAt"/>, and the only way a ProLang program can do
+    /// arithmetic on text. Without it, deciding whether a character is a digit means comparing a
+    /// one-character string against ten others, which is why <c>util_parse_int</c> reads the way it
+    /// does; measuring a string against a width table would mean ninety-five such comparisons per
+    /// character.
+    /// </para>
+    /// <para>
+    /// A UTF-16 code unit, not a rune: a character outside the basic multilingual plane is two
+    /// units and reports each half separately. That matches <c>length()</c> and <c>charAt()</c>,
+    /// which are also unit-based, so the three agree with one another.
+    /// </para>
+    /// </remarks>
+    /// <exception cref="ArgumentOutOfRangeException"><paramref name="index"/> is outside the string.</exception>
+    public static int CharCode(string str, int index) => str[index];
+
+    /// <summary>
     /// Returns the substring from <paramref name="start"/> up to but not including
     /// <paramref name="end"/>.
     /// </summary>

@@ -1,4 +1,4 @@
-using Mono.Cecil;
+﻿using Mono.Cecil;
 using Mono.Cecil.Cil;
 using ProLang.Symbols;
 
@@ -69,6 +69,7 @@ internal static class IntrinsicRegistry
         [BuiltInFunctions.StringLength] = Intrinsic.CallVirt("System.String", "get_Length"),
         [BuiltInFunctions.StringIndexOf] = Intrinsic.CallVirt("System.String", "IndexOf", "System.String"),
         [BuiltInFunctions.StringCharAt] = Intrinsic.Call(RuntimeLibrary.StringOps, "CharAt", "System.String", "System.Int32"),
+        [BuiltInFunctions.StringCharCode] = Intrinsic.Call(RuntimeLibrary.StringOps, "CharCode", "System.String", "System.Int32"),
         [BuiltInFunctions.StringSubstring] = Intrinsic.Call(RuntimeLibrary.StringOps, "Substring", "System.String", "System.Int32", "System.Int32"),
 
         // ── Arrays ───────────────────────────────────────────────────────────────────────
@@ -87,5 +88,6 @@ internal static class IntrinsicRegistry
 
         // ── Threading ────────────────────────────────────────────────────────────────────
         [BuiltInFunctions.ThreadSleep] = Intrinsic.Call("System.Threading.Thread", "Sleep", "System.Int32"),
+        [BuiltInFunctions.TimeMillis] = Intrinsic.Call(RuntimeLibrary.TimeOps, "Millis"),
     };
 }

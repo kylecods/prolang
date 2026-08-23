@@ -14,5 +14,6 @@ public sealed class PspModule : BuiltInModule
         BuiltInFunctions.PspVsync,
         BuiltInFunctions.PspButtonsHeld,
         BuiltInFunctions.PspButtonPressed,
+        BuiltInFunctions.PspDrawLine,
     ];
 }

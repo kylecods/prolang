@@ -4,9 +4,11 @@
  * Pure prolang; exercised by tests/test_history.prl.
  *
  * Snapshots are whole images, stored end to end in one flat array of capacity x width x height
- * ints and used as a ring. The obvious representation — an array of buffers — is not available:
- * `array<array<int>>` does not parse, because prolang lexes `>>` as a single shift token, and
- * `array<SomeStruct>` emits invalid IL. One flat buffer sidesteps both and never reallocates.
+ * ints and used as a ring. The obvious representation — an array of buffers — is still not
+ * available: `array<array<int>>` does not parse, because prolang lexes `>>` as a single shift
+ * token. (`array<SomeStruct>` used to emit invalid IL and was also a reason; that was fixed in
+ * August 2026 and is no longer one.) One flat buffer sidesteps the parse and never reallocates,
+ * which is what a ring wants anyway.
  *
  * Two indices describe the state:
  *

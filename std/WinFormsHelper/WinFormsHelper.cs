@@ -188,6 +188,24 @@ public static partial class WinFormsHelper
         => _controls[id].SetBounds(x, y, Math.Max(0, width), Math.Max(0, height));
 
     /// <summary>
+    /// Sets a window's <em>client</em> size — the area a layout actually gets.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="CreateForm"/> sets the whole window, frame and title bar included, so a form
+    /// created 480 wide has perhaps 464 to draw in. A layout written against the size that was
+    /// asked for then overruns the bottom and right edges by exactly the frame — which looks like
+    /// the last row of a screen having been forgotten rather than like a sizing mistake.
+    /// </remarks>
+    public static void SetClientSize(int formId, int width, int height)
+        => Get<Form>(formId).ClientSize = new Size(Math.Max(0, width), Math.Max(0, height));
+
+    /// <summary>The width of a control's client area — for a form, its size less the frame.</summary>
+    public static int GetClientWidth(int id) => _controls[id].ClientSize.Width;
+
+    /// <summary>The height of a control's client area.</summary>
+    public static int GetClientHeight(int id) => _controls[id].ClientSize.Height;
+
+    /// <summary>
     /// Sets the smallest <em>client</em> area the window may be resized to.
     /// </summary>
     /// <remarks>

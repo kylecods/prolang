@@ -1,0 +1,356 @@
+/*
+ * The PlayStation Portable host.
+ *
+ * ── The point of this file ───────────────────────────────────────────────────
+ *
+ * It is the same size as the Windows Forms host and it shares no code with it, yet a program can
+ * move between them by changing one import. Everything that decides what the interface *is* —
+ * `ui/widget`, `ui/box`, `ui/hit`, `ui/draw`, `ui/font` — is untouched.
+ *
+ * That is the claim the display list was designed to make good on, and this is where it is tested.
+ * The PSP has no windows, no controls, no pointer, no bitmap blit and an 8x8 bitmap font; if the
+ * toolkit had grown any assumption about a desktop, it would surface here rather than being
+ * discovered years later by whoever tried a browser.
+ *
+ * ── Executing the display list in ProLang ────────────────────────────────────
+ *
+ * The Windows Forms host hands the whole buffer to C# in one interop call, because crossing that
+ * boundary hundreds of times a frame is what it costs. There is no boundary here: `psp_fill_rect`
+ * is a compiler built-in that becomes a direct C call, so the loop below stays in ProLang and no
+ * new built-in was needed for any of this.
+ *
+ * ── What the hardware cannot do ──────────────────────────────────────────────
+ *
+ * Three commands are approximated rather than dropped silently, and it is worth knowing which:
+ *
+ *   RRECT      drawn square. The GU has no rounded-rectangle primitive, and a corner faked from
+ *              rectangles at this resolution looks worse than a clean edge.
+ *   LINE       any angle, through `psp_draw_line`; an axis-aligned one thicker than a pixel goes
+ *              through `psp_fill_rect` instead, since the line primitive is one pixel wide.
+ *   IMAGE      skipped. There is no texture path from a ProLang bitmap handle to the GU.
+ *   CLIP_PUSH  ignored. Scissoring is not among the `psp` built-ins.
+ *
+ * ── Pointing without a pointer ───────────────────────────────────────────────
+ *
+ * `ui/hit` is written against a cursor position and a button. The PSP has neither, so the D-pad
+ * drives a cursor drawn on top of the frame and Cross is its button. That reuses the whole
+ * interaction model unchanged instead of inventing focus traversal for one backend — and a
+ * pointer is what a PSP interface with a cursor actually has.
+ */
+
+import "psp"
+import "ui/widget"
+import "ui/box"
+import "ui/hit"
+import "ui/draw"
+import "ui/font"
+import "ui/color"
+
+// The PSP's framebuffer, which is also the whole layout area — there are no windows.
+func hostp_width() : int {
+    return 480
+}
+
+func hostp_height() : int {
+    return 272
+}
+
+/*
+ * Controller bits, from pspctrl.h.
+ *
+ * Declared here rather than taken from the shim because there is no shim: `psp_buttons_held`
+ * returns the hardware's own bitmask.
+ */
+enum PspPad {
+    SELECT = 1,
+    START = 8,
+    UP = 16,
+    RIGHT = 32,
+    DOWN = 64,
+    LEFT = 128,
+    LTRIGGER = 256,
+    RTRIGGER = 512,
+    TRIANGLE = 4096,
+    CIRCLE = 8192,
+    CROSS = 16384,
+    SQUARE = 32768
+}
+
+// The 8x8 bitmap font in prl_psp.h is the only font the hardware has.
+func hostp_glyph_size() : int {
+    return 8
+}
+
+// How many pixels the cursor moves per frame while a direction is held.
+func hostp_cursor_speed() : int {
+    return 4
+}
+
+enum HostpS {
+    RUNNING,
+    CURSOR_X,
+    CURSOR_Y,
+    BUTTON_DOWN
+}
+
+func hostp_state_slots() : int {
+    return 8
+}
+
+/*
+ * A PSP frame's buffers.
+ *
+ * The same shape as the Windows Forms `Host`, minus everything about a window: a display list
+ * allocated once and reused, and the state the cursor needs between frames.
+ */
+struct PspHost {
+    ops: array<int>,
+    st: array<int>
+}
+
+// Initialises the GU and places the cursor in the middle of the screen.
+func hostp_open(maxOps: int = 2048) : PspHost {
+    psp_init()
+
+    let ops: array<int> = array_new(maxOps * dl_stride())
+    let st: array<int> = array_new(hostp_state_slots())
+
+    st[HostpS.RUNNING] = 1
+    st[HostpS.CURSOR_X] = hostp_width() / 2
+    st[HostpS.CURSOR_Y] = hostp_height() / 2
+    st[HostpS.BUTTON_DOWN] = 0
+
+    return PspHost { ops: ops, st: st }
+}
+
+/*
+ * The font table for the hardware font.
+ *
+ * Monospace at 8 pixels, which is exactly what `prl_psp_draw_text` renders — so unlike a desktop
+ * backend, nothing has to be measured. The layout arithmetic above is identical either way; only
+ * the numbers in the table differ.
+ */
+func hostp_fonts() : FontSet {
+    let fonts: FontSet = font_new(1)
+
+    font_set_monospace(fonts, 0, hostp_glyph_size(), hostp_glyph_size(), hostp_glyph_size())
+
+    return fonts
+}
+
+func hostp_running(host: PspHost) : bool {
+    return host.st[HostpS.RUNNING] == 1
+}
+
+func hostp_cursor_x(host: PspHost) : int {
+    return host.st[HostpS.CURSOR_X]
+}
+
+func hostp_cursor_y(host: PspHost) : int {
+    return host.st[HostpS.CURSOR_Y]
+}
+
+/*
+ * Reads the pad and starts the frame.
+ *
+ * Start quits, the D-pad moves the cursor, Cross is the button. The cursor is clamped to the
+ * screen rather than wrapped: a pointer that reappears on the far edge is disorienting, and a
+ * widget at the edge becomes impossible to settle on.
+ */
+func hostp_begin(host: PspHost, ui: Ui) : void {
+    let held: int = psp_buttons_held()
+
+    if ((held & PspPad.START) != 0) {
+        host.st[HostpS.RUNNING] = 0
+    }
+
+    let x: int = host.st[HostpS.CURSOR_X]
+    let y: int = host.st[HostpS.CURSOR_Y]
+    let speed: int = hostp_cursor_speed()
+
+    if ((held & PspPad.LEFT) != 0) {
+        x = x - speed
+    }
+    if ((held & PspPad.RIGHT) != 0) {
+        x = x + speed
+    }
+    if ((held & PspPad.UP) != 0) {
+        y = y - speed
+    }
+    if ((held & PspPad.DOWN) != 0) {
+        y = y + speed
+    }
+
+    if (x < 0) {
+        x = 0
+    }
+    if (y < 0) {
+        y = 0
+    }
+    if (x >= hostp_width()) {
+        x = hostp_width() - 1
+    }
+    if (y >= hostp_height()) {
+        y = hostp_height() - 1
+    }
+
+    host.st[HostpS.CURSOR_X] = x
+    host.st[HostpS.CURSOR_Y] = y
+
+    let down: bool = (held & PspPad.CROSS) != 0
+
+    if (down) {
+        host.st[HostpS.BUTTON_DOWN] = 1
+    } else {
+        host.st[HostpS.BUTTON_DOWN] = 0
+    }
+
+    ui_begin(ui, x, y, down)
+}
+
+/*
+ * Lays out, hit tests, draws, and presents the frame.
+ *
+ * The same four steps in the same order as the Windows Forms host, for the same reasons — hit
+ * testing needs rectangles, and the display list needs to know what is hot before it picks a
+ * colour. Only the last step, executing the list, differs.
+ */
+func hostp_present(host: PspHost, ui: Ui, fonts: FontSet, background: int = 0) : int {
+    return hostp_present_scene(host, ui, fonts, dl_no_scene, ui.st, background)
+}
+
+/*
+ * The same, with a painter for `ui_scene` nodes.
+ *
+ * The painter appends display-list records, so a scene reaches the screen through exactly the same
+ * loop as a button does — and composites in tree order with the rest of the interface rather than
+ * being drawn before or after all of it.
+ */
+func hostp_present_scene(host: PspHost, ui: Ui, fonts: FontSet,
+                         paint: func(array<int>, int, int, int, int, int, int, array<int>) : int,
+                         state: array<int>, background: int = 0) : int {
+    assert(ui_is_balanced(ui), "a container was left open — every ui_col/ui_row/ui_box needs a ui_end")
+
+    let root: int = ui_root(ui)
+
+    if (root < 0) {
+        return 0
+    }
+
+    box_layout(ui, fonts, root, 0, 0, hostp_width(), hostp_height())
+
+    let fired: int = hit_resolve(ui)
+    let count: int = dl_build_scenes(ui, fonts, root, host.ops, paint, state)
+
+    psp_clear(hostp_rgb(background))
+    hostp_execute(host, ui, count)
+    hostp_draw_cursor(host)
+    psp_swap_buffers()
+
+    return fired
+}
+
+/*
+ * Drops the alpha channel.
+ *
+ * The `psp_*` built-ins take 0xRRGGBB and force the alpha opaque themselves — the runtime swaps
+ * red and blue into the hardware's own order. Passing a packed ARGB straight through would put the
+ * alpha byte where red belongs and tint the whole interface.
+ */
+func hostp_rgb(argb: int) : int {
+    return argb & 16777215
+}
+
+// Walks the display list and issues the GU calls for it.
+func hostp_execute(host: PspHost, ui: Ui, count: int) : void {
+    let i: int = 0
+
+    while (i < count) {
+        let op: int = dl_op(host.ops, i)
+
+        if (op == DlOp.RECT || op == DlOp.RRECT) {
+            // A rounded rectangle is drawn square: the GU has no primitive for it, and corners
+            // faked from rectangles look worse at this resolution than a clean edge.
+            psp_fill_rect(dl_arg(host.ops, i, 0), dl_arg(host.ops, i, 1),
+                dl_arg(host.ops, i, 2), dl_arg(host.ops, i, 3),
+                hostp_rgb(dl_arg(host.ops, i, 4)))
+        } elif (op == DlOp.TEXT) {
+            let index: int = dl_arg(host.ops, i, 2)
+
+            if (index >= 0 && index < ui.st[UiS.STR_COUNT]) {
+                psp_draw_text(dl_arg(host.ops, i, 0), dl_arg(host.ops, i, 1),
+                    ui.strs[index], hostp_rgb(dl_arg(host.ops, i, 3)))
+            }
+        } elif (op == DlOp.LINE) {
+            hostp_line(host, i)
+        } elif (op == DlOp.END) {
+            i = count
+        }
+
+        i = i + 1
+    }
+}
+
+/*
+ * A line at any angle.
+ *
+ * An axis-aligned line goes through `psp_fill_rect` because that is the only way to give it a
+ * thickness — `psp_draw_line` is one pixel wide — and a hairline rule asked for at three pixels
+ * would otherwise come out at one. Everything else goes to `psp_draw_line`, which is what makes a
+ * scene painter emitting diagonals work at all.
+ */
+func hostp_line(host: PspHost, at: int) : void {
+    let x1: int = dl_arg(host.ops, at, 0)
+    let y1: int = dl_arg(host.ops, at, 1)
+    let x2: int = dl_arg(host.ops, at, 2)
+    let y2: int = dl_arg(host.ops, at, 3)
+    let colour: int = hostp_rgb(dl_arg(host.ops, at, 4))
+
+    let weight: int = dl_arg(host.ops, at, 5)
+    if (weight < 1) {
+        weight = 1
+    }
+
+    if (y1 == y2 && weight > 1) {
+        let left: int = x1
+        let width: int = x2 - x1
+
+        if (width < 0) {
+            left = x2
+            width = x1 - x2
+        }
+
+        psp_fill_rect(left, y1, width, weight, colour)
+    } elif (x1 == x2 && weight > 1) {
+        let top: int = y1
+        let height: int = y2 - y1
+
+        if (height < 0) {
+            top = y2
+            height = y1 - y2
+        }
+
+        psp_fill_rect(x1, top, weight, height, colour)
+    } else {
+        psp_draw_line(x1, y1, x2, y2, colour)
+    }
+}
+
+/*
+ * Draws the cursor over the finished frame.
+ *
+ * An arrow made of two rectangles rather than a single block, so it reads as pointing at something
+ * — and drawn last, so it is never hidden by the interface it is pointing at.
+ */
+func hostp_draw_cursor(host: PspHost) : void {
+    let x: int = host.st[HostpS.CURSOR_X]
+    let y: int = host.st[HostpS.CURSOR_Y]
+
+    let ink: int = 16777215
+    if (host.st[HostpS.BUTTON_DOWN] == 1) {
+        ink = 16768256
+    }
+
+    psp_fill_rect(x, y, 2, 10, ink)
+    psp_fill_rect(x, y, 10, 2, ink)
+}

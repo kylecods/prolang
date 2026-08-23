@@ -1,4 +1,4 @@
-using System.Collections.Immutable;
+﻿using System.Collections.Immutable;
 using System.Text;
 using ProLang.Intermediate;
 using ProLang.Parse;
@@ -15,6 +15,17 @@ internal sealed class CEmitter
 
     // Collected array element types that need typed array structs
     private readonly HashSet<string> _emittedArrayTypes = new(StringComparer.Ordinal);
+
+    /// <summary>
+    /// Function-pointer typedefs to emit, keyed by the generated name.
+    /// </summary>
+    /// <remarks>
+    /// C has no way to spell a function pointer type inline where a plain type name is wanted —
+    /// the declarator wraps the name being declared — so each distinct signature gets a typedef and
+    /// <see cref="EmitTypeName"/> returns that. Keyed by name so two identical signatures reached
+    /// from different places produce one typedef.
+    /// </remarks>
+    private readonly Dictionary<string, FunctionTypeSymbol> _emittedFunctionTypes = new(StringComparer.Ordinal);
 
     // Labels actually targeted by goto statements — unlisted ones are skipped to avoid C4102 warnings
     private HashSet<string> _referencedLabels = new(StringComparer.Ordinal);
@@ -60,6 +71,18 @@ internal sealed class CEmitter
                 Line($"typedef struct {{ {suffix}* data; int32_t len; }} PrlArray_{suffix};");
         }
         if (_emittedArrayTypes.Any(s => !IsBuiltinArraySuffix(s)))
+            Line();
+
+        // Function-pointer typedefs, so a function value can be spelled as a plain type name.
+        foreach (var (name, type) in _emittedFunctionTypes)
+        {
+            var parameters = type.ParameterTypes.IsEmpty
+                ? "void"
+                : string.Join(", ", type.ParameterTypes.Select(EmitTypeName));
+
+            Line($"typedef {EmitTypeName(type.ReturnType)} (*{name})({parameters});");
+        }
+        if (_emittedFunctionTypes.Count > 0)
             Line();
 
         // Struct forward declarations (so they can reference each other)
@@ -168,14 +191,14 @@ internal sealed class CEmitter
         foreach (var s in _program.StructTypes)
         {
             foreach (var f in s.Fields)
-                NoteArrayType(f.Type);
+                NoteType(f.Type);
         }
 
         // From function parameters and bodies
         foreach (var (func, body) in _program.Functions)
         {
             foreach (var p in func.Parameters)
-                NoteArrayType(p.Type);
+                NoteType(p.Type);
             NoteReturnType(func.Type);
             CollectFromBlock(body);
         }
@@ -193,7 +216,7 @@ internal sealed class CEmitter
         {
             case BoundNodeKind.VariableDeclaration:
                 var vd = (BoundVariableDeclaration)stmt;
-                NoteArrayType(vd.Variable.Type);
+                NoteType(vd.Variable.Type);
                 CollectFromExpression(vd.Initializer);
                 break;
             case BoundNodeKind.ExpressionStatement:
@@ -211,7 +234,7 @@ internal sealed class CEmitter
 
     private void CollectFromExpression(BoundExpression expr)
     {
-        NoteArrayType(expr.Type);
+        NoteType(expr.Type);
         switch (expr.Kind)
         {
             case BoundNodeKind.BoundArrayNewExpression:
@@ -227,6 +250,13 @@ internal sealed class CEmitter
                 break;
             case BoundNodeKind.BoundCallExpression:
                 foreach (var a in ((BoundCallExpression)expr).Arguments)
+                    CollectFromExpression(a);
+                break;
+            case BoundNodeKind.BoundIndirectCallExpression:
+                var indirect = (BoundIndirectCallExpression)expr;
+                NoteType(indirect.FunctionType);
+                CollectFromExpression(indirect.Target);
+                foreach (var a in indirect.Arguments)
                     CollectFromExpression(a);
                 break;
             case BoundNodeKind.BoundAssignmentExpression:
@@ -264,6 +294,28 @@ internal sealed class CEmitter
         }
     }
 
+    /// <summary>
+    /// Records any type that needs a typedef emitted ahead of the code using it.
+    /// </summary>
+    private void NoteType(TypeSymbol type)
+    {
+        if (type is FunctionTypeSymbol functionType)
+        {
+            // Note the signature's own types too: `func(array<int>)` needs the array typedef as
+            // much as a parameter of that type would.
+            foreach (var parameterType in functionType.ParameterTypes)
+            {
+                NoteType(parameterType);
+            }
+
+            NoteType(functionType.ReturnType);
+            _emittedFunctionTypes[FunctionTypeName(functionType)] = functionType;
+            return;
+        }
+
+        NoteArrayType(type);
+    }
+
     private void NoteArrayType(TypeSymbol type)
     {
         if (type.Name != "array" || type.TypeArguments.IsEmpty)
@@ -274,7 +326,18 @@ internal sealed class CEmitter
         _emittedArrayTypes.Add(suffix);
     }
 
-    private void NoteReturnType(TypeSymbol type) => NoteArrayType(type);
+    private void NoteReturnType(TypeSymbol type) => NoteType(type);
+
+    /// <summary>
+    /// The typedef name for a function type, derived from its signature so that two identical
+    /// signatures collapse onto one typedef.
+    /// </summary>
+    private string FunctionTypeName(FunctionTypeSymbol type)
+    {
+        var parts = type.ParameterTypes.Select(EmitTypeName).Append(EmitTypeName(type.ReturnType));
+
+        return "PrlFn_" + string.Join("_", parts).Replace("*", "p").Replace(" ", "");
+    }
 
     // ── Struct / enum emission ───────────────────────────────────────────────
 
@@ -640,6 +703,13 @@ internal sealed class CEmitter
             case BoundNodeKind.BoundCallExpression:
                 EmitCallExpression((BoundCallExpression)expr, targetType);
                 break;
+            case BoundNodeKind.BoundFunctionReference:
+                // A function's name decays to a pointer to it, so there is no `&` to write.
+                _sb.Append(SanitizeName(((BoundFunctionReference)expr).Function.Name));
+                break;
+            case BoundNodeKind.BoundIndirectCallExpression:
+                EmitIndirectCallExpression((BoundIndirectCallExpression)expr);
+                break;
             case BoundNodeKind.BoundArrayNewExpression:
                 EmitArrayNew((BoundArrayNewExpression)expr);
                 break;
@@ -891,6 +961,13 @@ internal sealed class CEmitter
             EmitExpression(args[1]); _sb.Append(")");
             return;
         }
+        if (ReferenceEquals(fn, BuiltInFunctions.StringCharCode))
+        {
+            _sb.Append("prl_string_char_code(");
+            EmitExpression(args[0]); _sb.Append(", ");
+            EmitExpression(args[1]); _sb.Append(")");
+            return;
+        }
         if (ReferenceEquals(fn, BuiltInFunctions.StringSubstring))
         {
             _sb.Append("prl_string_substring(");
@@ -916,6 +993,7 @@ internal sealed class CEmitter
         if (ReferenceEquals(fn, BuiltInFunctions.ConsoleKeyAvailable)) { _sb.Append("prl_console_key_available()"); return; }
         if (ReferenceEquals(fn, BuiltInFunctions.ConsoleReadKey)) { _sb.Append("prl_console_read_key()"); return; }
         if (ReferenceEquals(fn, BuiltInFunctions.ThreadSleep)) { _sb.Append("prl_thread_sleep("); EmitExpression(args[0]); _sb.Append(")"); return; }
+        if (ReferenceEquals(fn, BuiltInFunctions.TimeMillis)) { _sb.Append("prl_time_millis()"); return; }
 
         // assert — named prl_assert rather than assert so it cannot collide with the macro in
         // C's <assert.h>, which a translation unit including it would otherwise expand.
@@ -936,6 +1014,7 @@ internal sealed class CEmitter
         if (ReferenceEquals(fn, BuiltInFunctions.PspVsync))       { _sb.Append("prl_psp_vsync()"); return; }
         if (ReferenceEquals(fn, BuiltInFunctions.PspButtonsHeld)) { _sb.Append("prl_psp_buttons_held()"); return; }
         if (ReferenceEquals(fn, BuiltInFunctions.PspButtonPressed)) { _sb.Append("prl_psp_button_pressed("); EmitExpression(args[0]); _sb.Append(")"); return; }
+        if (ReferenceEquals(fn, BuiltInFunctions.PspDrawLine))    { _sb.Append("prl_psp_draw_line("); for (int i=0;i<5;i++){ if(i>0)_sb.Append(", "); EmitExpression(args[i]); } _sb.Append(")"); return; }
 
         // User-defined function call
         _sb.Append($"{SanitizeName(fn.Name)}(");
@@ -1037,8 +1116,39 @@ internal sealed class CEmitter
 
     // ── Type name helpers ────────────────────────────────────────────────────
 
+    /// <summary>
+    /// Emits a call through a function pointer.
+    /// </summary>
+    /// <remarks>
+    /// The target is parenthesised because it may be any expression — a field of a struct, say —
+    /// and <c>a.b(c)</c> would otherwise read as a call to a member rather than through one.
+    /// </remarks>
+    private void EmitIndirectCallExpression(BoundIndirectCallExpression expr)
+    {
+        _sb.Append('(');
+        EmitExpression(expr.Target);
+        _sb.Append(")(");
+
+        for (int i = 0; i < expr.Arguments.Length; i++)
+        {
+            if (i > 0)
+            {
+                _sb.Append(", ");
+            }
+
+            EmitExpression(expr.Arguments[i], expr.FunctionType.ParameterTypes[i]);
+        }
+
+        _sb.Append(')');
+    }
+
     private string EmitTypeName(TypeSymbol type)
     {
+        if (type is FunctionTypeSymbol functionType)
+        {
+            return FunctionTypeName(functionType);
+        }
+
         if (type.Name == "array")
         {
             var elem = type.TypeArguments.Length > 0 ? type.TypeArguments[0] : TypeSymbol.Int;

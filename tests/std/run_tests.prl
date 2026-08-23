@@ -32,6 +32,13 @@ import "test_view.prl"
 import "test_theme.prl"
 import "test_icons.prl"
 import "test_layout.prl"
+import "test_font.prl"
+import "test_widget.prl"
+import "test_box.prl"
+import "test_hit.prl"
+import "test_draw.prl"
+import "test_scene.prl"
+import "test_fps.prl"
 
 func main()
 {
@@ -53,6 +60,13 @@ func main()
     total = t_merge(total, test_theme_run(), "ui/theme")
     total = t_merge(total, test_icons_run(), "ui/icons")
     total = t_merge(total, test_layout_run(), "ui/layout")
+    total = t_merge(total, test_font_run(), "ui/font")
+    total = t_merge(total, test_widget_run(), "ui/widget")
+    total = t_merge(total, test_box_run(), "ui/box")
+    total = t_merge(total, test_hit_run(), "ui/hit")
+    total = t_merge(total, test_draw_run(), "ui/draw")
+    total = t_merge(total, test_scene_run(), "ui/scene")
+    total = t_merge(total, test_fps_run(), "ui/fps")
 
     t_report(total)
 }

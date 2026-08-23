@@ -247,6 +247,57 @@ static void prl_psp_fill_rect(INT32 x, INT32 y, INT32 w, INT32 h, INT32 color) {
     sceGuDrawArray(GU_SPRITES, PRL_PSP_VTYPE, 2, NULL, v);
 }
 
+/* Draw a 1-pixel-wide line between two points. Uses a thin GU_SPRITE because
+   GU_LINES is unreliable in 2D transform mode on the GE. The single-pixel
+   rectangle is computed from the dominant axis so the line is gapless. */
+static void prl_psp_draw_line(INT32 x1, INT32 y1, INT32 x2, INT32 y2, INT32 color) {
+    prl_psp_start_frame();
+    UINT32 c = prl_psp_color(color);
+
+    int dx = (int)(x2 - x1);
+    int dy = (int)(y2 - y1);
+    /* Dominant-axis line: draw as a series of 1-pixel rectangles.
+       This is a Bresenham midpoint walk collapsed to per-pixel GU_SPRITES
+       calls; short enough edges are common for a wireframe cube so the
+       pixel count is low. */
+    int adx = dx < 0 ? -dx : dx;
+    int ady = dy < 0 ? -dy : dy;
+    if (adx < 1 && ady < 1) {
+        /* Single point — draw a 1x1 pixel. */
+        PrlPspVertex *v = prl_psp_valloc(2);
+        v[0].color = c; v[0].x = (float)x1; v[0].y = (float)y1; v[0].z = 0.0f;
+        v[1].color = c; v[1].x = (float)(x1 + 1); v[1].y = (float)(y1 + 1); v[1].z = 0.0f;
+        sceGuDrawArray(GU_SPRITES, PRL_PSP_VTYPE, 2, NULL, v);
+        return;
+    }
+
+    int sx = dx > 0 ? 1 : -1;
+    int sy = dy > 0 ? 1 : -1;
+    int n = adx > ady ? adx : ady;
+    if (n > PRL_PSP_VPOOL_VERTS / 2) n = PRL_PSP_VPOOL_VERTS / 2;
+
+    PrlPspVertex *v = prl_psp_valloc(n * 2);
+    int i = 0, plotted = 0;
+    int x = (int)x1, y = (int)y1;
+    int err = adx - ady;
+
+    while (plotted < n) {
+        v[0].color = c; v[0].x = (float)x;     v[0].y = (float)y;     v[0].z = 0.0f;
+        v[1].color = c; v[1].x = (float)(x+1); v[1].y = (float)(y+1); v[1].z = 0.0f;
+        v += 2; plotted++;
+
+        if (x == (int)x2 && y == (int)y2) break;
+
+        int e2 = err * 2;
+        if (e2 > -ady) { err -= ady; x += sx; }
+        if (e2 <  adx) { err += adx; y += sy; }
+    }
+
+    if (plotted > 0)
+        sceGuDrawArray(GU_SPRITES, PRL_PSP_VTYPE, plotted * 2, NULL,
+            v - plotted * 2);
+}
+
 /* Number of horizontal runs of set pixels in one glyph row (max 4). */
 static int prl_psp_row_spans(unsigned char bits) {
     int n = 0, col = 0;
