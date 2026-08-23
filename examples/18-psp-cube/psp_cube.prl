@@ -1,0 +1,562 @@
+/*
+ * PSP rotating cube with UI controls.
+ *
+ * A wireframe cube rendered with psp_draw_line in the centre of the screen,
+ * with the widget toolkit providing rotation buttons at the bottom.
+ *
+ * D-pad moves the cursor, Cross clicks a button, Start quits.
+ * D-pad also rotates X/Y directly; L/R triggers rotate Z.
+ *
+ * Build with:
+ *     prolang examples/18-psp-cube/psp_cube.prl --emit-psp
+ *     make -f Makefile.psp
+ */
+
+import "psp"
+import "ui/host_psp"
+import "ui/theme"
+import "ui/box"
+import "ui/hit"
+import "ui/draw"
+
+// ── Actions for the UI buttons ───────────────────────────────────────────────
+enum CubeAct {
+    NONE,
+    ROT_XP,
+    ROT_XM,
+    ROT_YP,
+    ROT_YM,
+    ROT_ZP,
+    ROT_ZM,
+    RESET
+}
+
+// ── Sine lookup table ────────────────────────────────────────────────────────
+// 256 entries covering 0..2pi, scaled by 4096 so sin(90deg) = 4096.
+
+func sin_table() : array<int> {
+    let t: array<int> = array_new(256)
+    t[0] = 0
+    t[1] = 101
+    t[2] = 201
+    t[3] = 301
+    t[4] = 401
+    t[5] = 501
+    t[6] = 601
+    t[7] = 700
+    t[8] = 799
+    t[9] = 897
+    t[10] = 995
+    t[11] = 1092
+    t[12] = 1189
+    t[13] = 1285
+    t[14] = 1380
+    t[15] = 1474
+    t[16] = 1567
+    t[17] = 1660
+    t[18] = 1751
+    t[19] = 1842
+    t[20] = 1931
+    t[21] = 2019
+    t[22] = 2106
+    t[23] = 2191
+    t[24] = 2276
+    t[25] = 2359
+    t[26] = 2440
+    t[27] = 2520
+    t[28] = 2598
+    t[29] = 2675
+    t[30] = 2751
+    t[31] = 2824
+    t[32] = 2896
+    t[33] = 2967
+    t[34] = 3035
+    t[35] = 3102
+    t[36] = 3166
+    t[37] = 3229
+    t[38] = 3290
+    t[39] = 3349
+    t[40] = 3406
+    t[41] = 3461
+    t[42] = 3513
+    t[43] = 3564
+    t[44] = 3612
+    t[45] = 3659
+    t[46] = 3703
+    t[47] = 3745
+    t[48] = 3784
+    t[49] = 3822
+    t[50] = 3857
+    t[51] = 3889
+    t[52] = 3920
+    t[53] = 3948
+    t[54] = 3973
+    t[55] = 3996
+    t[56] = 4017
+    t[57] = 4036
+    t[58] = 4052
+    t[59] = 4065
+    t[60] = 4076
+    t[61] = 4085
+    t[62] = 4091
+    t[63] = 4095
+    t[64] = 4096
+    t[65] = 4095
+    t[66] = 4091
+    t[67] = 4085
+    t[68] = 4076
+    t[69] = 4065
+    t[70] = 4052
+    t[71] = 4036
+    t[72] = 4017
+    t[73] = 3996
+    t[74] = 3973
+    t[75] = 3948
+    t[76] = 3920
+    t[77] = 3889
+    t[78] = 3857
+    t[79] = 3822
+    t[80] = 3784
+    t[81] = 3745
+    t[82] = 3703
+    t[83] = 3659
+    t[84] = 3612
+    t[85] = 3564
+    t[86] = 3513
+    t[87] = 3461
+    t[88] = 3406
+    t[89] = 3349
+    t[90] = 3290
+    t[91] = 3229
+    t[92] = 3166
+    t[93] = 3102
+    t[94] = 3035
+    t[95] = 2967
+    t[96] = 2896
+    t[97] = 2824
+    t[98] = 2751
+    t[99] = 2675
+    t[100] = 2598
+    t[101] = 2520
+    t[102] = 2440
+    t[103] = 2359
+    t[104] = 2276
+    t[105] = 2191
+    t[106] = 2106
+    t[107] = 2019
+    t[108] = 1931
+    t[109] = 1842
+    t[110] = 1751
+    t[111] = 1660
+    t[112] = 1567
+    t[113] = 1474
+    t[114] = 1380
+    t[115] = 1285
+    t[116] = 1189
+    t[117] = 1092
+    t[118] = 995
+    t[119] = 897
+    t[120] = 799
+    t[121] = 700
+    t[122] = 601
+    t[123] = 501
+    t[124] = 401
+    t[125] = 301
+    t[126] = 201
+    t[127] = 101
+    t[128] = 0
+    t[129] = -101
+    t[130] = -201
+    t[131] = -301
+    t[132] = -401
+    t[133] = -501
+    t[134] = -601
+    t[135] = -700
+    t[136] = -799
+    t[137] = -897
+    t[138] = -995
+    t[139] = -1092
+    t[140] = -1189
+    t[141] = -1285
+    t[142] = -1380
+    t[143] = -1474
+    t[144] = -1567
+    t[145] = -1660
+    t[146] = -1751
+    t[147] = -1842
+    t[148] = -1931
+    t[149] = -2019
+    t[150] = -2106
+    t[151] = -2191
+    t[152] = -2276
+    t[153] = -2359
+    t[154] = -2440
+    t[155] = -2520
+    t[156] = -2598
+    t[157] = -2675
+    t[158] = -2751
+    t[159] = -2824
+    t[160] = -2896
+    t[161] = -2967
+    t[162] = -3035
+    t[163] = -3102
+    t[164] = -3166
+    t[165] = -3229
+    t[166] = -3290
+    t[167] = -3349
+    t[168] = -3406
+    t[169] = -3461
+    t[170] = -3513
+    t[171] = -3564
+    t[172] = -3612
+    t[173] = -3659
+    t[174] = -3703
+    t[175] = -3745
+    t[176] = -3784
+    t[177] = -3822
+    t[178] = -3857
+    t[179] = -3889
+    t[180] = -3920
+    t[181] = -3948
+    t[182] = -3973
+    t[183] = -3996
+    t[184] = -4017
+    t[185] = -4036
+    t[186] = -4052
+    t[187] = -4065
+    t[188] = -4076
+    t[189] = -4085
+    t[190] = -4091
+    t[191] = -4095
+    t[192] = -4096
+    t[193] = -4095
+    t[194] = -4091
+    t[195] = -4085
+    t[196] = -4076
+    t[197] = -4065
+    t[198] = -4052
+    t[199] = -4036
+    t[200] = -4017
+    t[201] = -3996
+    t[202] = -3973
+    t[203] = -3948
+    t[204] = -3920
+    t[205] = -3889
+    t[206] = -3857
+    t[207] = -3822
+    t[208] = -3784
+    t[209] = -3745
+    t[210] = -3703
+    t[211] = -3659
+    t[212] = -3612
+    t[213] = -3564
+    t[214] = -3513
+    t[215] = -3461
+    t[216] = -3406
+    t[217] = -3349
+    t[218] = -3290
+    t[219] = -3229
+    t[220] = -3166
+    t[221] = -3102
+    t[222] = -3035
+    t[223] = -2967
+    t[224] = -2896
+    t[225] = -2824
+    t[226] = -2751
+    t[227] = -2675
+    t[228] = -2598
+    t[229] = -2520
+    t[230] = -2440
+    t[231] = -2359
+    t[232] = -2276
+    t[233] = -2191
+    t[234] = -2106
+    t[235] = -2019
+    t[236] = -1931
+    t[237] = -1842
+    t[238] = -1751
+    t[239] = -1660
+    t[240] = -1567
+    t[241] = -1474
+    t[242] = -1380
+    t[243] = -1285
+    t[244] = -1189
+    t[245] = -1092
+    t[246] = -995
+    t[247] = -897
+    t[248] = -799
+    t[249] = -700
+    t[250] = -601
+    t[251] = -501
+    t[252] = -401
+    t[253] = -301
+    t[254] = -201
+    t[255] = -101
+    return t
+}
+
+// ── Fixed-point math ─────────────────────────────────────────────────────────
+// Scale factor: 12 fractional bits (values divided by 4096 after multiply).
+
+func fp_mul(a: int, b: int) : int {
+    return (a * b) / 4096
+}
+
+// ── Sine/cosine lookup ───────────────────────────────────────────────────────
+// angle a is in [0, 255], mapping to 0..2pi.
+// 4096 = sin(90deg).
+
+func cube_sin(sinTbl: array<int>, a: int) : int {
+    return sinTbl[a & 255]
+}
+
+func cube_cos(sinTbl: array<int>, a: int) : int {
+    return cube_sin(sinTbl, a + 64)
+}
+
+// ── Rotation and projection ──────────────────────────────────────────────────
+// A vertex slot holds (x, y). We project all 8 vertices once, then draw edges
+// between the projected positions.
+
+func project_vertices(sinTbl: array<int>, out: array<int>,
+                      angX: int, angY: int, angZ: int,
+                      cx: int, cy: int, scale: int, dist: int) : void {
+    let cosY: int = cube_cos(sinTbl, angY)
+    let sinY: int = cube_sin(sinTbl, angY)
+    let cosX: int = cube_cos(sinTbl, angX)
+    let sinX: int = cube_sin(sinTbl, angX)
+    let cosZ: int = cube_cos(sinTbl, angZ)
+    let sinZ: int = cube_sin(sinTbl, angZ)
+
+    let i: int = 0
+    while (i < 8) {
+        // Unit cube vertex
+        let vx: int = 0 - 1
+        let vy: int = 0 - 1
+        let vz: int = 0 - 1
+
+        if (i == 0)      { vx = -1  vy = -1  vz = -1 }
+        elif (i == 1)    { vx = -1  vy = -1  vz =  1 }
+        elif (i == 2)    { vx = -1  vy =  1  vz = -1 }
+        elif (i == 3)    { vx = -1  vy =  1  vz =  1 }
+        elif (i == 4)    { vx =  1  vy = -1  vz = -1 }
+        elif (i == 5)    { vx =  1  vy = -1  vz =  1 }
+        elif (i == 6)    { vx =  1  vy =  1  vz = -1 }
+        elif (i == 7)    { vx =  1  vy =  1  vz =  1 }
+
+        // Rotate around Y
+        let rx: int  = fp_mul(vx, cosY) + fp_mul(vz, sinY)
+        let rz: int  = fp_mul(vx, 0 - sinY) + fp_mul(vz, cosY)
+
+        // Rotate around X
+        let ry: int  = fp_mul(vy, cosX) - fp_mul(rz, sinX)
+        let rz2: int = fp_mul(vy, sinX) + fp_mul(rz, cosX)
+
+        // Rotate around Z
+        let rx2: int = fp_mul(rx, cosZ) - fp_mul(ry, sinZ)
+        let ry2: int = fp_mul(rx, sinZ) + fp_mul(ry, cosZ)
+
+        // Perspective projection
+        let d: int = rz2 + dist
+        if (d < 1) {
+            d = 1
+        }
+
+        let sx: int = cx + ((rx2 * scale) / d)
+        let sy: int = cy - ((ry2 * scale) / d)
+
+        out[i * 2] = sx
+        out[i * 2 + 1] = sy
+
+        i = i + 1
+    }
+}
+
+// ── Drawing ──────────────────────────────────────────────────────────────────
+
+func draw_cube(proj: array<int>, color: int) : void {
+    let e: int = 0
+    while (e < 12) {
+        let v0: int = 0
+        let v1: int = 0
+
+        // 12 edges of a cube: front face (4), back face (4), connecting (4)
+        if (e == 0)      { v0 = 0  v1 = 1 }
+        elif (e == 1)    { v0 = 1  v1 = 3 }
+        elif (e == 2)    { v0 = 3  v1 = 2 }
+        elif (e == 3)    { v0 = 2  v1 = 0 }
+        elif (e == 4)    { v0 = 4  v1 = 5 }
+        elif (e == 5)    { v0 = 5  v1 = 7 }
+        elif (e == 6)    { v0 = 7  v1 = 6 }
+        elif (e == 7)    { v0 = 6  v1 = 4 }
+        elif (e == 8)    { v0 = 0  v1 = 4 }
+        elif (e == 9)    { v0 = 1  v1 = 5 }
+        elif (e == 10)   { v0 = 2  v1 = 6 }
+        elif (e == 11)   { v0 = 3  v1 = 7 }
+
+        let x1: int = proj[v0 * 2]
+        let y1: int = proj[v0 * 2 + 1]
+        let x2: int = proj[v1 * 2]
+        let y2: int = proj[v1 * 2 + 1]
+
+        psp_draw_line(x1, y1, x2, y2, color)
+        e = e + 1
+    }
+}
+
+// ── Angle helpers ────────────────────────────────────────────────────────────
+
+func angle_wrap(a: int) : int {
+    let r: int = a % 256
+    if (r < 0) {
+        return r + 256
+    }
+    return r
+}
+
+func angle_step_size() : int {
+    return 4
+}
+
+// ── Main ─────────────────────────────────────────────────────────────────────
+
+func main() {
+    let sinTbl: array<int> = sin_table()
+    let proj: array<int> = array_new(16)
+
+    // Mutable angle state in single-element arrays so they survive copies.
+    let angX: array<int> = array_new(1)
+    let angY: array<int> = array_new(1)
+    let angZ: array<int> = array_new(1)
+
+    angX[0] = 30
+    angY[0] = 40
+    angZ[0] = 0
+
+    let theme: int = Theme.MIDNIGHT
+
+    let host: PspHost = hostp_open(512)
+    let fonts: FontSet = hostp_fonts()
+    let ui: Ui = ui_new(256)
+
+    let cx: int = hostp_width() / 2
+    let cy: int = (hostp_height() / 2) - 12
+    let projScale: int = 800
+    let projDist: int = 14
+
+    while (hostp_running(host)) {
+        hostp_begin(host, ui)
+
+        // Direct D-pad / L/R input for continuous rotation
+        let held: int = psp_buttons_held()
+        let step: int = angle_step_size()
+
+        if ((held & PspPad.LEFT) != 0) {
+            angY[0] = angY[0] - step
+        }
+        if ((held & PspPad.RIGHT) != 0) {
+            angY[0] = angY[0] + step
+        }
+        if ((held & PspPad.UP) != 0) {
+            angX[0] = angX[0] - step
+        }
+        if ((held & PspPad.DOWN) != 0) {
+            angX[0] = angX[0] + step
+        }
+        if ((held & PspPad.LTRIGGER) != 0) {
+            angZ[0] = angZ[0] - step
+        }
+        if ((held & PspPad.RTRIGGER) != 0) {
+            angZ[0] = angZ[0] + step
+        }
+
+        angX[0] = angle_wrap(angX[0])
+        angY[0] = angle_wrap(angY[0])
+        angZ[0] = angle_wrap(angZ[0])
+
+        // ── Build UI tree ──────────────────────────────────────────────
+        ui_col(ui, pad: 6, gap: 4)
+
+            ui_text(ui, "X:" + angX[0] + "  Y:" + angY[0] + "  Z:" + angZ[0],
+                fg: theme_text_dim(theme))
+
+            ui_spacer(ui, flex: 1)
+
+            // Row 1: X and Y rotation
+            ui_row(ui, gap: 4)
+                cube_btn(ui, "X-", CubeAct.ROT_XM, theme)
+                cube_btn(ui, "X+", CubeAct.ROT_XP, theme)
+                cube_btn(ui, "Y-", CubeAct.ROT_YM, theme)
+                cube_btn(ui, "Y+", CubeAct.ROT_YP, theme)
+            ui_end(ui)
+
+            // Row 2: Z rotation and reset
+            ui_row(ui, gap: 4)
+                cube_btn(ui, "Z-", CubeAct.ROT_ZM, theme)
+                cube_btn(ui, "Z+", CubeAct.ROT_ZP, theme)
+                ui_spacer(ui, flex: 1)
+                cube_btn(ui, "Reset", CubeAct.RESET, theme)
+            ui_end(ui)
+
+            ui_text(ui, "D-pad X/Y  |  L/R Z  |  Start quits",
+                fg: theme_text_dim(theme))
+
+        ui_end(ui)
+
+        // ── Layout, hit test, build display list ──────────────────────
+        let root: int = ui_root(ui)
+        let fired: int = 0
+
+        if (root >= 0) {
+            box_layout(ui, fonts, root, 0, 0, hostp_width(), hostp_height())
+            fired = hit_resolve(ui)
+        }
+
+        // ── Custom rendering: cube behind UI ──────────────────────────
+        psp_clear(hostp_rgb(theme_background(theme)))
+
+        project_vertices(sinTbl, proj, angX[0], angY[0], angZ[0],
+            cx, cy, projScale, projDist)
+
+        draw_cube(proj, theme_accent(theme))
+
+        // Draw UI on top
+        if (root >= 0) {
+            let count: int = dl_build(ui, fonts, root, host.ops)
+            hostp_execute(host, ui, count)
+        }
+
+        hostp_draw_cursor(host)
+        psp_swap_buffers()
+
+        // ── Handle button clicks ──────────────────────────────────────
+        if (fired == CubeAct.ROT_XP) {
+            angX[0] = angle_wrap(angX[0] + step)
+        } elif (fired == CubeAct.ROT_XM) {
+            angX[0] = angle_wrap(angX[0] - step)
+        } elif (fired == CubeAct.ROT_YP) {
+            angY[0] = angle_wrap(angY[0] + step)
+        } elif (fired == CubeAct.ROT_YM) {
+            angY[0] = angle_wrap(angY[0] - step)
+        } elif (fired == CubeAct.ROT_ZP) {
+            angZ[0] = angle_wrap(angZ[0] + step)
+        } elif (fired == CubeAct.ROT_ZM) {
+            angZ[0] = angle_wrap(angZ[0] - step)
+        } elif (fired == CubeAct.RESET) {
+            angX[0] = 0
+            angY[0] = 0
+            angZ[0] = 0
+        }
+    }
+}
+
+// ── Button component ─────────────────────────────────────────────────────────
+
+func cube_btn(ui: Ui, label: string, action: int, theme: int) : int {
+    return ui_button(ui, label,
+        action: action,
+        bg: theme_surface(theme),
+        fg: theme_text(theme),
+        radius: 4,
+        pad: 5)
+}

@@ -151,5 +151,14 @@ internal static class BuiltInFunctions
     public static readonly FunctionSymbol PspButtonPressed = new("psp_button_pressed",
         ImmutableArray.Create(new ParameterSymbol("button", TypeSymbol.Int, 0)), TypeSymbol.Bool);
 
+    public static readonly FunctionSymbol PspDrawLine = new("psp_draw_line",
+        ImmutableArray.Create(
+            new ParameterSymbol("x1", TypeSymbol.Int, 0),
+            new ParameterSymbol("y1", TypeSymbol.Int, 1),
+            new ParameterSymbol("x2", TypeSymbol.Int, 2),
+            new ParameterSymbol("y2", TypeSymbol.Int, 3),
+            new ParameterSymbol("color", TypeSymbol.Int, 4)),
+        TypeSymbol.Void);
+
     internal static IEnumerable<FunctionSymbol> GetAll() => BuiltInModule.GetAllFunctions();
 }

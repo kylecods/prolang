@@ -1,4 +1,4 @@
-﻿using System.Collections.Immutable;
+using System.Collections.Immutable;
 using System.Text;
 using ProLang.Intermediate;
 using ProLang.Parse;
@@ -1013,6 +1013,7 @@ internal sealed class CEmitter
         if (ReferenceEquals(fn, BuiltInFunctions.PspVsync))       { _sb.Append("prl_psp_vsync()"); return; }
         if (ReferenceEquals(fn, BuiltInFunctions.PspButtonsHeld)) { _sb.Append("prl_psp_buttons_held()"); return; }
         if (ReferenceEquals(fn, BuiltInFunctions.PspButtonPressed)) { _sb.Append("prl_psp_button_pressed("); EmitExpression(args[0]); _sb.Append(")"); return; }
+        if (ReferenceEquals(fn, BuiltInFunctions.PspDrawLine))    { _sb.Append("prl_psp_draw_line("); for (int i=0;i<5;i++){ if(i>0)_sb.Append(", "); EmitExpression(args[i]); } _sb.Append(")"); return; }
 
         // User-defined function call
         _sb.Append($"{SanitizeName(fn.Name)}(");
