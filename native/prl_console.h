@@ -14,6 +14,17 @@
 #include "prl_psp.h"
 
 static inline void prl_thread_sleep(INT32 ms) { sceKernelDelayThread(ms * 1000); }
+
+/*
+ * Milliseconds from the system clock, which counts microseconds since boot in a 32-bit register.
+ *
+ * That register wraps every 71 minutes on its own, and dividing by 1000 first keeps the
+ * millisecond value inside a signed int for the full period between wraps. Callers subtract two
+ * readings, and two's-complement subtraction survives the wrap.
+ */
+static inline INT32 prl_time_millis(void) {
+    return (INT32)(sceKernelGetSystemTimeLow() / 1000u);
+}
 static inline bool prl_console_key_available(void) { return false; }
 static inline INT32 prl_console_read_key(void) { return -1; }
 static inline void prl_console_hide_cursor(void) {}
@@ -39,6 +50,20 @@ static inline void prl_console_write(PrlString s) {
 #  include <conio.h>
 
 static inline void prl_thread_sleep(INT32 ms) { Sleep((DWORD)ms); }
+
+/*
+ * Milliseconds from the performance counter rather than from GetTickCount.
+ *
+ * GetTickCount advances in steps of about fifteen milliseconds, which is most of a frame at sixty
+ * per second: a frame-rate counter built on it reports a handful of fixed values instead of a
+ * measurement. The performance counter is monotonic and fine-grained.
+ */
+static inline INT32 prl_time_millis(void) {
+    LARGE_INTEGER freq, now;
+    if (!QueryPerformanceFrequency(&freq) || freq.QuadPart == 0) return (INT32)GetTickCount();
+    QueryPerformanceCounter(&now);
+    return (INT32)((now.QuadPart * 1000LL) / freq.QuadPart);
+}
 static inline bool prl_console_key_available(void) { return _kbhit()!=0; }
 
 static inline INT32 prl_console_read_key(void) {
@@ -89,8 +114,19 @@ static inline void prl_console_write(PrlString s) {
 #  include <termios.h>
 #  include <sys/select.h>
 #  include <sys/time.h>
+#  include <time.h>
 
 static inline void prl_thread_sleep(INT32 ms) { usleep((suseconds_t)ms*1000u); }
+
+/*
+ * Milliseconds from the monotonic clock, so that an interval can never come out negative because
+ * the wall clock was adjusted underneath it.
+ */
+static inline INT32 prl_time_millis(void) {
+    struct timespec ts;
+    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) return 0;
+    return (INT32)(((INT64)ts.tv_sec * 1000) + (ts.tv_nsec / 1000000));
+}
 
 static inline bool prl_console_key_available(void) {
     if (!isatty(STDIN_FILENO)) return false;

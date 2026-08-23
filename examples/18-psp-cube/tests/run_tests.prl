@@ -1,0 +1,280 @@
+/*
+ * The cube's own test suite.
+ *
+ * `cube.prl` names no platform and draws nothing — it only appends display-list records — so all of
+ * it can be tested here, with no window, no PSP, and no graphics of any kind.
+ *
+ * The check that matters most is `all eight corners are not the same point`. That is exactly what
+ * went wrong the first time: the cube was built from vertices at plus or minus 1 rather than plus
+ * or minus one *fixed-point unit*, so every product in the rotation truncated to zero under integer
+ * division, all eight corners projected to the centre of the screen, and the twelve edges became
+ * twelve zero-length lines. Nothing failed and nothing was reported — the cube simply was not
+ * there. A test that only asked "does it emit twelve records" would have passed.
+ *
+ * Run with:
+ *     prolang examples/18-psp-cube/tests/run_tests.prl -o bin/cube-tests.dll
+ *     dotnet bin/cube-tests.dll
+ */
+
+import "io"
+import "util"
+import "testing"
+import "ui/draw"
+import "../cube.prl"
+
+func main()
+{
+    print("cube tests")
+    print("")
+
+    let total: TestRun = t_new()
+
+    total = t_merge(total, test_cube_trig(), "trigonometry")
+    total = t_merge(total, test_cube_projection(), "projection")
+    total = t_merge(total, test_cube_painter(), "painter")
+
+    t_report(total)
+}
+
+// ── Trigonometry ─────────────────────────────────────────────────────────────
+
+func test_cube_trig() : TestRun {
+    let run: TestRun = t_new()
+    let state: array<int> = cube_state_new()
+
+    // The quadrants, reflected out of the sixty-five values actually stored.
+    run = t_eq_int(run, "sin 0", cube_sin(state, 0), 0)
+    run = t_eq_int(run, "sin quarter turn", cube_sin(state, 64), cube_one())
+    run = t_eq_int(run, "sin half turn", cube_sin(state, 128), 0)
+    run = t_eq_int(run, "sin three quarters", cube_sin(state, 192), 0 - cube_one())
+
+    run = t_eq_int(run, "cos 0", cube_cos(state, 0), cube_one())
+    run = t_eq_int(run, "cos quarter turn", cube_cos(state, 64), 0)
+    run = t_eq_int(run, "cos half turn", cube_cos(state, 128), 0 - cube_one())
+
+    // Odd symmetry, which is what says the reflection is right rather than merely plausible.
+    let a: int = 0
+    let symmetric: bool = true
+    while (a < 128) {
+        if (cube_sin(state, a) != 0 - cube_sin(state, a + 128)) {
+            symmetric = false
+        }
+        a = a + 1
+    }
+    run = t_true(run, "sin(a) == -sin(a + half turn)", symmetric)
+
+    // Wrapping, so an angle can be stepped forever without being normalised by the caller.
+    run = t_eq_int(run, "angles wrap", cube_sin(state, 256), cube_sin(state, 0))
+    run = t_eq_int(run, "negative angles wrap", cube_sin(state, 0 - 64), 0 - cube_one())
+
+    // Never larger than one unit, or the projection would reach outside its box.
+    let big: bool = false
+    a = 0
+    while (a < 256) {
+        if (cube_sin(state, a) > cube_one() || cube_sin(state, a) < 0 - cube_one()) {
+            big = true
+        }
+        a = a + 1
+    }
+    run = t_false(run, "no sine exceeds one unit", big)
+
+    return run
+}
+
+// ── Projection ───────────────────────────────────────────────────────────────
+
+func test_cube_projection() : TestRun {
+    let run: TestRun = t_new()
+    let state: array<int> = cube_state_new()
+
+    cube_set_angles(state, 30, 40, 0)
+    cube_project(state, 100, 100, 40)
+
+    // THE regression. Under the old fixed-point mistake every corner landed on the centre, so the
+    // cube was drawn as twelve zero-length lines and was invisible.
+    let distinct: int = 0
+    let i: int = 0
+    while (i < 8) {
+        let x: int = state[cube_proj_base() + (i * 2)]
+        let y: int = state[cube_proj_base() + (i * 2) + 1]
+
+        if (x != 100 || y != 100) {
+            distinct = distinct + 1
+        }
+        i = i + 1
+    }
+    run = t_eq_int(run, "no corner sits on the centre", distinct, 8)
+
+    // Stronger: the eight corners are eight different points.
+    let coincident: bool = false
+    i = 0
+    while (i < 8) {
+        let j: int = i + 1
+        while (j < 8) {
+            if (state[cube_proj_base() + (i * 2)] == state[cube_proj_base() + (j * 2)]
+                && state[cube_proj_base() + (i * 2) + 1] == state[cube_proj_base() + (j * 2) + 1]) {
+                coincident = true
+            }
+            j = j + 1
+        }
+        i = i + 1
+    }
+    run = t_false(run, "the eight corners are eight points", coincident)
+
+    /*
+     * The cube stays inside its box at *every* rotation.
+     *
+     * This is the check the first sizing failed, and it failed in a way a single-angle test could
+     * not see. Sizing to the front face looks right unrotated, and then a corner — sqrt(3) units
+     * from the centre rather than one — swings into view and towards the eye at the same time, and
+     * the cube reaches about 1.17 times past its rectangle. A scene that overruns its rectangle
+     * draws over the widgets beside it, which is the one thing a scene must never do.
+     *
+     * Swept coarsely over all three axes rather than at a handful of chosen angles, because the
+     * worst case is at none of the angles anybody would think to write down.
+     */
+    let worst: int = 0
+    let ax: int = 0
+
+    while (ax < 256) {
+        let ay: int = 0
+        while (ay < 256) {
+            let az: int = 0
+            while (az < 256) {
+                cube_set_angles(state, ax, ay, az)
+                cube_project(state, 0, 0, 100)
+
+                let k: int = 0
+                while (k < 8) {
+                    let ox: int = util_abs(state[cube_proj_base() + (k * 2)])
+                    let oy: int = util_abs(state[cube_proj_base() + (k * 2) + 1])
+
+                    if (ox > worst) { worst = ox }
+                    if (oy > worst) { worst = oy }
+
+                    k = k + 1
+                }
+
+                az = az + 23
+            }
+            ay = ay + 17
+        }
+        ax = ax + 13
+    }
+
+    run = t_true(run, "no corner ever leaves the box at any rotation", worst <= 100)
+
+    // And it does fill a useful share of it, or the scene would look empty inside its card.
+    run = t_true(run, "a turned cube nearly fills the box", worst >= 75)
+
+    // Unrotated, the answer is known exactly: two concentric squares, the near face larger than the
+    // far one by the ratio of their distances from the eye. This is the check that says the
+    // rotation and the perspective divide are both right, rather than merely producing eight
+    // scattered points — which is all the tests above actually demand.
+    cube_set_angles(state, 0, 0, 0)
+    cube_project(state, 100, 100, 40)
+
+    let squareish: bool = true
+    let nearHalf: int = 0
+    let farHalf: int = 0
+
+    i = 0
+    while (i < 8) {
+        let dx: int = state[cube_proj_base() + (i * 2)] - 100
+        let dy: int = state[cube_proj_base() + (i * 2) + 1] - 100
+
+        // A square: the two offsets have the same magnitude.
+        if (dx != dy && dx != 0 - dy) {
+            squareish = false
+        }
+
+        // Bit 1 of the index is the z sign, and z is towards the eye.
+        if ((i & 1) == 0) {
+            nearHalf = util_abs(dx)
+        } else {
+            farHalf = util_abs(dx)
+        }
+
+        i = i + 1
+    }
+
+    run = t_true(run, "unrotated corners form squares", squareish)
+    run = t_true(run, "the near face is larger than the far one", nearHalf > farHalf)
+
+    // Both faces stay inside the radius they were sized against, which is what stops a scene
+    // painting over the widgets beside it.
+    run = t_true(run, "the near face fits its box", nearHalf <= 40)
+
+    // Turning it moves it. A projection that ignored its angles would pass everything above.
+    let firstX: int = state[cube_proj_base()]
+    let firstY: int = state[cube_proj_base() + 1]
+
+    cube_turn_by(state, 0, 32, 0)
+    cube_project(state, 100, 100, 40)
+
+    run = t_true(run, "rotation changes the projection",
+        state[cube_proj_base()] != firstX || state[cube_proj_base() + 1] != firstY)
+
+    // Resolution independence, the property that lets a scene fill whatever it is given: the same
+    // cube at twice the radius is twice as far from the centre. Checked as a share rather than a
+    // count, which is what catches a coordinate accidentally written in pixels.
+    cube_set_angles(state, 30, 40, 0)
+    cube_project(state, 100, 100, 40)
+    let smallDx: int = state[cube_proj_base()] - 100
+
+    cube_project(state, 200, 200, 80)
+    let largeDx: int = state[cube_proj_base()] - 200
+
+    run = t_true(run, "twice the radius is about twice the offset",
+        largeDx >= (smallDx * 2) - 2 && largeDx <= (smallDx * 2) + 2)
+
+    return run
+}
+
+// ── The painter ──────────────────────────────────────────────────────────────
+
+func test_cube_painter() : TestRun {
+    let run: TestRun = t_new()
+    let state: array<int> = cube_state_new()
+    let ops: array<int> = array_new(64 * dl_stride())
+
+    cube_set_angles(state, 30, 40, 0)
+    cube_set_colour(state, 12345)
+
+    let count: int = cube_paint(ops, 0, 1, 0, 0, 200, 200, state)
+
+    // A cube has twelve edges. Enumerating them by pairing each corner with its neighbour along
+    // each axis is easy to get wrong in a way that silently drops half of them.
+    run = t_eq_int(run, "twelve edges", count, 12)
+
+    let allLines: bool = true
+    let allColoured: bool = true
+    let anyZeroLength: bool = false
+
+    let i: int = 0
+    while (i < count) {
+        if (dl_op(ops, i) != DlOp.LINE) {
+            allLines = false
+        }
+        if (dl_arg(ops, i, 4) != 12345) {
+            allColoured = false
+        }
+        if (dl_arg(ops, i, 0) == dl_arg(ops, i, 2) && dl_arg(ops, i, 1) == dl_arg(ops, i, 3)) {
+            anyZeroLength = true
+        }
+        i = i + 1
+    }
+
+    run = t_true(run, "every record is a line", allLines)
+    run = t_true(run, "every edge takes the given colour", allColoured)
+    run = t_false(run, "no edge is zero length", anyZeroLength)
+
+    // The painter appends: it starts where it was told to and does not overwrite what came before.
+    let appended: int = cube_paint(ops, 5, 1, 0, 0, 200, 200, state)
+    run = t_eq_int(run, "the painter appends from `at`", appended, 17)
+
+    // A rectangle too small to draw in is declined rather than drawn wrong.
+    run = t_eq_int(run, "no room means no records", cube_paint(ops, 0, 1, 0, 0, 2, 2, state), 0)
+
+    return run
+}

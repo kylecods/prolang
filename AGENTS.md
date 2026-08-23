@@ -856,6 +856,32 @@ let name = map["name"]
 
 > `map<K, V>` is thinly exercised — two uses in the whole repository. Prefer `array<T>`.
 
+### Time
+
+```prolang
+import "console"
+
+let start: int = time_millis()
+thread_sleep(120)
+let elapsed: int = time_millis() - start    // 120, give or take the scheduler
+```
+
+`time_millis()` and `thread_sleep(ms)` are the whole of the language's relationship with time, which
+is why they share a module.
+
+The clock is **monotonic**, not a wall clock, so an interval can never come out negative because the
+system time was adjusted underneath it. It counts from an arbitrary origin — only differences mean
+anything — and it is a 32-bit `int` like everything else, so it wraps after about twenty-five days.
+Always **subtract two readings** rather than comparing them: two's-complement subtraction gives the
+right interval straight through a wrap, while `if (now > then)` does not.
+
+Backed by `Stopwatch` on .NET, `QueryPerformanceCounter` on Windows under `--emit-c`,
+`clock_gettime(CLOCK_MONOTONIC)` on POSIX, and `sceKernelGetSystemTimeLow` on the PSP. All four are
+fine-grained; `GetTickCount` was deliberately not used, because its ~15ms resolution is most of a
+frame at 60fps.
+
+`std/ui/fps.prl` is the worked example — a frame-rate counter built on it.
+
 ### Assertions
 
 ```prolang

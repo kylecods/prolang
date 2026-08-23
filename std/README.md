@@ -53,11 +53,12 @@ Windows Forms and on the PSP.
 
 | Module | |
 |---|---|
-| `ui/widget` | the node arena and the open/close builder: `ui_col`, `ui_row`, `ui_box`, `ui_text`, `ui_button`, `ui_spacer`, `ui_image`, `ui_end` |
+| `ui/widget` | the node arena and the open/close builder: `ui_col`, `ui_row`, `ui_box`, `ui_text`, `ui_button`, `ui_spacer`, `ui_image`, `ui_scene`, `ui_end` |
 | `ui/box` | layout — measure bottom-up, place top-down, divide leftover space between `flex:` children |
 | `ui/hit` | hover, press and click, tracked across frames by a widget's id |
 | `ui/draw` | flattens a laid-out tree into a display list: a flat `array<int>` of drawing commands |
 | `ui/font` | character-width tables, so the layout pass can measure text without asking a window |
+| `ui/fps` | a frame-rate counter, averaged over a window, with the worst frame of each window |
 | `ui/host_winforms` | **imports `winforms`.** Opens a window and submits each frame in one interop call |
 | `ui/host_psp` | **imports `psp`.** Executes the same display list through the GU, with a D-pad cursor |
 

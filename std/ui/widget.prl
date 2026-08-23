@@ -61,7 +61,8 @@ enum UiKind {
     TEXT,
     BUTTON,
     SPACER,
-    IMAGE
+    IMAGE,
+    SCENE
 }
 
 // ── Field offsets within a node's slice of the arena ─────────────────────────
@@ -90,6 +91,7 @@ enum UiF {
     ALIGN,          // cross-axis placement of children
     JUSTIFY,        // main-axis placement when there is room left over
     IMAGE_ID,       // backend handle for an IMAGE node
+    SCENE_TAG,      // which scene a SCENE node is; the painter switches on it
     X,              // ── filled in by the layout pass ──
     Y,
     W,
@@ -97,7 +99,7 @@ enum UiF {
 }
 
 func ui_stride() : int {
-    return 27
+    return 28
 }
 
 // ── Alignment ────────────────────────────────────────────────────────────────
@@ -461,6 +463,44 @@ func ui_image(ui: Ui, image: int, width: int, height: int, pad: int = 0, flex: i
 
     ui_style(ui, node, pad, 0, 0, 0, 0, width, height, flex, UiAlign.CENTER, UiAlign.CENTER, 0)
     ui_set(ui, node, UiF.IMAGE_ID, image)
+
+    return node
+}
+
+/*
+ * A rectangle the application draws for itself: a 3D scene, a chart, a game viewport.
+ *
+ * This is the toolkit's escape hatch, and it is a first-class widget rather than something bolted
+ * on beside one. A scene is laid out exactly like a button — it can be `flex: 1` to take whatever
+ * is left over, it can sit inside a padded card, it moves when the window is resized — and it is
+ * composited in tree order, so widgets built after it draw over it and widgets built before it
+ * draw under it.
+ *
+ * `tag` is what the painter switches on, so one painter can serve several scenes. It is *not* an
+ * action: a scene is not clickable unless it is given an `action` of its own.
+ *
+ * What makes this portable is that the painter does not draw. It **appends display-list records**,
+ * the same ones every other widget produces, which every backend already knows how to execute. A
+ * painter that emits twelve LINE records is a wireframe cube on Windows Forms, on the PSP and on
+ * anything a browser backend would run — with no backend code written for it at all. Drawing
+ * directly instead would mean one painter per platform, and on Windows Forms it could not work at
+ * all, because the display list is executed later on the UI thread.
+ *
+ * See `dl_build_scenes` for the painter's signature.
+ */
+func ui_scene(ui: Ui, tag: int = 0, width: int = 0 - 1, height: int = 0 - 1, flex: int = 0,
+              pad: int = 0, bg: int = 0, radius: int = 0, action: int = 0, id: int = 0) : int {
+    let node: int = ui_node(ui, UiKind.SCENE)
+
+    ui_style(ui, node, pad, 0, bg, 0, radius, width, height, flex, UiAlign.START, UiAlign.START, 0)
+    ui_set(ui, node, UiF.SCENE_TAG, tag)
+    ui_set(ui, node, UiF.ACTION, action)
+
+    if (id != 0) {
+        ui_set(ui, node, UiF.ID, id)
+    } else {
+        ui_set(ui, node, UiF.ID, action)
+    }
 
     return node
 }

@@ -1,4 +1,4 @@
-using Mono.Cecil;
+﻿using Mono.Cecil;
 using Mono.Cecil.Cil;
 using ProLang.Symbols;
 
@@ -88,5 +88,6 @@ internal static class IntrinsicRegistry
 
         // ── Threading ────────────────────────────────────────────────────────────────────
         [BuiltInFunctions.ThreadSleep] = Intrinsic.Call("System.Threading.Thread", "Sleep", "System.Int32"),
+        [BuiltInFunctions.TimeMillis] = Intrinsic.Call(RuntimeLibrary.TimeOps, "Millis"),
     };
 }

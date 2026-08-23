@@ -100,6 +100,18 @@ internal static class BuiltInFunctions
         ImmutableArray.Create(new ParameterSymbol("ms", TypeSymbol.Int, 0)), TypeSymbol.Void);
 
     /// <summary>
+    /// Milliseconds since the program started, from a monotonic clock.
+    /// </summary>
+    /// <remarks>
+    /// The companion of <see cref="ThreadSleep"/>, which is why it sits in the same module: those
+    /// two are the whole of the language's relationship with time. Monotonic rather than a wall
+    /// clock, so an interval can never come out negative, and 32-bit like every other ProLang
+    /// <c>int</c> — it wraps after about twenty-five days, which subtracting two readings survives.
+    /// </remarks>
+    public static readonly FunctionSymbol TimeMillis = new("time_millis",
+        ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Int);
+
+    /// <summary>
     /// Fails the program when <c>condition</c> is false. Exposed by <c>import "test"</c>.
     /// </summary>
     /// <remarks>

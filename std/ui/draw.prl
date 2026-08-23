@@ -130,15 +130,57 @@ func dl_arg(ops: array<int>, at: int, which: int) : int {
  * Emission order is tree order, so a parent's background is written before its children and a later
  * sibling paints over an earlier one. That is the same order `hit_topmost` searches in reverse,
  * which is what keeps what is clickable and what is visible in agreement.
+ *
+ * Scene nodes contribute only their background here. Use `dl_build_scenes` to have them painted.
  */
 func dl_build(ui: Ui, fonts: FontSet, root: int, ops: array<int>) : int {
-    if (root < 0) { return 0 }
+    // `ui.st` is passed as the painter's state purely so that nothing has to be allocated for a
+    // painter that ignores it. A fresh empty array per frame would be a leak on the PSP, where the
+    // generated C mallocs and never frees.
+    return dl_build_scenes(ui, fonts, root, ops, dl_no_scene, ui.st)
+}
 
-    return dl_node(ui, fonts, ops, 0, root)
+/*
+ * The same, with a painter for `ui_scene` nodes.
+ *
+ * The painter is handed the rectangle the layout gave the scene and appends records of its own:
+ *
+ *     func my_painter(ops: array<int>, at: int, tag: int,
+ *                     x: int, y: int, w: int, h: int, state: array<int>) : int
+ *
+ * It returns the new record count — normally the result of chaining `dl_emit` calls. Because it
+ * emits rather than draws, a scene is composited in tree order like everything else and needs no
+ * support from any backend: the records it produces are the ones they already execute.
+ *
+ * `state` is whatever the application wants to reach from inside the painter. It has to be passed
+ * in because a ProLang function value captures nothing — which is exactly what lets one compile to
+ * a bare function pointer on the C and PSP backends.
+ */
+func dl_build_scenes(ui: Ui, fonts: FontSet, root: int, ops: array<int>,
+                     paint: func(array<int>, int, int, int, int, int, int, array<int>) : int,
+                     state: array<int>) : int {
+    if (root < 0) {
+        return 0
+    }
+
+    return dl_node(ui, fonts, ops, 0, root, paint, state)
+}
+
+/*
+ * The painter used when a tree is built without one.
+ *
+ * A scene then reserves its space and shows its background, which is a visible, debuggable result
+ * rather than a crash — forgetting to pass a painter looks like an empty panel.
+ */
+func dl_no_scene(ops: array<int>, at: int, tag: int, x: int, y: int, w: int, h: int,
+                 state: array<int>) : int {
+    return at
 }
 
 // Emits one node and everything below it, returning the next free record index.
-func dl_node(ui: Ui, fonts: FontSet, ops: array<int>, at: int, node: int) : int {
+func dl_node(ui: Ui, fonts: FontSet, ops: array<int>, at: int, node: int,
+             paint: func(array<int>, int, int, int, int, int, int, array<int>) : int,
+             state: array<int>) : int {
     let kind: int = ui_kind(ui, node)
     let next: int = at
 
@@ -151,17 +193,42 @@ func dl_node(ui: Ui, fonts: FontSet, ops: array<int>, at: int, node: int) : int 
             ui_get(ui, node, UiF.IMAGE_ID), 0)
     } elif (kind == UiKind.TEXT) {
         next = dl_text(ui, fonts, ops, next, node)
+    } elif (kind == UiKind.SCENE) {
+        next = dl_scene(ui, ops, next, node, paint, state)
     } else {
         next = dl_surface(ui, ops, next, node, ui_get(ui, node, UiF.BG))
     }
 
     let child: int = ui_first_child(ui, node)
     while (child >= 0) {
-        next = dl_node(ui, fonts, ops, next, child)
+        next = dl_node(ui, fonts, ops, next, child, paint, state)
         child = ui_next_sibling(ui, child)
     }
 
     return next
+}
+
+/*
+ * Emits a scene's background, then whatever its painter appends.
+ *
+ * The painter is given the area *inside* the node's padding, so a scene can be inset from its own
+ * background the way a card insets its contents.
+ */
+func dl_scene(ui: Ui, ops: array<int>, at: int, node: int,
+              paint: func(array<int>, int, int, int, int, int, int, array<int>) : int,
+              state: array<int>) : int {
+    let next: int = dl_surface(ui, ops, at, node, ui_get(ui, node, UiF.BG))
+
+    let x: int = ui_get(ui, node, UiF.X) + ui_get(ui, node, UiF.PAD_L)
+    let y: int = ui_get(ui, node, UiF.Y) + ui_get(ui, node, UiF.PAD_T)
+    let w: int = ui_get(ui, node, UiF.W) - ui_get(ui, node, UiF.PAD_L) - ui_get(ui, node, UiF.PAD_R)
+    let h: int = ui_get(ui, node, UiF.H) - ui_get(ui, node, UiF.PAD_T) - ui_get(ui, node, UiF.PAD_B)
+
+    if (w <= 0 || h <= 0) {
+        return next
+    }
+
+    return paint(ops, next, ui_get(ui, node, UiF.SCENE_TAG), x, y, w, h, state)
 }
 
 /*

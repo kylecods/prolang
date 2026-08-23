@@ -266,6 +266,19 @@ func hostw_begin(host: Host, ui: Ui, timeoutMs: int = 16) : void {
  * it.
  */
 func hostw_present(host: Host, ui: Ui, fonts: FontSet) : int {
+    return hostw_present_scene(host, ui, fonts, dl_no_scene, ui.st)
+}
+
+/*
+ * The same, with a painter for `ui_scene` nodes.
+ *
+ * The painter appends display-list records rather than drawing, so this host needs no extra code
+ * for it — and could not have taken a drawing callback anyway, since the list is executed later on
+ * the UI thread, inside a paint message.
+ */
+func hostw_present_scene(host: Host, ui: Ui, fonts: FontSet,
+                         paint: func(array<int>, int, int, int, int, int, int, array<int>) : int,
+                         state: array<int>) : int {
     assert(ui_is_balanced(ui), "a container was left open — every ui_col/ui_row/ui_box needs a ui_end")
 
     let root: int = ui_root(ui)
@@ -277,7 +290,7 @@ func hostw_present(host: Host, ui: Ui, fonts: FontSet) : int {
     box_layout(ui, fonts, root, 0, 0, host.st[HostwS.WIDTH], host.st[HostwS.HEIGHT])
 
     let fired: int = hit_resolve(ui)
-    let count: int = dl_build(ui, fonts, root, host.ops)
+    let count: int = dl_build_scenes(ui, fonts, root, host.ops, paint, state)
 
     WinFormsHelper.SurfaceSubmit(host.surface, host.ops, count, ui.strs, ui.st[UiS.STR_COUNT])
 

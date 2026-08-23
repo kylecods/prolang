@@ -1,4 +1,4 @@
-namespace ProLang.Tests.Infrastructure;
+﻿namespace ProLang.Tests.Infrastructure;
 
 /// <summary>
 /// How a corpus program is expected to behave, which decides what may be asserted about it.
@@ -62,6 +62,7 @@ internal static class TestCorpus
         new("examples/09-json-parser/json-parser-tests.prl", CorpusKind.Runnable),
         new("examples/11-std/dynarray_demo.prl", CorpusKind.Runnable),
         new("examples/16-pixel-editor/tests/run_tests.prl", CorpusKind.Runnable),
+        new("examples/18-psp-cube/tests/run_tests.prl", CorpusKind.Runnable),
         new("tests/cast-comprehensive.prl", CorpusKind.Runnable),
         new("tests/cast-expression.prl", CorpusKind.Runnable),
         new("tests/cast-simple.prl", CorpusKind.Runnable),
@@ -153,6 +154,10 @@ internal static class TestCorpus
             "Library — test cases; run by tests/std/run_tests.prl."),
         new("examples/17-widgets/counter.prl", CorpusKind.CompileOnly,
             "Windows Forms GUI with an event loop that only ends when the window is closed."),
+        new("examples/18-psp-cube/cube.prl", CorpusKind.CompileOnly,
+            "Library — the cube scene painter; exercised by examples/18-psp-cube/tests/run_tests.prl."),
+        new("examples/18-psp-cube/cube_desktop.prl", CorpusKind.CompileOnly,
+            "Windows Forms GUI with an event loop that only ends when the window is closed."),
         new("tests/std/test_font.prl", CorpusKind.CompileOnly,
             "Library — test cases; run by tests/std/run_tests.prl."),
         new("tests/std/test_widget.prl", CorpusKind.CompileOnly,
@@ -162,6 +167,10 @@ internal static class TestCorpus
         new("tests/std/test_hit.prl", CorpusKind.CompileOnly,
             "Library — test cases; run by tests/std/run_tests.prl."),
         new("tests/std/test_draw.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_scene.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_fps.prl", CorpusKind.CompileOnly,
             "Library — test cases; run by tests/std/run_tests.prl."),
         new("examples/05-dotnet-interop-assembly-loading/05_dotnet_interop.prl", CorpusKind.CompileOnly,
             "Prints a freshly generated Guid, so its output is not reproducible. Needs "
@@ -210,6 +219,9 @@ internal static class TestCorpus
             "PSP target: psp_* builtins have no .NET implementation. Use --emit-psp."),
         new("examples/15-psp-demo/psp_chip8.prl", CorpusKind.KnownBroken,
             "PSP target: see psp_demo.prl."),
+        new("examples/18-psp-cube/psp_cube.prl", CorpusKind.KnownBroken,
+            "PSP target: see psp_demo.prl. Transpiles under --emit-psp; the cube it draws is covered "
+            + "by examples/18-psp-cube/tests/run_tests.prl."),
         new("examples/17-widgets/counter_psp.prl", CorpusKind.KnownBroken,
             "PSP target: see psp_demo.prl. Transpiles under --emit-psp; the widget code it shares "
             + "with counter.prl is covered by tests/std/run_tests.prl."),

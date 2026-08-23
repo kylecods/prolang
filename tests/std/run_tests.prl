@@ -37,6 +37,8 @@ import "test_widget.prl"
 import "test_box.prl"
 import "test_hit.prl"
 import "test_draw.prl"
+import "test_scene.prl"
+import "test_fps.prl"
 
 func main()
 {
@@ -63,6 +65,8 @@ func main()
     total = t_merge(total, test_box_run(), "ui/box")
     total = t_merge(total, test_hit_run(), "ui/hit")
     total = t_merge(total, test_draw_run(), "ui/draw")
+    total = t_merge(total, test_scene_run(), "ui/scene")
+    total = t_merge(total, test_fps_run(), "ui/fps")
 
     t_report(total)
 }

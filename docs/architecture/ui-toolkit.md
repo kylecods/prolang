@@ -116,6 +116,48 @@ it. Without them every widget would take a dozen positional integers.
 
 ---
 
+## Scenes: content the toolkit knows nothing about
+
+`ui_scene` is the escape hatch — a 3D view, a chart, a game viewport — and it is a first-class
+widget rather than something bolted on beside one. It takes `flex`, it sits inside a padded card, it
+moves when the window is resized, and it composites in tree order.
+
+What makes it portable is that **the painter does not draw; it appends display-list records.**
+
+```prolang
+func my_painter(ops: array<int>, at: int, tag: int,
+                x: int, y: int, w: int, h: int, state: array<int>) : int
+```
+
+It is handed the rectangle inside the scene's padding and returns the new record count, normally by
+chaining `dl_emit` calls. Those records are the ones every backend already executes, so a scene
+needs **no backend code at all** — a painter emitting twelve `LINE`s is a wireframe cube on Windows
+Forms, on the PSP, and on anything a browser backend would run.
+
+Drawing directly was the obvious alternative and it fails twice over: it would mean one painter per
+platform, and on Windows Forms it could not work at all, because the display list is executed later
+on the UI thread inside a paint message. There is no moment at which a ProLang callback could run.
+
+`state` is an `array<int>` rather than anything captured, because a ProLang function value captures
+nothing — the same restriction that lets one compile to a bare function pointer on the C and PSP
+backends. Whatever the painter must reach goes in there.
+
+Wire it up with `dl_build_scenes`, or the `_scene` variant of either host's present:
+
+```prolang
+let act: int = hostw_present_scene(host, ui, fonts, my_painter, state)
+```
+
+`dl_build` and the plain `present` still work; they pass `dl_no_scene`, so a scene reserves its
+space and shows its background. Forgetting a painter therefore looks like an empty panel rather than
+a crash.
+
+`examples/18-psp-cube/` is the worked example. Its README records the three silent failures the
+cube's own arithmetic produced — none of which raised an error, and one of which every structural
+test still passed.
+
+---
+
 ## Layout
 
 Two passes, in integers, with no platform anywhere in them.

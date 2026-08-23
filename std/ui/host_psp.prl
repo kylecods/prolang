@@ -25,8 +25,8 @@
  *
  *   RRECT      drawn square. The GU has no rounded-rectangle primitive, and a corner faked from
  *              rectangles at this resolution looks worse than a clean edge.
- *   LINE       drawn only when horizontal or vertical, as a thin rectangle. A diagonal would need
- *              a rasteriser, and nothing in the toolkit emits one yet.
+ *   LINE       any angle, through `psp_draw_line`; an axis-aligned one thicker than a pixel goes
+ *              through `psp_fill_rect` instead, since the line primitive is one pixel wide.
  *   IMAGE      skipped. There is no texture path from a ProLang bitmap handle to the GU.
  *   CLIP_PUSH  ignored. Scissoring is not among the `psp` built-ins.
  *
@@ -216,6 +216,19 @@ func hostp_begin(host: PspHost, ui: Ui) : void {
  * colour. Only the last step, executing the list, differs.
  */
 func hostp_present(host: PspHost, ui: Ui, fonts: FontSet, background: int = 0) : int {
+    return hostp_present_scene(host, ui, fonts, dl_no_scene, ui.st, background)
+}
+
+/*
+ * The same, with a painter for `ui_scene` nodes.
+ *
+ * The painter appends display-list records, so a scene reaches the screen through exactly the same
+ * loop as a button does — and composites in tree order with the rest of the interface rather than
+ * being drawn before or after all of it.
+ */
+func hostp_present_scene(host: PspHost, ui: Ui, fonts: FontSet,
+                         paint: func(array<int>, int, int, int, int, int, int, array<int>) : int,
+                         state: array<int>, background: int = 0) : int {
     assert(ui_is_balanced(ui), "a container was left open — every ui_col/ui_row/ui_box needs a ui_end")
 
     let root: int = ui_root(ui)
@@ -227,7 +240,7 @@ func hostp_present(host: PspHost, ui: Ui, fonts: FontSet, background: int = 0) :
     box_layout(ui, fonts, root, 0, 0, hostp_width(), hostp_height())
 
     let fired: int = hit_resolve(ui)
-    let count: int = dl_build(ui, fonts, root, host.ops)
+    let count: int = dl_build_scenes(ui, fonts, root, host.ops, paint, state)
 
     psp_clear(hostp_rgb(background))
     hostp_execute(host, ui, count)
@@ -279,10 +292,12 @@ func hostp_execute(host: PspHost, ui: Ui, count: int) : void {
 }
 
 /*
- * A horizontal or vertical line, as a thin rectangle.
+ * A line at any angle.
  *
- * A diagonal is skipped rather than approximated. Nothing in the toolkit emits one yet, and a
- * wrong line is harder to notice than a missing one.
+ * An axis-aligned line goes through `psp_fill_rect` because that is the only way to give it a
+ * thickness — `psp_draw_line` is one pixel wide — and a hairline rule asked for at three pixels
+ * would otherwise come out at one. Everything else goes to `psp_draw_line`, which is what makes a
+ * scene painter emitting diagonals work at all.
  */
 func hostp_line(host: PspHost, at: int) : void {
     let x1: int = dl_arg(host.ops, at, 0)
@@ -296,7 +311,7 @@ func hostp_line(host: PspHost, at: int) : void {
         weight = 1
     }
 
-    if (y1 == y2) {
+    if (y1 == y2 && weight > 1) {
         let left: int = x1
         let width: int = x2 - x1
 
@@ -306,7 +321,7 @@ func hostp_line(host: PspHost, at: int) : void {
         }
 
         psp_fill_rect(left, y1, width, weight, colour)
-    } elif (x1 == x2) {
+    } elif (x1 == x2 && weight > 1) {
         let top: int = y1
         let height: int = y2 - y1
 
@@ -316,6 +331,8 @@ func hostp_line(host: PspHost, at: int) : void {
         }
 
         psp_fill_rect(x1, top, weight, height, colour)
+    } else {
+        psp_draw_line(x1, y1, x2, y2, colour)
     }
 }
 

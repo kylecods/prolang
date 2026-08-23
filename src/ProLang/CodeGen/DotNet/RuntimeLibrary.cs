@@ -37,6 +37,9 @@ internal static class RuntimeLibrary
     /// <summary>Metadata full name of the assertion type backing <c>import "test"</c>.</summary>
     public const string TestOps = "ProLang.Runtime.TestOps";
 
+    /// <summary>Metadata full name of the monotonic clock behind <c>time_millis</c>.</summary>
+    public const string TimeOps = "ProLang.Runtime.TimeOps";
+
     /// <summary>
     /// Finds <c>ProLang.Runtime.dll</c> on disk.
     /// </summary>
