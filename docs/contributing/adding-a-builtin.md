@@ -15,17 +15,36 @@ of which touch the emitter.
 ```csharp
 public static readonly FunctionSymbol StringToUpper = new("toUpper",
     ImmutableArray.Create(new ParameterSymbol("str", TypeSymbol.String, 0)),
-    TypeSymbol.String);
+    TypeSymbol.String)
+{
+    Documentation =
+        "Returns the text uppercased.\n\n" +
+        "Invariant, not locale-dependent, so a program's output does not vary by machine.",
+};
 ```
 
 The symbol is the identity the rest of the compiler uses. Several builtins share a name — `length`
 exists for both arrays and strings — so dispatch keys on this instance, never on the name.
+
+**`Documentation` is required**, and `BuiltInDocumentationTests` fails the build without it. A
+builtin has no source file, so unlike everything written in ProLang there is no comment above it
+for the documentation to be read from — this declaration is the only place it can live. It is what
+a user sees on hover, as the detail beside a completion, and in the signature popup while typing
+the call. Write one sentence of what it does, then a blank line, then anything about units,
+bounds, edge cases, or which backends implement it. It is rendered as Markdown.
+
+**Parameter names are user-visible too.** They are what a named argument is written with, what
+signature help labels, and what an inlay hint shows at a call site. `min(arg1, arg2)` told a reader
+nothing, which is why it is now `min(a, b)`.
 
 ## 2. Expose it from a module
 
 `src/ProLang/Symbols/Modules/` — add it to the relevant module's `Functions` list so that
 `import "io"`, `import "math"`, and so on bring it into scope. Skipping this leaves the symbol
 unreachable and the binder reporting *"Function 'toUpper' doesn't exist"*.
+
+A whole new module also needs a `Summary`, which is the one line shown beside its name while
+someone is deciding what to import. `EveryModule_HasASummary` enforces it.
 
 ## 3. Implement it
 

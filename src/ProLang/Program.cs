@@ -10,6 +10,14 @@ internal sealed class Program
 {
     private static int Main(string[] args)
     {
+        // Verbs are matched before the option set gets a look, because its "<>" handler collects
+        // every bare argument as a source path — so `prolang lsp` would otherwise be a request to
+        // compile a file called "lsp".
+        if (args.Length > 0 && args[0] == "lsp")
+        {
+            return Lsp.LanguageServerCommand.Run(args[1..]);
+        }
+
         string? outputPath = null;
         string? moduleName = null;
         string? msilPath = null;

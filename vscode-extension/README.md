@@ -1,163 +1,60 @@
-# ProLang VS Code Extension
+# ProLang for VS Code
 
-Language support for the ProLang programming language.
+Editor support for [ProLang](../README.md), backed by the ProLang compiler itself.
 
-## Features
+The extension does not analyse ProLang. It starts `prolang lsp`, and everything it shows — the
+errors, the types, the completions, the documentation — comes from the same lexer, parser and
+binder that compile the program. There is no second implementation of the language to drift out of
+step with the first.
 
-- **Syntax Highlighting**: Full syntax highlighting for `.prl` and `.prolang` files
-- **Code Snippets**: Common patterns and constructs
-- **Language Server**:
-  - Diagnostics (error detection)
-  - Hover information
-  - Auto-completion
-  - Go to Definition
-  - Find References
-  - Document Symbols (outline)
-  - Signature Help
-  - Rename Symbol
-  - Basic Formatting
-- **Debugging Support**: Debug adapter for stepping through code
+## What it does
 
-## Installation
+| | |
+|---|---|
+| **Errors** | Real compiler diagnostics, on every keystroke: syntax errors, type errors, undefined names, argument mismatches. |
+| **Hover** | A symbol's signature and its documentation. For a library function that is the comment written above it in `std/`; for a builtin it is written into the compiler. |
+| **Go to definition** | Follows a name to its declaration, across the whole import graph — including into the standard library. Go to definition on an `import` opens the module. |
+| **Find references, rename** | Every use of *that* symbol, not every occurrence of its name. Renaming a library symbol is refused rather than half-done. |
+| **Completion** | Contextual. After `.` it offers the fields of the struct, or a string's methods, or an enum's members. Inside `import "` it lists every module with a description of each. In a type position it offers types. Inside a call it offers the parameter names. |
+| **Signature help** | The parameter list while typing a call, with the right argument highlighted, defaults shown, and named arguments understood. |
+| **Semantic highlighting** | Colouring by what each name resolved to, so a struct, a parameter, an enum member and a builtin each look like what they are. |
+| **Outline, folding, inlay hints, formatting** | Structs and enums nest their members; inferred `let` types are shown where the annotation would be; formatting re-indents from the parse tree. |
 
-### Prerequisites
+## Requirements
 
-- Node.js (v16 or higher)
-- npm (v8 or higher)
-
-### Setup
-
-1. Navigate to the extension directory:
-   ```bash
-   cd vscode-extension
-   ```
-
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-3. Compile TypeScript:
-   ```bash
-   npm run compile
-   ```
-
-4. Run the extension:
-   - Press `F5` in VS Code to launch the Extension Development Host
-   - Or package the extension:
-     ```bash
-     npm run package
-     ```
-   - Install the `.vsix` file:
-     ```bash
-     code --install-extension prolang-0.1.0.vsix
-     ```
-
-## Usage
-
-### Syntax Highlighting
-
-Open any `.prl` or `.prolang` file to see syntax highlighting for:
-- Keywords (`let`, `func`, `if`, `while`, etc.)
-- Types (`int`, `bool`, `string`, `array`, `map`, `any`)
-- Operators and punctuation
-- Strings and comments
-- HTML script tags
-
-### Snippets
-
-Type these prefixes and press `Tab`:
-
-| Prefix | Description |
-|--------|-------------|
-| `func` | Function declaration |
-| `let` | Variable with explicit type |
-| `letv` | Variable with inferred type |
-| `if` | If statement |
-| `ifelse` | If-else statement |
-| `ifelif` | If-elif-else statement |
-| `while` | While loop |
-| `for` | For loop |
-| `import` | Import module |
-| `print` | Print statement |
-| `array` | Array literal |
-| `map` | Map literal |
-
-### Language Server Features
-
-- **Hover**: Hover over variables to see type information
-- **Go to Definition**: F12 or Ctrl+Click on a symbol
-- **Find References**: Shift+F12 on a symbol
-- **Rename Symbol**: F2 on a symbol
-- **Outline View**: See functions and variables in the Explorer sidebar
-
-### Debugging
-
-1. Open a `.prl` file
-2. Set breakpoints by clicking in the gutter
-3. Press `F5` or go to Run and Debug
-4. Select "ProLang: Launch current file"
-
-### Commands
-
-- `ProLang: Run ProLang File` - Run the current ProLang file
-- `ProLang: Build ProLang Project` - Build the project
-
-## Configuration
-
-Add these settings to your `settings.json`:
-
-```json
-{
-  "prolang.languageServer.trace": "off",
-  "prolang.enableBuiltInCompletions": true
-}
-```
-
-## Development
-
-### Project Structure
+The `prolang` compiler, which is also the language server. Install it with `install.ps1` from the
+repository root, or:
 
 ```
-vscode-extension/
-├── package.json              # Extension manifest
-├── language-configuration.json
-├── syntaxes/
-│   └── prolang.tmLanguage.json
-├── snippets/
-│   └── prolang.json
-├── src/
-│   ├── extension.ts          # Client activation
-│   ├── server.ts             # Language server
-│   └── debugAdapter.ts       # Debug adapter
-├── icons/
-│   └── prolang-icon.png
-└── .vscode/
-    ├── launch.json
-    └── tasks.json
+dotnet tool install -g ProLang.Compiler
 ```
 
-### Debugging the Extension
+The extension finds it by looking, in order, at the `prolang.serverPath` setting, the `PROLANG_PATH`
+environment variable, the ProLang repository if that is what is open, and finally `PATH`.
 
-1. Open the `vscode-extension` folder in VS Code
-2. Press `F5` to launch the Extension Development Host
-3. The language server will start automatically when you open a `.prl` file
+## Settings
 
-### Debugging the Language Server
+| Setting | |
+|---|---|
+| `prolang.serverPath` | Path to the compiler. Empty searches as described above. |
+| `prolang.stdPath` | Where library imports resolve from. Empty uses the `std` directory beside the compiler — except when the ProLang repository is open, where its own `std/` is used so that navigation lands in files you can edit. |
+| `prolang.trace.server` | Logs the messages exchanged with the server, for diagnosing the extension itself. |
 
-1. Run the "Language Server" debug configuration
-2. Check the Output panel for "ProLang Language Server" logs
+## Commands
 
-## Publishing
+`ProLang: Run File`, `ProLang: Build File`, `ProLang: Restart Language Server`,
+`ProLang: Show Language Server Info`.
 
-To publish to the VS Code Marketplace:
+Restarting is worth knowing about: the server keeps analysis cached in memory, and restarting is
+the quickest way to pick up a change made outside the editor.
 
-```bash
-npm install -g @vscode/vsce
-vsce package
-vsce publish
+## Building it
+
+```
+npm install
+npm run compile
+npm run package     # produces a .vsix
 ```
 
-## License
-
-MIT
+The server is not part of this build. It is `src/ProLang/Lsp/` in the compiler, and its tests are
+in `src/ProLang.Tests/Lsp/`.

@@ -126,6 +126,27 @@ library was extracted it is four files, and everything else comes from `std/`.
 | `--c-output=PATH` | Override the transpiler output directory |
 | `-h`, `--help` | Show help |
 
+The compiler also runs the language server:
+
+```bash
+prolang lsp --stdio          # spoken by the editor, not by a person
+```
+
+## Editor support
+
+`vscode-extension/` is a VS Code extension that starts `prolang lsp` and shows what the compiler
+says: real diagnostics, hover documentation, go to definition across the import graph and into the
+standard library, contextual completion, signature help, semantic highlighting, an outline, folding,
+inlay hints and formatting.
+
+It contains no analysis of its own — the extension is a client, and the language it describes is by
+construction the language the compiler compiles. See
+[the language server](docs/architecture/language-server.md).
+
+```bash
+cd vscode-extension && npm install && npm run compile
+```
+
 ## Language
 
 Statically typed with `int`, sized integers (`int8` … `uint64`), `float32`/`float64`, `bool`,
@@ -191,6 +212,7 @@ tools/                  install-app.ps1, for installing a compiled ProLang appli
 examples/               Example programs
 tests/                  ProLang test programs used as the test corpus
 tests/std/              The standard library's own test suite
+vscode-extension/       VS Code extension: a thin client for `prolang lsp`
 docs/                   Architecture, contributing, and performance documentation
 ```
 
@@ -221,6 +243,7 @@ PROLANG_UPDATE_SNAPSHOTS=1 dotnet test src/ProLang.Tests/ProLang.Tests.csproj -c
 - [The .NET backend](docs/architecture/dotnet-backend.md) — how source becomes an assembly
 - [Boxing in the .NET backend](docs/architecture/boxing.md) — where it comes from and how to remove it
 - [.NET interop](docs/architecture/dotnet-interop.md) — referencing assemblies and calling into .NET
+- [The language server](docs/architecture/language-server.md) — how the editor asks the compiler
 - [Adding a builtin](docs/contributing/adding-a-builtin.md)
 - [Performance baseline](docs/perf/baseline-2026-08-15.md)
 - [AGENTS.md](AGENTS.md) — language reference and PSP toolchain setup

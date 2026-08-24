@@ -13,6 +13,9 @@ public sealed class ProLangCompilation
 {
 
     private BoundGlobalScope? _globalScope;
+    private BoundProgram? _program;
+    private SemanticModel? _semanticModel;
+    private readonly BindingRecorder? _recorder;
     private readonly ImmutableArray<Diagnostic> _importDiagnostics;
     private readonly ImmutableHashSet<string> _importedModules;
 
@@ -29,7 +32,7 @@ public sealed class ProLangCompilation
         {
             if (_globalScope == null)
             {
-                var globalScope = Binder.BindGlobalScope(IsScript,Previous?.GlobalScope, SyntaxTrees, _importedModules);
+                var globalScope = Binder.BindGlobalScope(IsScript,Previous?.GlobalScope, SyntaxTrees, _importedModules, _recorder);
 
                 Interlocked.CompareExchange(ref _globalScope, globalScope, null);
             }
@@ -39,7 +42,7 @@ public sealed class ProLangCompilation
     }
  
 
-    private ProLangCompilation(bool isScript, ProLangCompilation? previous, ImmutableArray<Diagnostic> importDiagnostics, ImmutableHashSet<string> importedModules, ImmutableHashSet<string> libAssemblyPaths, params SyntaxTree[] syntaxTrees)
+    private ProLangCompilation(bool isScript, ProLangCompilation? previous, ImmutableArray<Diagnostic> importDiagnostics, ImmutableHashSet<string> importedModules, ImmutableHashSet<string> libAssemblyPaths, bool recordBindings, params SyntaxTree[] syntaxTrees)
     {
         IsScript = isScript;
         Previous = previous;
@@ -47,6 +50,7 @@ public sealed class ProLangCompilation
         _importDiagnostics = importDiagnostics;
         _importedModules = importedModules;
         _libAssemblyPaths = libAssemblyPaths;
+        _recorder = recordBindings ? new BindingRecorder() : null;
     }
 
     public static ProLangCompilation Create(params SyntaxTree[] syntaxTrees) =>
@@ -70,12 +74,49 @@ public sealed class ProLangCompilation
         var (resolved, diagnostics, importedModules, libAssemblyPaths) =
             ResolveAllImports(syntaxTrees.ToImmutableArray(), references);
 
-        return new ProLangCompilation(isScript: false, previous: null, diagnostics, importedModules, libAssemblyPaths, resolved.ToArray());
+        return new ProLangCompilation(isScript: false, previous: null, diagnostics, importedModules, libAssemblyPaths, recordBindings: false, resolved.ToArray());
+    }
+
+    /// <summary>
+    /// Creates a compilation that also remembers what each name in the source resolved to.
+    /// </summary>
+    /// <param name="references">As for <see cref="Create(string[], SyntaxTree[])"/>.</param>
+    /// <param name="syntaxTrees">The roots of the program. Imports are resolved from them as usual.</param>
+    /// <remarks>
+    /// For tooling. Binding is otherwise identical — the extra work is appending to a list as each
+    /// name is resolved — but nothing in a batch compile reads the result, so it is off by default
+    /// rather than paid for by every build.
+    /// </remarks>
+    public static ProLangCompilation CreateForAnalysis(string[] references, params SyntaxTree[] syntaxTrees) =>
+        CreateForAnalysis(references, null, null, syntaxTrees);
+
+    /// <summary>
+    /// As <see cref="CreateForAnalysis(string[], SyntaxTree[])"/>, reading imported files through
+    /// <paramref name="provider"/> and resolving library imports against <paramref name="stdRoot"/>.
+    /// </summary>
+    /// <param name="provider">
+    /// Consulted before the disk, so that unsaved editor buffers are what gets analysed. Null
+    /// reads the disk.
+    /// </param>
+    /// <param name="stdRoot">
+    /// Where <c>import "ui/shape"</c> resolves from. Null uses the <c>std</c> directory beside the
+    /// compiler, which is right for an installed compiler and wrong when someone has the ProLang
+    /// repository itself open and is editing the library.
+    /// </param>
+    public static ProLangCompilation CreateForAnalysis(string[] references, ISourceTextProvider? provider,
+        string? stdRoot, params SyntaxTree[] syntaxTrees)
+    {
+        var (resolved, diagnostics, importedModules, libAssemblyPaths) =
+            ResolveAllImports(syntaxTrees.ToImmutableArray(), references, provider, stdRoot);
+
+        return new ProLangCompilation(isScript: false, previous: null, diagnostics, importedModules, libAssemblyPaths, recordBindings: true, resolved.ToArray());
     }
 
     private static (ImmutableArray<SyntaxTree> Trees, ImmutableArray<Diagnostic> Diagnostics, ImmutableHashSet<string> ImportedModules, ImmutableHashSet<string> LibAssemblyPaths) ResolveAllImports(
         ImmutableArray<SyntaxTree> syntaxTrees,
-        string[] commandLineReferences)
+        string[] commandLineReferences,
+        ISourceTextProvider? provider = null,
+        string? stdRoot = null)
     {
         var allTrees = ImmutableArray.CreateBuilder<SyntaxTree>();
         var diagnostics = ImmutableArray.CreateBuilder<Diagnostic>();
@@ -119,6 +160,14 @@ public sealed class ProLangCompilation
 
                 var importPath = import.Path;
 
+                // An `import` with no path at all. The parser has already reported the missing
+                // string, and inserted a token whose Text and Value are both null to recover with
+                // — so reading Path here threw a NullReferenceException out of Create, before any
+                // diagnostic could be returned. A file containing the word `import` and nothing
+                // else crashed the compiler.
+                if (importPath == null)
+                    continue;
+
                 // Handle .NET namespace imports: "dotnet:System.Text.Json"
                 if (importPath.StartsWith("dotnet:", StringComparison.OrdinalIgnoreCase))
                 {
@@ -156,13 +205,16 @@ public sealed class ProLangCompilation
                     continue;
                 }
 
-                // Resolve: try relative to importing file, then relative to CWD
+                // Resolve: try relative to importing file, then relative to CWD.
+                // A provider, when there is one, stands in for the disk — see ISourceTextProvider.
+                bool Exists(string path) => provider?.Exists(path) == true || File.Exists(path);
+
                 string? resolvedPath = null;
 
                 if (!string.IsNullOrEmpty(importingDir))
                 {
                     var candidate = Path.GetFullPath(Path.Combine(importingDir, importPath));
-                    if (File.Exists(candidate))
+                    if (Exists(candidate))
                     {
                         resolvedPath = candidate;
                     }
@@ -171,7 +223,7 @@ public sealed class ProLangCompilation
                 if (resolvedPath == null)
                 {
                     var candidate = Path.GetFullPath(importPath);
-                    if (File.Exists(candidate))
+                    if (Exists(candidate))
                     {
                         resolvedPath = candidate;
                     }
@@ -180,11 +232,11 @@ public sealed class ProLangCompilation
                 // Try the std/ directory next to the compiler executable
                 if (resolvedPath == null)
                 {
-                    var stdDir = Path.Combine(AppContext.BaseDirectory, "std");
+                    var stdDir = stdRoot ?? Path.Combine(AppContext.BaseDirectory, "std");
                     var stdName = importPath.EndsWith(".prl", StringComparison.OrdinalIgnoreCase)
                         ? importPath : importPath + ".prl";
                     var candidate = Path.GetFullPath(Path.Combine(stdDir, stdName));
-                    if (File.Exists(candidate))
+                    if (Exists(candidate))
                         resolvedPath = candidate;
                 }
 
@@ -228,7 +280,10 @@ public sealed class ProLangCompilation
                     continue;
                 }
 
-                var importedTree = SyntaxTree.Load(resolvedPath);
+                var importedTree = provider != null && provider.TryGetSourceText(resolvedPath, out var buffered)
+                    ? SyntaxTree.Parse(buffered)
+                    : SyntaxTree.Load(resolvedPath);
+
                 queue.Enqueue(importedTree);
             }
         }
@@ -359,34 +414,122 @@ public sealed class ProLangCompilation
     /// </remarks>
     private CodeGen.PreparedProgram PrepareProgram()
     {
-        if (_importDiagnostics.Any())
-        {
-            return CodeGen.PreparedProgram.Failed(_importDiagnostics);
-        }
-
-        var parseDiagnostics = SyntaxTrees.SelectMany(st => st.Diagnostics);
-        var diagnostics = parseDiagnostics.Concat(GlobalScope.Diagnostics).ToImmutableArray();
+        var diagnostics = GetDiagnostics();
 
         if (diagnostics.Any())
         {
             return CodeGen.PreparedProgram.Failed(diagnostics);
         }
 
-        var program = GetProgram();
+        return CodeGen.PreparedProgram.Success(GetProgram());
+    }
 
-        return program.Diagnostics.Any()
-            ? CodeGen.PreparedProgram.Failed(program.Diagnostics)
-            : CodeGen.PreparedProgram.Success(program);
+    /// <summary>
+    /// Every diagnostic the program has, up to but not including code generation.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// The staging is deliberate and is the same staging <see cref="PrepareProgram"/> has always
+    /// had: an unresolved import is reported alone, because binding a program whose imports are
+    /// missing reports every name in it as undefined; and parse errors are reported without
+    /// binding bodies, for the same reason. Reporting the earliest failure alone is what keeps an
+    /// editor from filling with cascading noise from one half-typed line.
+    /// </para>
+    /// <para>
+    /// Binding is guarded. The binder throws outright on a handful of unexpected syntax shapes,
+    /// which is survivable in a compiler that is about to exit and not in a language server that
+    /// has to answer the next keystroke — so a crash degrades to the syntax diagnostics rather
+    /// than taking the process down.
+    /// </para>
+    /// </remarks>
+    public ImmutableArray<Diagnostic> GetDiagnostics()
+    {
+        if (_importDiagnostics.Any())
+        {
+            return _importDiagnostics;
+        }
+
+        var parseDiagnostics = SyntaxTrees.SelectMany(st => st.Diagnostics).ToImmutableArray();
+
+        try
+        {
+            var declarationDiagnostics = parseDiagnostics.Concat(GlobalScope.Diagnostics).ToImmutableArray();
+
+            if (declarationDiagnostics.Any())
+            {
+                return declarationDiagnostics;
+            }
+
+            return GetProgram().Diagnostics;
+        }
+        catch (Exception e) when (e is not OutOfMemoryException and not StackOverflowException)
+        {
+            return parseDiagnostics;
+        }
     }
 
     private BoundProgram GetProgram()
     {
-        var previous = Previous == null ? null : Previous.GetProgram();
+        if (_program != null)
+        {
+            return _program;
+        }
 
-        return Binder.BindProgram(IsScript, previous, GlobalScope);
+        var previous = Previous?.GetProgram();
+        var program = Binder.BindProgram(IsScript, previous!, GlobalScope, _recorder);
+
+        // Cached because binding a program is not cheap and nothing about it varies: the syntax
+        // trees and the global scope are both immutable. GetDiagnostics, PrepareProgram and each
+        // EmitTree overload all used to re-bind the whole import graph from scratch.
+        Interlocked.CompareExchange(ref _program, program, null);
+
+        return _program;
     }
 
     public BoundProgram GetBoundProgram() => GetProgram();
+
+    /// <summary>
+    /// What each name in the source resolved to, queryable by position.
+    /// </summary>
+    /// <remarks>
+    /// Only available on a compilation made by <see cref="CreateForAnalysis"/>. Binding is forced
+    /// here — the model is a view over what binding recorded, so there is nothing to view until it
+    /// has run. Diagnostics are ignored: a program with errors is exactly the program someone is
+    /// looking at in an editor, and the names that did resolve are still worth knowing.
+    /// </remarks>
+    public SemanticModel GetSemanticModel()
+    {
+        if (_recorder == null)
+        {
+            throw new InvalidOperationException(
+                $"This compilation does not record bindings. Use {nameof(CreateForAnalysis)} to create one that does.");
+        }
+
+        if (_semanticModel != null)
+        {
+            return _semanticModel;
+        }
+
+        // Binding is forced directly rather than through GetDiagnostics, which deliberately stops
+        // at the first stage that failed. That staging is right for reporting errors and exactly
+        // wrong here: a file being typed into almost always has a syntax error somewhere, and
+        // stopping would mean the editor knew nothing about the file precisely while it was being
+        // written. The parser recovers, so most of the program still binds and most of it can
+        // still be navigated — including the line under the cursor's neighbours.
+        try
+        {
+            _ = GlobalScope;
+            _ = GetProgram();
+        }
+        catch (Exception e) when (e is not OutOfMemoryException and not StackOverflowException)
+        {
+            // Whatever was recorded before the failure is still worth having.
+        }
+
+        Interlocked.CompareExchange(ref _semanticModel, new SemanticModel(this, _recorder), null);
+
+        return _semanticModel;
+    }
 
     public void EmitTree(TextWriter writer)
     {
@@ -414,6 +557,17 @@ public sealed class ProLangCompilation
 
     public ImmutableArray<SyntaxTree> SyntaxTrees { get; }
 
+    /// <summary>
+    /// The modules this program imported, in the form they were written.
+    /// </summary>
+    /// <remarks>
+    /// Completion needs this to tell the truth. The binder's root scope only declares the builtins
+    /// of modules a program actually imported, so <c>print</c> is not in scope without
+    /// <c>import "io"</c> — and a completion list that ignores that offers programs that will not
+    /// compile.
+    /// </remarks>
+    public ImmutableHashSet<string> ImportedModules => _importedModules;
+
     public bool IsScript { get; }
 
     public FunctionSymbol MainFunction => GlobalScope.MainFunction;
@@ -422,6 +576,20 @@ public sealed class ProLangCompilation
 
     public ImmutableArray<VariableSymbol> Variables => GlobalScope.Variables;
 
+    /// <summary>The structs declared anywhere in this program's import graph.</summary>
+    public ImmutableArray<StructSymbol> StructTypes => GlobalScope.StructTypes;
+
+    /// <summary>The enums declared anywhere in this program's import graph.</summary>
+    public ImmutableArray<EnumSymbol> EnumTypes => GlobalScope.EnumTypes;
+
+    /// <summary>
+    /// Every name a program can use: its own declarations, and the builtins it imported.
+    /// </summary>
+    /// <remarks>
+    /// Structs and enums are included. They were not, which nothing noticed because the only
+    /// caller was the REPL's symbol listing — but a completion list that omits every type a
+    /// program declares is missing the names most worth completing.
+    /// </remarks>
     public IEnumerable<Symbol> GetSymbols()
     {
         var submission = this;
@@ -445,6 +613,22 @@ public sealed class ProLangCompilation
                 if (seenSymbols.Add(variable.Name))
                 {
                     yield return variable;
+                }
+            }
+
+            foreach (var structType in submission.StructTypes)
+            {
+                if (seenSymbols.Add(structType.Name))
+                {
+                    yield return structType;
+                }
+            }
+
+            foreach (var enumType in submission.EnumTypes)
+            {
+                if (seenSymbols.Add(enumType.Name))
+                {
+                    yield return enumType;
                 }
             }
 

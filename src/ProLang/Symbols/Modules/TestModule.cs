@@ -12,6 +12,8 @@ public sealed class TestModule : BuiltInModule
 {
     public override string Name => "test";
 
+    public override string Summary => "Assertions, so a test program written in ProLang can actually fail.";
+
     public override IReadOnlyList<FunctionSymbol> Functions { get; } =
     [
         BuiltInFunctions.Assert,

@@ -1,5 +1,6 @@
 using System.Collections.Immutable;
 using System.Reflection;
+using ProLang.Documentation;
 using ProLang.Interop;
 using ProLang.Lowering;
 using ProLang.Parse;
@@ -30,14 +31,26 @@ internal sealed class Binder
     // Shared across all binders in one compilation — maps concrete function name → (symbol, body).
     private readonly Dictionary<string, (FunctionSymbol Symbol, BoundBlockStatement Body)>? _sharedInstantiations;
 
+    /// <summary>
+    /// Where resolved names are written down for an editor to query, or null for a plain compile.
+    /// </summary>
+    /// <remarks>
+    /// Shared by every binder in one compilation, and read by nothing during binding — it only
+    /// ever accumulates. Null unless a caller asked for it, so the cost of it not being wanted is
+    /// a null check.
+    /// </remarks>
+    private readonly BindingRecorder? _recorder;
+
     public Binder(bool isScript, BoundScope parent, FunctionSymbol? function,
         Dictionary<string, TypeSymbol>? typeBindings = null,
-        Dictionary<string, (FunctionSymbol Symbol, BoundBlockStatement Body)>? sharedInstantiations = null)
+        Dictionary<string, (FunctionSymbol Symbol, BoundBlockStatement Body)>? sharedInstantiations = null,
+        BindingRecorder? recorder = null)
     {
         _scope = new BoundScope(parent);
         _isScript = isScript;
         _function = function;
         _sharedInstantiations = sharedInstantiations;
+        _recorder = recorder;
 
         if (typeBindings != null)
         {
@@ -54,11 +67,11 @@ internal sealed class Binder
         }
     }
 
-    public static BoundGlobalScope BindGlobalScope(bool isScript, BoundGlobalScope? previous, ImmutableArray<SyntaxTree> syntaxTrees, ImmutableHashSet<string>? importedModules = null)
+    public static BoundGlobalScope BindGlobalScope(bool isScript, BoundGlobalScope? previous, ImmutableArray<SyntaxTree> syntaxTrees, ImmutableHashSet<string>? importedModules = null, BindingRecorder? recorder = null)
     {
         var parentScope = CreateParentScope(previous, importedModules);
 
-        var binder = new Binder(isScript, parentScope, null);
+        var binder = new Binder(isScript, parentScope, null, recorder: recorder);
 
         // Single-pass collection of all declarations to avoid multiple SelectMany iterations
         var allDeclarations = syntaxTrees.SelectMany(st => st.Root.Declarations).ToList();
@@ -255,7 +268,49 @@ internal sealed class Binder
         return new BoundGlobalScope(previous, diagnostics, finalMainFunction, scriptFunction, functions, variables, statements.ToImmutableArray(), structTypes, importedModules, enumTypes);
     }
 
-    public static BoundProgram BindProgram(bool isScript, BoundProgram previous, BoundGlobalScope? globalScope)
+    /// <summary>
+    /// Binds a generic function's body once, purely so its contents can be navigated.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Code generation never binds a template — only its instantiations, one per set of type
+    /// arguments. That is right for emitting and useless for an editor: a generic function nobody
+    /// calls yet would have no symbols recorded inside it at all, so hovering anything in the body
+    /// of <c>dynarray_push</c> would return nothing until somewhere else in the program happened
+    /// to call it.
+    /// </para>
+    /// <para>
+    /// So bind it with its type parameters standing for themselves, and throw everything away
+    /// except what the recorder wrote down. The diagnostics in particular are discarded — they are
+    /// reported against each real instantiation, and reporting them twice would double every error
+    /// in a generic function.
+    /// </para>
+    /// </remarks>
+    private static void BindGenericTemplateForAnalysis(bool isScript, BoundScope parentScope,
+        FunctionSymbol function, BindingRecorder? recorder)
+    {
+        if (recorder == null || function.Declaration == null)
+        {
+            return;
+        }
+
+        var typeBindings = function.TypeParameters.ToDictionary(p => p.Name, p => (TypeSymbol)p);
+
+        try
+        {
+            var binder = new Binder(isScript, parentScope, function, typeBindings, recorder: recorder);
+
+            binder.BindStatement(function.Declaration.Body);
+        }
+        catch (Exception e) when (e is not OutOfMemoryException and not StackOverflowException)
+        {
+            // Analysing a template is a convenience, never a requirement. If a body only makes
+            // sense once its type arguments are known, the instantiations still bind normally and
+            // the editor is merely thinner inside this one function.
+        }
+    }
+
+    public static BoundProgram BindProgram(bool isScript, BoundProgram previous, BoundGlobalScope? globalScope, BindingRecorder? recorder = null)
     {
         var parentScope = CreateParentScope(globalScope, globalScope?.ImportedModules);
 
@@ -280,10 +335,13 @@ internal sealed class Binder
 
             // Skip generic templates — they are instantiated on demand
             if (function.IsGeneric)
+            {
+                BindGenericTemplateForAnalysis(isScript, parentScope, function, recorder);
                 continue;
+            }
 
             var binder = new Binder(isScript, parentScope, function,
-                sharedInstantiations: sharedInstantiations);
+                sharedInstantiations: sharedInstantiations, recorder: recorder);
 
             var body = binder.BindStatement(function.Declaration.Body);
 
@@ -384,6 +442,8 @@ internal sealed class Binder
             {
                 var parameter = new ParameterSymbol(parameterName, parameterType, parameters.Count, defaultValue);
                 parameters.Add(parameter);
+
+                _recorder?.RecordSymbol(parameterSyntax.Identifier.Location, parameter, OccurrenceKind.Definition);
             }
         }
 
@@ -392,7 +452,12 @@ internal sealed class Binder
         _scope = savedScope;
 
         var function = new FunctionSymbol(syntax.Identifier.Text, parameters.ToImmutable(), type, syntax,
-            typeParamSymbols.ToImmutable());
+            typeParamSymbols.ToImmutable())
+        {
+            Documentation = DocumentationFor(syntax),
+        };
+
+        _recorder?.RecordSymbol(syntax.Identifier.Location, function, OccurrenceKind.Definition);
 
         if (!_scope.TryDeclareFunction(function))
         {
@@ -578,12 +643,19 @@ internal sealed class Binder
             {
                 var field = new StructField(fieldName, fieldType);
                 fields.Add(field);
+
+                _recorder?.RecordSymbol(fieldSyntax.Identifier.Location, field, OccurrenceKind.Definition);
             }
         }
 
         _scope = savedScope;
 
-        var structSymbol = new StructSymbol(name, typeParameters.ToImmutable(), fields.ToImmutable());
+        var structSymbol = new StructSymbol(name, typeParameters.ToImmutable(), fields.ToImmutable())
+        {
+            Documentation = DocumentationFor(syntax),
+        };
+
+        _recorder?.RecordSymbol(syntax.Identifier.Location, structSymbol, OccurrenceKind.Definition);
 
         if (_structTypes == null)
         {
@@ -630,7 +702,28 @@ internal sealed class Binder
             nextValue++;
         }
 
-        var enumSymbol = new EnumSymbol(name, members.ToImmutable());
+        var enumSymbol = new EnumSymbol(name, members.ToImmutable())
+        {
+            Documentation = DocumentationFor(syntax),
+        };
+
+        if (_recorder != null)
+        {
+            _recorder.RecordSymbol(syntax.Identifier.Location, enumSymbol, OccurrenceKind.Definition);
+
+            // Members are matched back to their syntax by name rather than by position, because a
+            // duplicate member is skipped above and would otherwise shift every one after it.
+            foreach (var memberSyntax in syntax.Members)
+            {
+                var member = enumSymbol.FindMember(memberSyntax.Identifier.Text);
+
+                if (member != null)
+                {
+                    _recorder.RecordSymbol(memberSyntax.Identifier.Location,
+                        _recorder.GetEnumMember(enumSymbol, member), OccurrenceKind.Definition);
+                }
+            }
+        }
 
         _enumTypes ??= ImmutableArray.CreateBuilder<EnumSymbol>();
 
@@ -890,6 +983,12 @@ internal sealed class Binder
     {
         var result = BindInternalExpression(syntax, expectedType);
 
+        // Every expression in the program passes through here, which is the whole reason the type
+        // map is recorded at this one point: it gives a type to spans no symbol occurrence covers.
+        // Completion after a `.` needs the type of whatever is to its left, and that is as often
+        // `getBox(i)` or `arr[0]` as it is a plain name.
+        _recorder?.RecordExpressionType(syntax.Location, result.Type);
+
         if (!canBeVoid && result.Type == TypeSymbol.Void)
         {
             _diagnostics.ReportExpressionMustHaveValue(syntax.Location);
@@ -1001,6 +1100,12 @@ internal sealed class Binder
                 _diagnostics.ReportUndefinedType(nameSyntax.Identifier.Location, name);
                 return TypeSymbol.Error;
             }
+
+            // This is the occurrence that makes `let p: Point` navigable, and it is only
+            // obtainable here: a type clause produces a TypeSymbol and never a bound node, so
+            // there is nowhere else in the pipeline that knows both this span and this symbol.
+            _recorder?.RecordSymbol(nameSyntax.Identifier.Location, type, OccurrenceKind.TypeReference);
+
             return type;
         }
 
@@ -1013,6 +1118,10 @@ internal sealed class Binder
                 _diagnostics.ReportUndefinedType(genericSyntax.Identifier.Location, name);
                 return TypeSymbol.Error;
             }
+
+            // The template, before instantiation below — `DynArray` in `DynArray<int>` is written
+            // once in the source and declared once, however many element types it is used with.
+            _recorder?.RecordSymbol(genericSyntax.Identifier.Location, baseType, OccurrenceKind.TypeReference);
 
             var arguments = ImmutableArray.CreateBuilder<TypeSymbol>();
             foreach (var argSyntax in genericSyntax.Arguments)
@@ -1062,70 +1171,43 @@ internal sealed class Binder
 
     private TypeSymbol? LookupType(string name)
     {
-        switch (name)
+        // From the shared table rather than a switch of its own. The switch this replaces had
+        // drifted: it had no uint32 case, although TypeSymbol.UInt32 has always existed and all
+        // three backends emit it, so `let x: uint32 = 0` was the one integer width that would not
+        // bind. A table both this and completion read cannot drift again.
+        if (TypeSymbol.Primitives.TryGetValue(name, out var primitive))
         {
-            case "any":
-                return TypeSymbol.Any;
-            case "bool":
-                return TypeSymbol.Bool;
-            case "int":
-                return TypeSymbol.Int;
-            case "string":
-                return TypeSymbol.String;
-            case "void":
-                return TypeSymbol.Void;
-            case "array":
-                return TypeSymbol.Array;
-            case "map":
-                return TypeSymbol.Map;
-            case "uint8":
-                return TypeSymbol.UInt8;
-            case "int8":
-                return TypeSymbol.Int8;
-            case "uint16":
-                return TypeSymbol.UInt16;
-            case "int16":
-                return TypeSymbol.Int16;
-            case "uint64":
-                return TypeSymbol.UInt64;
-            case "int64":
-                return TypeSymbol.Int64;
-            case "float":
-                return TypeSymbol.Float;
-            case "float32":
-                return TypeSymbol.Float32;
-            case "float64":
-                return TypeSymbol.Float64;
-            default:
-                if (_scope.TryLookupTypeSymbol(name, out var typeSymbol))
-                {
-                    return typeSymbol;
-                }
-
-                if (_scope.TryLookupType(name, out var structSymbol))
-                {
-                    return structSymbol;
-                }
-
-                // Try to find as a .NET type
-                var dotNetType = DotNetAssemblyRegistry.Instance.FindType(name);
-                if (dotNetType != null)
-                {
-                    return DotNetTypeMapper.MapToProLangType(dotNetType);
-                }
-
-                // Try common namespace prefixes
-                foreach (var ns in new[] { "System", "System.Collections.Generic", "System.Text", "System.IO" })
-                {
-                    dotNetType = DotNetAssemblyRegistry.Instance.FindTypeByNamespace(ns, name);
-                    if (dotNetType != null)
-                    {
-                        return DotNetTypeMapper.MapToProLangType(dotNetType);
-                    }
-                }
-
-                return null;
+            return primitive;
         }
+
+        if (_scope.TryLookupTypeSymbol(name, out var typeSymbol))
+        {
+            return typeSymbol;
+        }
+
+        if (_scope.TryLookupType(name, out var structSymbol))
+        {
+            return structSymbol;
+        }
+
+        // Try to find as a .NET type
+        var dotNetType = DotNetAssemblyRegistry.Instance.FindType(name);
+        if (dotNetType != null)
+        {
+            return DotNetTypeMapper.MapToProLangType(dotNetType);
+        }
+
+        // Try common namespace prefixes
+        foreach (var ns in new[] { "System", "System.Collections.Generic", "System.Text", "System.IO" })
+        {
+            dotNetType = DotNetAssemblyRegistry.Instance.FindTypeByNamespace(ns, name);
+            if (dotNetType != null)
+            {
+                return DotNetTypeMapper.MapToProLangType(dotNetType);
+            }
+        }
+
+        return null;
     }
 
     private BoundStatement BindProLangBlockStatement(BlockStatementSyntax syntax)
@@ -1348,6 +1430,8 @@ internal sealed class Binder
             structType = structType.InstantiateGeneric(typeArgs) as StructSymbol ?? structType;
         }
 
+        _recorder?.RecordSymbol(syntax.TypeName.Location, structType, OccurrenceKind.TypeReference);
+
         var fieldValues = ImmutableArray.CreateBuilder<BoundExpression>();
 
         foreach (var initializer in syntax.Initializers)
@@ -1359,6 +1443,8 @@ internal sealed class Binder
             if (matchedField != null)
                 value = BindConversion(initializer.Expression.Location, value, matchedField.Type);
             fieldValues.Add(value);
+
+            _recorder?.RecordSymbol(initializer.FieldName.Location, matchedField, OccurrenceKind.Reference);
         }
 
         return new BoundStructCreationExpression(structType, fieldValues.ToImmutable());
@@ -1379,6 +1465,14 @@ internal sealed class Binder
                     _diagnostics.ReportUndefinedField(syntax.FieldName.Location, enumSym.Name, memberName);
                     return new BoundErrorExpression();
                 }
+
+                if (_recorder != null)
+                {
+                    _recorder.RecordSymbol(nameExpr.IdentifierToken.Location, enumSym, OccurrenceKind.TypeReference);
+                    _recorder.RecordSymbol(syntax.FieldName.Location,
+                        _recorder.GetEnumMember(enumSym, member), OccurrenceKind.Reference);
+                }
+
                 return new BoundEnumMemberExpression(enumSym, member);
             }
 
@@ -1423,6 +1517,8 @@ internal sealed class Binder
             _diagnostics.ReportUndefinedField(syntax.FieldName.Location, structType.Name, fieldName);
             return new BoundErrorExpression();
         }
+
+        _recorder?.RecordSymbol(syntax.FieldName.Location, field, OccurrenceKind.Reference);
 
         return new BoundFieldAccessExpression(expression, fieldName, field);
     }
@@ -1570,6 +1666,8 @@ internal sealed class Binder
             return new BoundErrorExpression();
         }
 
+        _recorder?.RecordSymbol(syntax.IdentifierToken.Location, variable, OccurrenceKind.Reference);
+
         return new BoundVariableExpression(variable!);
     }
 
@@ -1588,6 +1686,8 @@ internal sealed class Binder
             _diagnostics.ReportCannotUseAsFunctionValue(location, function.Name);
             return new BoundErrorExpression();
         }
+
+        _recorder?.RecordSymbol(location, function, OccurrenceKind.Reference);
 
         var parameterTypes = function.Parameters.Select(p => p.Type).ToImmutableArray();
         var functionType = new FunctionTypeSymbol(parameterTypes, function.Type);
@@ -1676,6 +1776,10 @@ internal sealed class Binder
                 return new BoundErrorExpression();
             }
         }
+
+        // Recorded before generic instantiation replaces the symbol, so the occurrence names the
+        // function as it is written in the source rather than DynArray_push<int>.
+        _recorder?.RecordSymbol(syntax.Identifier.Location, function, OccurrenceKind.Reference);
 
         // Named arguments are a ProLang-function feature. Interop overloads are picked by metadata
         // signature, where a parameter's name is not part of the contract it publishes.
@@ -2129,6 +2233,8 @@ internal sealed class Binder
                 boundArguments.Add(BindConversion(syntax.Arguments[i].Location, argument, parameter.Type));
             }
 
+            _recorder?.RecordSymbol(syntax.MethodName.Location, function, OccurrenceKind.Reference);
+
             return new BoundCallExpression(function, boundArguments.ToImmutable());
         }
 
@@ -2160,6 +2266,8 @@ internal sealed class Binder
                 var parameter = function.Parameters[i + 1];
                 boundArguments.Add(BindConversion(syntax.Arguments[i].Location, argument, parameter.Type));
             }
+
+            _recorder?.RecordSymbol(syntax.MethodName.Location, function, OccurrenceKind.Reference);
 
             return new BoundCallExpression(function, boundArguments.ToImmutable());
         }
@@ -2561,6 +2669,18 @@ internal sealed class Binder
         return new BoundConversionExpression(type, expression);
     }
 
+    /// <summary>
+    /// The comment written above a declaration, as its documentation.
+    /// </summary>
+    /// <remarks>
+    /// Done for every compile rather than only when tooling asks, because it costs a short
+    /// backwards scan per declaration and it is what lets everything downstream read documentation
+    /// from one place — <see cref="Symbol.Documentation"/> — without knowing or caring whether the
+    /// symbol came from a <c>.prl</c> file or from the builtin table.
+    /// </remarks>
+    private static string? DocumentationFor(DeclarationSyntax syntax) =>
+        DocumentationExtractor.ForDeclaration(syntax.SyntaxTree.Text, syntax.Span.Start);
+
     private VariableSymbol BindVariable(SyntaxToken identifier, bool isReadonly, TypeSymbol type)
     {
         var name = identifier.Text ?? "?";
@@ -2574,10 +2694,16 @@ internal sealed class Binder
             // Variable already declared — try to look up the existing one
             if (_scope.TryLookupVariable(name, out var existing))
             {
+                // Recorded against the symbol that survived, so that both spellings of the name
+                // belong to the same symbol and rename reaches both.
+                _recorder?.RecordSymbol(identifier.Location, existing, OccurrenceKind.Definition);
+
                 return existing!;
             }
             _diagnostics.ReportVariableAlreadyDeclared(identifier.Location, name);
         }
+
+        _recorder?.RecordSymbol(identifier.Location, variable, OccurrenceKind.Definition);
 
         return variable;
     }

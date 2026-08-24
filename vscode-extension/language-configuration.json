@@ -6,15 +6,13 @@
   "brackets": [
     ["{", "}"],
     ["[", "]"],
-    ["(", ")"],
-    ["<", ">"]
+    ["(", ")"]
   ],
   "autoClosingPairs": [
     { "open": "{", "close": "}" },
     { "open": "[", "close": "]" },
     { "open": "(", "close": ")" },
-    { "open": "\"", "close": "\"", "notIn": ["string"] },
-    { "open": "/**", "close": " */", "notIn": ["string"] }
+    { "open": "\"", "close": "\"", "notIn": ["string"] }
   ],
   "surroundingPairs": [
     ["{", "}"],
@@ -29,9 +27,9 @@
       "end": "^\\s*//\\s*#?endregion\\b"
     }
   },
-  "wordPattern": "(-?\\d*\\.\\d\\w*)|([^\\`\\~\\!\\@\\#\\%\\^\\&\\*\\(\\)\\-\\=\\+\\[\\{\\]\\}\\\\\\|\\;\\:\\'\\\"\\,\\.\\<\\>\\/\\?\\s]+)",
+  "wordPattern": "[A-Za-z_][A-Za-z0-9_]*",
   "indentationRules": {
-    "increaseIndentPattern": "^\\s*((if|elif|else|while|for|func)\\b[^{]*)|.*\\{\\s*$",
-    "decreaseIndentPattern": "^\\s*(\\}|(elif|else)\\b)"
+    "increaseIndentPattern": ".*\\{\\s*$",
+    "decreaseIndentPattern": "^\\s*\\}"
   }
 }

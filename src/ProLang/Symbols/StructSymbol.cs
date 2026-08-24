@@ -15,7 +15,7 @@ public sealed class StructSymbol : TypeSymbol
 
     public bool IsGeneric => TypeParameters.Length > 0;
 
-    public override SymbolKind Kind => SymbolKind.Type;
+    public override SymbolKind Kind => SymbolKind.Struct;
 
     // Set for concrete instantiations; points back to the generic template.
     public StructSymbol? OriginalGeneric { get; private set; }

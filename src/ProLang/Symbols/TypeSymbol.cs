@@ -31,7 +31,44 @@ public class TypeSymbol : Symbol
     public static readonly TypeSymbol Float32 = new("float32"); // System.Single
     public static readonly TypeSymbol Float64 = new("float64"); // System.Double
 
-
+    /// <summary>
+    /// Every type that can be named by a keyword, keyed by the name a program writes.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// One table, so the binder's name resolution and everything that has to enumerate the
+    /// primitives — completion, documentation — cannot disagree about what they are. They already
+    /// had: the binder's resolution switch had no <c>uint32</c> case, although the symbol has
+    /// always existed here and all three backends emit it, so <c>let x: uint32 = 0</c> failed to
+    /// bind while every other width worked.
+    /// </para>
+    /// <para>
+    /// <see cref="Error"/> and <see cref="Null"/> are deliberately absent: neither is writable in
+    /// source, and offering either in a type position would be offering a program that cannot
+    /// compile.
+    /// </para>
+    /// </remarks>
+    public static readonly ImmutableDictionary<string, TypeSymbol> Primitives =
+        new Dictionary<string, TypeSymbol>(StringComparer.Ordinal)
+        {
+            ["any"] = Any,
+            ["bool"] = Bool,
+            ["int"] = Int,
+            ["string"] = String,
+            ["void"] = Void,
+            ["array"] = Array,
+            ["map"] = Map,
+            ["uint8"] = UInt8,
+            ["int8"] = Int8,
+            ["uint16"] = UInt16,
+            ["int16"] = Int16,
+            ["uint32"] = UInt32,
+            ["uint64"] = UInt64,
+            ["int64"] = Int64,
+            ["float"] = Float,
+            ["float32"] = Float32,
+            ["float64"] = Float64,
+        }.ToImmutableDictionary(StringComparer.Ordinal);
 
     public TypeSymbol(string name, ImmutableArray<TypeSymbol> typeArguments = default) : base(name)
     {

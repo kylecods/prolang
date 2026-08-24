@@ -46,6 +46,27 @@ public sealed class SourceText
         return lower - 1;
     }
 
+    /// <summary>
+    /// The inverse of <see cref="GetLineIndex"/>: the absolute offset of a line and character.
+    /// </summary>
+    /// <remarks>
+    /// Clamps rather than throws. Every editor request arrives as a line and a character, and a
+    /// client that is a keystroke ahead of the server will ask about a position that no longer
+    /// exists. Answering with the nearest valid offset is right; taking the server down is not.
+    /// </remarks>
+    public int GetPosition(int line, int character)
+    {
+        if (Lines.Length == 0)
+        {
+            return 0;
+        }
+
+        var lineIndex = Math.Clamp(line, 0, Lines.Length - 1);
+        var textLine = Lines[lineIndex];
+
+        return Math.Clamp(textLine.Start + character, textLine.Start, textLine.End);
+    }
+
     private static ImmutableArray<TextLine> ParseLines(SourceText sourceText, string text)
     {
         var result = ImmutableArray.CreateBuilder<TextLine>();
@@ -71,10 +92,12 @@ public sealed class SourceText
             }
         }
 
-        if (position > lineStart)
-        {
-            AddLine(result, sourceText, position, lineStart, 0);
-        }
+        // Unconditionally, not `if (position > lineStart)`. A file ending in a line break ends on
+        // an empty final line, and that line is a real place a cursor can be — it is where every
+        // editor puts you after pressing Enter at the end of a file. Emitting it only when it has
+        // content meant `Lines` was short by one for almost every file in the repository, and a
+        // position on that line indexed past the end of the array.
+        AddLine(result, sourceText, position, lineStart, 0);
 
         return result.ToImmutable();
     }

@@ -112,7 +112,7 @@ internal sealed class Lexer
                             // Unterminated block comment
                             var span = new TextSpan(_start, 2);
                             var location = new TextLocation(_text, span);
-                            _diagnostics.ReportUnterminatedString(location);
+                            _diagnostics.ReportUnterminatedBlockComment(location);
                             break;
                         }
                         if (Current == '*' && LookAhead == '/')
@@ -340,7 +340,12 @@ internal sealed class Lexer
             text = _text.ToString(_start, length);
         }
 
-        return new SyntaxToken(_syntaxTree,_kind,_position,text,_value);
+        // _start, not _position: _position has already advanced past the token by now, so passing
+        // it put every token's span one token-length to the right of the text it describes — and
+        // with it every node span and every diagnostic column in the compiler. Nothing reassigns
+        // SyntaxToken.Position afterwards, and the diagnostic renderer swallows the resulting
+        // out-of-range span in a catch, which is why this was invisible rather than merely wrong.
+        return new SyntaxToken(_syntaxTree,_kind,_start,text,_value);
     }
 
     private void ReadString()
