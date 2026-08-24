@@ -1,9 +1,26 @@
+/*
+ * A growable array, generic in its element type
+ *
+ * prolang's `array<T>` is fixed-length and has no push or pop, so anything that grows is written
+ * in prolang on top of one. This is that: a block of storage, how much of it is in use, and how
+ * much there is. Pushing past the capacity allocates a new block of twice the size and copies.
+ *
+ * Every function returns a new DynArray rather than modifying the one it was given, and callers
+ * have to assign the result: `arr = dynarray_push(arr, 3)`. That is not a style preference. A
+ * struct is a .NET value type, so a parameter is a copy, and assigning to a copy's `size` field
+ * is invisible to the caller. The `data` field is a reference to a real array and writes through
+ * it are visible, which is why the elements survive — but the size never would.
+ *
+ * See std/intstack.prl for the fixed-capacity alternative, which does not reallocate.
+ */
+
 struct DynArray<T> {
     data: array<T>,
     size: int,
     capacity: int
 }
 
+// An empty array with room for `cap` elements before it has to grow.
 func dynarray_new<T>(cap: int) : DynArray<T> {
     let data: array<T> = array_new(cap)
     return DynArray<T> { data: data, size: 0, capacity: cap }

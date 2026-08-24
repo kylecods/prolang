@@ -24,6 +24,9 @@ public sealed class DotNetInteropModule : BuiltInModule
 
     public override string Name => _namespaceName;
 
+    /// <summary>A .NET namespace, registered by a <c>dotnet:</c> import rather than built in.</summary>
+    public override bool IsIntrinsic => false;
+
     public override IReadOnlyList<FunctionSymbol> Functions => _functions.Value;
 
     public IReadOnlyList<TypeSymbol> Types => _types.Value;

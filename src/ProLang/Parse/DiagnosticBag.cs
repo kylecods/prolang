@@ -26,6 +26,31 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         _diagnostics.Add(diagnostic);
     }
 
+    private void ReportWarning(TextLocation location, string message)
+    {
+        _diagnostics.Add(new Diagnostic(location, message, DiagnosticSeverity.Warning));
+    }
+
+    /// <summary>
+    /// An <c>import</c> nothing in the file uses.
+    /// </summary>
+    /// <remarks>
+    /// A warning rather than an error: the program builds and runs correctly with it. It is worth
+    /// saying because ProLang gates builtins on imports — <c>print</c> is not in scope without
+    /// <c>import "io"</c> — so imports accumulate as code moves around, and each one that is a
+    /// module rather than a file is a whole namespace of names in scope for no reason.
+    /// </remarks>
+    public void ReportUnusedImport(TextLocation location, string path)
+    {
+        ReportWarning(location, $"Import '{path}' is not used.");
+    }
+
+    /// <summary>A local that is declared, and never read.</summary>
+    public void ReportUnusedVariable(TextLocation location, string name)
+    {
+        ReportWarning(location, $"Variable '{name}' is declared but never used.");
+    }
+
     public void ReportInvalidNumber(TextLocation location, string text, TypeSymbol type)
     {
         var message = $"The number {text} is not a valid {type}.";
@@ -79,9 +104,20 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
 
     public void ReportUnterminatedString(TextLocation location)
     {
-        var message = "Unterminated string literal";
-        var diagnostic = new Diagnostic(location, message);
-        Report(location, message);
+        Report(location, "Unterminated string literal");
+    }
+
+    /// <summary>
+    /// A <c>/*</c> with no <c>*/</c>.
+    /// </summary>
+    /// <remarks>
+    /// Previously reported as an unterminated string literal, which sent anyone reading it looking
+    /// for a quotation mark. The two are worth telling apart in an editor especially, where an
+    /// unclosed block comment swallows the rest of the file and the message is the only clue.
+    /// </remarks>
+    public void ReportUnterminatedBlockComment(TextLocation location)
+    {
+        Report(location, "Unterminated block comment: '/*' has no matching '*/'");
     }
 
     public void ReportUndefinedFunction(TextLocation location, string name)

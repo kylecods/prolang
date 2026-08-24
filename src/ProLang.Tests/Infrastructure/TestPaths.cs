@@ -22,6 +22,9 @@ internal static class TestPaths
     /// <summary>Absolute path of <c>tests/</c> (the ProLang-source test corpus).</summary>
     public static string TestCorpus => Path.Combine(RepoRoot, "tests");
 
+    /// <summary>Absolute path of <c>std/</c>, the standard library's source.</summary>
+    public static string StandardLibrary => Path.Combine(RepoRoot, "std");
+
     /// <summary>
     /// Directory holding the checked-in golden files, resolved against the *source* tree rather
     /// than the build output so that snapshot updates land somewhere git can see them.

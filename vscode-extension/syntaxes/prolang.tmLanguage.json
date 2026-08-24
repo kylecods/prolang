@@ -7,30 +7,15 @@
     "prolang"
   ],
   "patterns": [
-    {
-      "include": "#comments"
-    },
-    {
-      "include": "#strings"
-    },
-    {
-      "include": "#html-script-tags"
-    },
-    {
-      "include": "#keywords"
-    },
-    {
-      "include": "#types"
-    },
-    {
-      "include": "#operators"
-    },
-    {
-      "include": "#numbers"
-    },
-    {
-      "include": "#identifiers"
-    }
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#declarations" },
+    { "include": "#keywords" },
+    { "include": "#types" },
+    { "include": "#numbers" },
+    { "include": "#calls" },
+    { "include": "#operators" },
+    { "include": "#identifiers" }
   ],
   "repository": {
     "comments": {
@@ -38,12 +23,7 @@
         {
           "name": "comment.block.prolang",
           "begin": "/\\*",
-          "end": "\\*/",
-          "patterns": [
-            {
-              "include": "#comments"
-            }
-          ]
+          "end": "\\*/"
         },
         {
           "name": "comment.line.double-slash.prolang",
@@ -59,50 +39,37 @@
           "end": "\"",
           "patterns": [
             {
+              "comment": "A quotation mark is escaped by doubling it, as the lexer's ReadString does.",
               "name": "constant.character.escape.prolang",
-              "match": "\\\\."
-            },
-            {
-              "name": "invalid.illegal.unclosed-string.prolang",
-              "match": "$"
+              "match": "\"\""
             }
           ]
         }
       ]
     },
-    "html-script-tags": {
+    "declarations": {
+      "comment": "The name being declared, so a definition reads differently from a use.",
       "patterns": [
         {
-          "begin": "(?i)(<)(script)([^>]*>)",
-          "beginCaptures": {
-            "1": {
-              "name": "punctuation.definition.tag.begin.html"
-            },
-            "2": {
-              "name": "entity.name.tag.script.html"
-            },
-            "3": {
-              "name": "meta.tag.metadata.script.html"
-            }
-          },
-          "end": "(?i)(</)(script)(>)",
-          "endCaptures": {
-            "1": {
-              "name": "punctuation.definition.tag.begin.html"
-            },
-            "2": {
-              "name": "entity.name.tag.script.html"
-            },
-            "3": {
-              "name": "meta.tag.metadata.script.html"
-            }
-          },
-          "contentName": "source.prolang.embedded.html",
-          "patterns": [
-            {
-              "include": "source.prolang"
-            }
-          ]
+          "match": "\\b(func)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.function.prolang" },
+            "2": { "name": "entity.name.function.prolang" }
+          }
+        },
+        {
+          "match": "\\b(struct|enum)\\s+([a-zA-Z_][a-zA-Z0-9_]*)",
+          "captures": {
+            "1": { "name": "keyword.declaration.type.prolang" },
+            "2": { "name": "entity.name.type.prolang" }
+          }
+        },
+        {
+          "match": "\\b(import)\\s+(\"[^\"]*\")",
+          "captures": {
+            "1": { "name": "keyword.control.import.prolang" },
+            "2": { "name": "string.quoted.double.prolang" }
+          }
         }
       ]
     },
@@ -114,19 +81,41 @@
         },
         {
           "name": "keyword.declaration.prolang",
-          "match": "\\b(let|func|import)\\b"
+          "match": "\\b(let|func|struct|enum|import)\\b"
+        },
+        {
+          "name": "keyword.operator.cast.prolang",
+          "match": "\\bas\\b"
         },
         {
           "name": "constant.language.prolang",
-          "match": "\\b(true|false)\\b"
+          "match": "\\b(true|false|null)\\b"
         }
       ]
     },
     "types": {
       "patterns": [
         {
+          "comment": "Every name in TypeSymbol.Primitives, which is what the binder resolves.",
           "name": "support.type.prolang",
-          "match": "\\b(int|bool|string|array|map|any)\\b"
+          "match": "\\b(int|int8|int16|int64|uint8|uint16|uint32|uint64|float|float32|float64|bool|string|void|any|array|map)\\b"
+        },
+        {
+          "comment": "A capitalised name in a type position: struct and enum names by convention.",
+          "match": "(?<=:\\s{0,8})([A-Z][a-zA-Z0-9_]*)",
+          "captures": {
+            "1": { "name": "entity.name.type.prolang" }
+          }
+        }
+      ]
+    },
+    "calls": {
+      "patterns": [
+        {
+          "match": "\\b([a-zA-Z_][a-zA-Z0-9_]*)\\s*(?=\\()",
+          "captures": {
+            "1": { "name": "entity.name.function.prolang" }
+          }
         }
       ]
     },
@@ -145,16 +134,12 @@
           "match": "(&&|\\|\\||!)"
         },
         {
-          "name": "keyword.operator.html.prolang",
-          "match": "(</|/>)"
-        },
-        {
-          "name": "keyword.operator.interpolation.prolang",
-          "match": "(\\$\\{)"
+          "name": "keyword.operator.bitwise.prolang",
+          "match": "(<<|>>|&|\\||~|\\^)"
         },
         {
           "name": "keyword.operator.arithmetic.prolang",
-          "match": "(\\+|-|\\*|/|%|\\^)"
+          "match": "(\\+|-|\\*|/|%)"
         },
         {
           "name": "keyword.operator.assignment.prolang",
@@ -173,28 +158,26 @@
           "match": "(\\[|\\]|\\{|\\}|\\(|\\))"
         },
         {
-          "name": "keyword.operator.bitwise.prolang",
-          "match": "(&|\\||~|\\^)"
-        },
-        {
-          "name": "keyword.operator.angle.prolang",
+          "name": "keyword.operator.relational.prolang",
           "match": "(<|>)"
-        },
-        {
-          "name": "keyword.operator.dollar.prolang",
-          "match": "(\\$)"
         }
       ]
     },
     "numbers": {
       "patterns": [
         {
+          "comment": "Hexadecimal, binary and octal, all of which the lexer accepts.",
           "name": "constant.numeric.integer.prolang",
-          "match": "\\b\\d+\\b"
+          "match": "\\b0[xX][0-9a-fA-F_]+\\b|\\b0[bB][01_]+\\b|\\b0[oO][0-7_]+\\b"
         },
         {
+          "comment": "A float, with the f, f32 and f64 suffixes the lexer accepts.",
           "name": "constant.numeric.float.prolang",
-          "match": "\\b\\d+\\.\\d+\\b"
+          "match": "\\b\\d+\\.\\d+(f32|f64|f)?\\b|\\b\\d+(f32|f64|f)\\b"
+        },
+        {
+          "name": "constant.numeric.integer.prolang",
+          "match": "\\b\\d+\\b"
         }
       ]
     },

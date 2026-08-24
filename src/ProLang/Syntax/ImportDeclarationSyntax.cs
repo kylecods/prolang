@@ -15,5 +15,13 @@ public sealed class ImportDeclarationSyntax : DeclarationSyntax
 
     public SyntaxToken PathToken { get; }
 
-    public string Path => (string)PathToken.Value;
+    /// <summary>
+    /// The imported path, or <see langword="null"/> when the string was missing from the source.
+    /// </summary>
+    /// <remarks>
+    /// Nullable on purpose. <c>import</c> with nothing after it parses to a missing token whose
+    /// value is null, and every caller has to decide what to do about that rather than discover it
+    /// as a <see cref="NullReferenceException"/>.
+    /// </remarks>
+    public string? Path => PathToken.Value as string;
 }

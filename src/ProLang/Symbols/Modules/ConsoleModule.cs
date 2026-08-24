@@ -1,8 +1,10 @@
-﻿namespace ProLang.Symbols.Modules;
+namespace ProLang.Symbols.Modules;
 
 public sealed class ConsoleModule : BuiltInModule
 {
     public override string Name => "console";
+
+    public override string Summary => "Drawing to the terminal, reading keys without waiting, and the clock.";
 
     public override IReadOnlyList<FunctionSymbol> Functions { get; } =
     [

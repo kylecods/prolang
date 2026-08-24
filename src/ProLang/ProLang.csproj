@@ -18,9 +18,9 @@
     <PackAsTool>true</PackAsTool>
     <ToolCommandName>prolang</ToolCommandName>
     <PackageId>ProLang.Compiler</PackageId>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Authors>ProLang</Authors>
-    <Description>The ProLang compiler: compiles .prl to .NET assemblies, C99, or a native launcher.</Description>
+    <Description>The ProLang compiler: compiles .prl to .NET assemblies, C99, or a native launcher, and serves editors as a language server.</Description>
     <PackageOutputPath>$(MSBuildThisFileDirectory)..\..\artifacts\nupkg</PackageOutputPath>
   </PropertyGroup>
 
@@ -70,11 +70,18 @@
     Packing them as content is also what puts the library inside the `dotnet tool` package.
   -->
   <ItemGroup>
+    <!--
+      PackagePath deliberately stops at `any\`, without repeating %(RecursiveDir). NuGet appends
+      the item's Link to it, and Link already carries the subdirectory — so naming it in both put
+      every ui\ module into the package twice, once at std\ui\ and once again at std\ui\ui\.
+      The build output was always right, which is why it went unnoticed: only an installation made
+      from the package carried the duplicates.
+    -->
     <Content Include="..\..\std\**\*.prl">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
       <Link>std\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <Pack>true</Pack>
-      <PackagePath>tools\$(TargetFramework)\any\std\%(RecursiveDir)</PackagePath>
+      <PackagePath>tools\$(TargetFramework)\any\</PackagePath>
     </Content>
   </ItemGroup>
 

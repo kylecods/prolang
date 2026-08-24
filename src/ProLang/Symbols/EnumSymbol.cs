@@ -11,6 +11,8 @@ public sealed class EnumSymbol : TypeSymbol
         Members = members;
     }
 
+    public override SymbolKind Kind => SymbolKind.Enum;
+
     public ImmutableArray<EnumMember> Members { get; }
 
     public EnumMember? FindMember(string name)

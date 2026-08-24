@@ -106,6 +106,7 @@ prolang/
 ├── src/ProLang.Tests/             # xUnit suite: IL snapshots, execution, IL validity
 ├── src/ProLang.Benchmarks/        # BenchmarkDotNet suite
 ├── native/                        # C runtime headers for the C99/PSP backends
+├── vscode-extension/              # VS Code extension: a thin client for `prolang lsp`
 ├── docs/                          # Architecture, contributing, performance
 │
 ├── examples/                      # ProLang example programs
@@ -200,6 +201,17 @@ dotnet run --project src/ProLang/ProLang.csproj -- [OPTIONS] <SOURCE-FILES>
 | `--emit-csharp` | Render the lowered program as C# for inspection | `--emit-csharp` |
 | `--c-output=PATH` | Override the transpiler output directory | `--c-output=./gen` |
 | `-h, --help` | Show help | `-h` |
+
+### The language server
+
+`prolang lsp --stdio` runs a Language Server Protocol server over standard input and output,
+driven by the same lexer, parser and binder that compile a program. It backs the VS Code extension
+in `vscode-extension/`, which contains no analysis of its own.
+
+Worth knowing when changing the compiler's front end: the binder records what each name resolves
+to as it binds (`src/ProLang/Intermediate/BindingRecorder.cs`), and every editor navigation feature
+is a query over that. `docs/architecture/language-server.md` explains the design; the tests are in
+`src/ProLang.Tests/Lsp/`.
 
 ### Examples
 
@@ -993,6 +1005,7 @@ Output: [result]
 
 - `README.md` - Overview, CLI reference, repository layout
 - `docs/architecture/dotnet-backend.md` - How source becomes a .NET assembly
+- `docs/architecture/language-server.md` - How `prolang lsp` answers an editor from the compiler
 - `docs/architecture/ui-toolkit.md` - The framework-independent widget toolkit and its display list
 - `docs/contributing/adding-a-builtin.md` - Worked example of adding a builtin function
 - `docs/perf/baseline-2026-08-15.md` - Compiler performance baseline and methodology

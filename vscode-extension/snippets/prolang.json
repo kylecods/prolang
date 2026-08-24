@@ -1,117 +1,117 @@
 {
+  "Main function": {
+    "prefix": "main",
+    "body": "func main() {\n\t${0}\n}",
+    "description": "The program's entry point. Every ProLang program needs one."
+  },
   "Function Declaration": {
     "prefix": "func",
     "body": "func ${1:name}(${2:param}: ${3:type}) : ${4:retType} {\n\t${0}\n}",
-    "description": "Declare a new function"
-  },
-  "Variable Declaration": {
-    "prefix": "let",
-    "body": "let ${1:name}: ${2:type} = ${3:value}",
-    "description": "Declare a new variable with explicit type"
-  },
-  "Variable Declaration (inferred)": {
-    "prefix": "letv",
-    "body": "let ${1:name} = ${2:value}",
-    "description": "Declare a new variable with inferred type"
-  },
-  "If Statement": {
-    "prefix": "if",
-    "body": "if(${1:condition}) {\n\t${0}\n}",
-    "description": "If statement"
-  },
-  "If-Else Statement": {
-    "prefix": "ifelse",
-    "body": "if(${1:condition}) {\n\t${2}\n} else {\n\t${0}\n}",
-    "description": "If-Else statement"
-  },
-  "If-Elif-Else": {
-    "prefix": "ifelif",
-    "body": "if(${1:condition}) {\n\t${2}\n} elif(${3:condition}) {\n\t${4}\n} else {\n\t${0}\n}",
-    "description": "If-Elif-Else statement"
-  },
-  "While Loop": {
-    "prefix": "while",
-    "body": "while(${1:condition}) {\n\t${0}\n}",
-    "description": "While loop"
-  },
-  "For Loop": {
-    "prefix": "for",
-    "body": "for(${1:i} = ${2:start} to ${3:end}) {\n\t${0}\n}",
-    "description": "For loop"
-  },
-  "Import": {
-    "prefix": "import",
-    "body": "import \"${1:module}\"",
-    "description": "Import a module"
-  },
-  "Import .NET": {
-    "prefix": "importdn",
-    "body": "import \"dotnet:${1:System}\"",
-    "description": "Import a .NET namespace"
-  },
-  "Print": {
-    "prefix": "print",
-    "body": "print(${0})",
-    "description": "Print to console"
-  },
-  "Print with string conversion": {
-    "prefix": "prints",
-    "body": "print(\"${1:message: \" + string(${2:value}))",
-    "description": "Print with string conversion"
-  },
-  "Array": {
-    "prefix": "array",
-    "body": "[${1:values}]",
-    "description": "Array literal"
-  },
-  "Array Declaration": {
-    "prefix": "arrayd",
-    "body": "let ${1:name}: array<${2:type}> = [${3:values}]",
-    "description": "Declare an array"
-  },
-  "Map": {
-    "prefix": "map",
-    "body": "{${1:key}: ${2:value}}",
-    "description": "Map literal"
-  },
-  "Map Declaration": {
-    "prefix": "mapd",
-    "body": "let ${1:name}: map<${2:keyType}, ${3:valueType}> = {${4:entries}}",
-    "description": "Declare a map"
+    "description": "Declare a function"
   },
   "Function with no return": {
     "prefix": "funcv",
     "body": "func ${1:name}(${2:param}: ${3:type}) {\n\t${0}\n}",
-    "description": "Declare a function without return type"
+    "description": "Declare a function that returns nothing"
   },
-  "Recursive Function": {
-    "prefix": "funcrec",
-    "body": "func ${1:name}(${2:param}: ${3:type}) : ${4:retType} {\n\tif(${5:baseCondition}) {\n\t\treturn ${6:baseValue}\n\t}\n\treturn ${7:recursiveCall}\n}",
-    "description": "Recursive function template"
+  "Generic Function": {
+    "prefix": "funcg",
+    "body": "func ${1:name}<${2:T}>(${3:value}: ${2:T}) : ${2:T} {\n\t${0}\n}",
+    "description": "Declare a generic function"
   },
-  "HTML Script Block": {
-    "prefix": "script",
-    "body": "<script>\n\t${0}\n</script>",
-    "description": "HTML script block with ProLang"
+  "Struct": {
+    "prefix": "struct",
+    "body": "struct ${1:Name} {\n\t${2:field}: ${3:int}\n}",
+    "description": "Declare a struct. Structs are value types: passing one passes a copy."
   },
-  "Try-Catch (placeholder)": {
-    "prefix": "trycatch",
-    "body": "// TODO: Error handling\n${0}",
-    "description": "Error handling placeholder"
+  "Enum": {
+    "prefix": "enum",
+    "body": "enum ${1:Name} {\n\t${2:First},\n\t${3:Second}\n}",
+    "description": "Declare an enum"
   },
-  "Main function": {
-    "prefix": "main",
-    "body": "func main() {\n\t${0}\n}",
-    "description": "Main function"
+  "Variable Declaration": {
+    "prefix": "let",
+    "body": "let ${1:name}: ${2:type} = ${3:value}",
+    "description": "Declare a variable with an explicit type"
+  },
+  "Variable Declaration (inferred)": {
+    "prefix": "letv",
+    "body": "let ${1:name} = ${2:value}",
+    "description": "Declare a variable with an inferred type"
+  },
+  "If Statement": {
+    "prefix": "if",
+    "body": "if (${1:condition}) {\n\t${0}\n}",
+    "description": "If statement"
+  },
+  "If-Else Statement": {
+    "prefix": "ifelse",
+    "body": "if (${1:condition}) {\n\t${2}\n} else {\n\t${0}\n}",
+    "description": "If-else statement"
+  },
+  "If-Elif-Else": {
+    "prefix": "ifelif",
+    "body": "if (${1:condition}) {\n\t${2}\n} elif (${3:condition}) {\n\t${4}\n} else {\n\t${0}\n}",
+    "description": "An if/elif/else chain, which is how ProLang expresses a multi-way branch"
+  },
+  "While Loop": {
+    "prefix": "while",
+    "body": "while (${1:condition}) {\n\t${0}\n}",
+    "description": "While loop"
+  },
+  "For Loop": {
+    "prefix": "for",
+    "body": "for (let ${1:i} = ${2:0} to ${3:10}) {\n\t${0}\n}",
+    "description": "For loop. The bounds are inclusive at both ends."
+  },
+  "Import": {
+    "prefix": "import",
+    "body": "import \"${1:module}\"",
+    "description": "Import a library module or a built-in module"
   },
   "Import IO": {
     "prefix": "importio",
     "body": "import \"io\"",
-    "description": "Import IO module"
+    "description": "Bring print() and readInput() into scope"
   },
-  "Import Array": {
-    "prefix": "importarray",
-    "body": "import \"array\"",
-    "description": "Import Array module"
+  "Import .NET namespace": {
+    "prefix": "importdn",
+    "body": "import \"dotnet:${1:System}\"",
+    "description": "Make the public types of a .NET namespace available"
+  },
+  "Import .NET assembly": {
+    "prefix": "importasm",
+    "body": "import \"assembly:${1:MyLibrary}\"",
+    "description": "Reference a .NET assembly by name, .dll path or .csproj path"
+  },
+  "Print": {
+    "prefix": "print",
+    "body": "print(${0})",
+    "description": "Print a value and a newline"
+  },
+  "Array Declaration": {
+    "prefix": "arrayd",
+    "body": "let ${1:name}: array<${2:int}> = [${3:values}]",
+    "description": "Declare an array from a literal"
+  },
+  "Array of a fixed size": {
+    "prefix": "arrayn",
+    "body": "let ${1:name}: array<${2:int}> = array_new(${3:16})",
+    "description": "Allocate a fixed-length array, every element zeroed"
+  },
+  "Map Declaration": {
+    "prefix": "mapd",
+    "body": "let ${1:name}: map<${2:string}, ${3:any}> = {${4}}",
+    "description": "Declare a map"
+  },
+  "Assertion": {
+    "prefix": "assert",
+    "body": "assert(${1:condition}, \"${2:message}\")",
+    "description": "Fail the program with a message if the condition is false. Needs import \"test\"."
+  },
+  "Frame timer": {
+    "prefix": "elapsed",
+    "body": "let ${1:start}: int = time_millis()\n${0}\nlet ${2:elapsed}: int = time_millis() - ${1:start}",
+    "description": "Measure an interval. Always subtract two readings — the clock wraps."
   }
 }
