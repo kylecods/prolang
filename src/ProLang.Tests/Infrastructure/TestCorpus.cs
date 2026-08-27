@@ -131,6 +131,8 @@ internal static class TestCorpus
         new("tests/std/run_tests.prl", CorpusKind.Runnable),
         new("tests/std/test_util.prl", CorpusKind.CompileOnly,
             "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_args.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
         new("tests/std/test_intstack.prl", CorpusKind.CompileOnly,
             "Library — test cases; run by tests/std/run_tests.prl."),
         new("tests/std/test_color.prl", CorpusKind.CompileOnly,

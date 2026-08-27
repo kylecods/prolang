@@ -19,7 +19,8 @@
 
 import "io"
 import "testing"
-import "test_util.prl"
+import "test_args.prl"
+import "test_args.prl"
 import "test_intstack.prl"
 import "test_color.prl"
 import "test_document.prl"
@@ -48,8 +49,12 @@ func main()
     t_reset()
 
     t_begin_module()
-    test_util_run()
+    test_args_run()
     t_end_module("util")
+
+    t_begin_module()
+    test_args_run()
+    t_end_module("args")
 
     t_begin_module()
     test_intstack_run()

@@ -1,0 +1,387 @@
+/*
+ * Standard library tests — args.prl
+ *
+ * A command-line parser is mostly error handling, so these tests lean hard on the error paths:
+ * every failure mode has a check that the message names the option and a check that ok went
+ * false. The happy paths verify the three value forms, bundling, the -- terminator, defaults
+ * and the precedence rules (command line > declared default > accessor fallback).
+ *
+ * A helper builds a spec shared by several checks. Specs are values in prolang — every builder
+ * returns a new one — so `specA` variations never leak between tests.
+ */
+
+import "testing"
+import "args"
+
+/*
+ * The demo spec: one of each kind plus a repeatable value option. Several checks below parse
+ * one argv against it, then read every slot — the "everything at once" case.
+ */
+func test_args_demo_spec() : ArgSpec {
+    let spec: ArgSpec = arg_new("copy", "copy files around")
+    spec = arg_flag(spec, "verbose", short: "v", help: "explain what is being done")
+    spec = arg_count(spec, "quiet", short: "q", help: "suppress output")
+    spec = arg_int_range(spec, "jobs", 1, 64, short: "j", default: 4, help: "parallel jobs")
+    spec = arg_option(spec, "output", short: "o", placeholder: "FILE", default: "out.bin", help: "destination")
+    spec = arg_option(spec, "include", placeholder: "PATTERN", multiple: true, help: "globs to include")
+    spec = arg_positional_help(spec, "<src> <dst>")
+    return spec
+}
+
+func test_args_run() : void {
+    t_begin_module()
+
+    // ── flags: every spelling means the same thing ──
+    let argv: array<string> = ["--verbose", "a", "b"]
+    let p: ArgParsed = arg_parse(test_args_demo_spec(), argv)
+    t_true("flag long form", arg_get_flag(p, "verbose"))
+    t_eq_int("pos count", arg_positional_count(p), 2)
+    t_eq_str("pos first", arg_positional(p, 0), "a")
+    t_eq_str("pos second", arg_positional(p, 1), "b")
+    t_true("parse ok", arg_ok(p))
+
+    let argv2: array<string> = ["-v"]
+    let p2: ArgParsed = arg_parse(test_args_demo_spec(), argv2)
+    t_true("flag short form", arg_get_flag(p2, "verbose"))
+
+    // A flag given three times is still just on: -v -v -v reads as presence, not 3.
+    let argv3: array<string> = ["-vvv"]
+    let p3: ArgParsed = arg_parse(test_args_demo_spec(), argv3)
+    t_true("bundled flag", arg_get_flag(p3, "verbose"))
+    t_eq_int("bundle count", arg_get_count(p3, "verbose"), 3)
+
+    // Options after positionals are still options (GNU interleaving).
+    let argv4: array<string> = ["a", "--verbose", "b"]
+    let p4: ArgParsed = arg_parse(test_args_demo_spec(), argv4)
+    t_true("option after positional", arg_get_flag(p4, "verbose"))
+    t_eq_int("interleaved pos count", arg_positional_count(p4), 2)
+
+    // ── counting flags: occurrences are the value ──
+    let p5: ArgParsed = arg_parse(test_args_demo_spec(), argv3)
+    t_eq_int("quiet untouched", arg_get_count(p5, "quiet"), 0)
+    let argv5: array<string> = ["-qq", "--quiet"]
+    let p6: ArgParsed = arg_parse(test_args_demo_spec(), argv5)
+    t_eq_int("counted flag", arg_get_count(p6, "quiet"), 3)
+
+    // ── value options: three forms, and last one wins ──
+    let argv6: array<string> = ["--output", "x.bin"]
+    let p7: ArgParsed = arg_parse(test_args_demo_spec(), argv6)
+    t_eq_str("value separated", arg_get_str(p7, "output"), "x.bin")
+
+    let argv7: array<string> = ["--output=x.bin"]
+    let p8: ArgParsed = arg_parse(test_args_demo_spec(), argv7)
+    t_eq_str("value attached =", arg_get_str(p8, "output"), "x.bin")
+
+    let argv8: array<string> = ["-o", "x.bin"]
+    let p9: ArgParsed = arg_parse(test_args_demo_spec(), argv8)
+    t_eq_str("value short separated", arg_get_str(p9, "output"), "x.bin")
+
+    let argv9: array<string> = ["-ox.bin"]
+    let p10: ArgParsed = arg_parse(test_args_demo_spec(), argv9)
+    t_eq_str("value short attached", arg_get_str(p10, "output"), "x.bin")
+
+    // The attached form after a bundle: -vo x.bin or -vox.bin.
+    let argv10: array<string> = ["-vox.bin"]
+    let p11: ArgParsed = arg_parse(test_args_demo_spec(), argv10)
+    t_true("bundle flag then value", arg_get_flag(p11, "verbose"))
+    t_eq_str("bundle value", arg_get_str(p11, "output"), "x.bin")
+
+    // Repeats of a single-value option: last one wins, and it is still "one option given".
+    let argv11: array<string> = ["-o", "a.bin", "--output=b.bin"]
+    let p12: ArgParsed = arg_parse(test_args_demo_spec(), argv11)
+    t_eq_str("repeat last wins", arg_get_str(p12, "output"), "b.bin")
+    t_eq_int("repeat occurrences", arg_get_count(p12, "output"), 2)
+
+    // An explicit empty value outranks the default and the accessor fallback.
+    let argv12: array<string> = ["--output="]
+    let p13: ArgParsed = arg_parse(test_args_demo_spec(), argv12)
+    t_eq_str("explicit empty value", arg_get_str(p13, "output"), "")
+
+    // A value that looks like an option is rejected rather than swallowed.
+    let argv13: array<string> = ["--output", "--verbose"]
+    let p14: ArgParsed = arg_parse(test_args_demo_spec(), argv13)
+    t_false("option-looking value rejected", arg_ok(p14))
+    t_eq_str("option-looking message", arg_error(p14, 0), "option '--output' requires a value (try '--output=VALUE')")
+
+    // ── int options: parse, range, negatives, defaults ──
+    let argv14: array<string> = ["--jobs", "8"]
+    let p15: ArgParsed = arg_parse(test_args_demo_spec(), argv14)
+    t_eq_int("int separated", arg_get_int(p15, "jobs"), 8)
+
+    let argv15: array<string> = ["-j12"]
+    let p16: ArgParsed = arg_parse(test_args_demo_spec(), argv15)
+    t_eq_int("int attached", arg_get_int(p16, "jobs"), 12)
+
+    let argv16: array<string> = array_new(0)
+    let p17: ArgParsed = arg_parse(test_args_demo_spec(), argv16)
+    t_eq_int("int default", arg_get_int(p17, "jobs"), 4)
+    t_eq_str("string default", arg_get_str(p17, "output"), "out.bin")
+    t_eq_int("positionals empty", arg_positional_count(p17), 0)
+    t_true("empty argv ok", arg_ok(p17))
+
+    // Accessor fallback applies only when neither command line nor default supplied a value —
+    // here "include" has neither, so the call-site fallback is what comes back.
+    t_eq_str("accessor fallback", arg_get_str(p17, "include", "*.md"), "*.md")
+    t_false("arg_has unset", arg_has(p17, "include"))
+
+    let argv17: array<string> = ["--jobs", "0"]
+    let p18: ArgParsed = arg_parse(test_args_demo_spec(), argv17)
+    t_false("below range", arg_ok(p18))
+    t_eq_str("below range message", arg_error(p18, 0), "option '--jobs' expects a value between 1 and 64, got '0'")
+
+    let argv18: array<string> = ["--jobs=65"]
+    let p19: ArgParsed = arg_parse(test_args_demo_spec(), argv18)
+    t_false("above range", arg_ok(p19))
+
+    let argv19: array<string> = ["--jobs=abc"]
+    let p20: ArgParsed = arg_parse(test_args_demo_spec(), argv19)
+    t_false("not an integer", arg_ok(p20))
+    t_eq_str("not an integer message", arg_error(p20, 0), "option '--jobs' expects an integer, got 'abc'")
+
+    // ── repeatable options accumulate in order ──
+    // Fresh spec: "include" already exists in the demo spec, and a duplicate declaration is
+    // an author error this module asserts on.
+    let specInc: ArgSpec = arg_new("inc", "")
+    specInc = arg_option(specInc, "include", short: "i", placeholder: "PATTERN", multiple: true)
+    let argv20: array<string> = ["--include", "*.c", "--include=*.h", "-i*.md"]
+    let p21: ArgParsed = arg_parse(specInc, argv20)
+    let includes: array<string> = arg_values(p21, "include")
+    t_eq_int("values count", includes.length(), 3)
+    t_eq_str("values first", includes[0], "*.c")
+    t_eq_str("values second", includes[1], "*.h")
+    t_eq_str("values third", includes[2], "*.md")
+
+    // arg_values works on any option, even one given zero times.
+    let includesEmpty: array<string> = arg_values(p21, "output")
+    t_eq_int("values empty", includesEmpty.length(), 0)
+
+    // ── the -- terminator: the rest is positionals, verbatim ──
+    let argv21: array<string> = ["--", "--verbose", "-j", "2"]
+    let p22: ArgParsed = arg_parse(test_args_demo_spec(), argv21)
+    t_true("terminator ok", arg_ok(p22))
+    t_false("terminator blocks options", arg_get_flag(p22, "verbose"))
+    t_eq_int("terminator pos count", arg_positional_count(p22), 3)
+    t_eq_str("terminator token verbatim", arg_positional(p22, 0), "--verbose")
+
+    // "-" alone is the stdin placeholder and lands among the positionals.
+    let argv22: array<string> = ["-"]
+    let p23: ArgParsed = arg_parse(test_args_demo_spec(), argv22)
+    t_true("dash is positional", arg_ok(p23))
+    t_eq_str("dash kept", arg_positional(p23, 0), "-")
+
+    // ── positional limits ──
+    let spec2: ArgSpec = test_args_demo_spec()
+    spec2 = arg_limit_positionals(spec2, 1)
+    let argv23: array<string> = ["a", "b"]
+    let p24: ArgParsed = arg_parse(spec2, argv23)
+    t_false("positional over limit", arg_ok(p24))
+    t_eq_str("over limit message", arg_error(p24, 0), "unexpected argument 'b'")
+
+    // ── errors: unknown options get did-you-mean suggestions ──
+    let argv24: array<string> = ["--jbs=3"]
+    let p25: ArgParsed = arg_parse(test_args_demo_spec(), argv24)
+    t_false("unknown long", arg_ok(p25))
+    t_eq_str("typo suggestion", arg_error(p25, 0), "unknown option '--jbs' (did you mean '--jobs'?)")
+
+    // An unknown name that prefixes a declared option suggests it.
+    let argv25: array<string> = ["--outpu"]
+    let p26: ArgParsed = arg_parse(test_args_demo_spec(), argv25)
+    t_eq_str("prefix suggestion", arg_error(p26, 0), "unknown option '--outpu' (did you mean '--output'?)")
+
+    // A short option nobody declared.
+    let argv26: array<string> = ["-z"]
+    let p27: ArgParsed = arg_parse(test_args_demo_spec(), argv26)
+    t_false("unknown short", arg_ok(p27))
+    t_eq_str("unknown short message", arg_error(p27, 0), "unknown option '-z'")
+
+    // A flag with an attached value is rejected, with the fix in the message.
+    let argv27: array<string> = ["--verbose=1"]
+    let p28: ArgParsed = arg_parse(test_args_demo_spec(), argv27)
+    t_false("flag with value", arg_ok(p28))
+    t_eq_str("flag with value message", arg_error(p28, 0), "option '--verbose' takes no value (remove '=...')")
+
+    // A value option at the very end of argv has nothing to take.
+    let argv28: array<string> = ["--jobs"]
+    let p29: ArgParsed = arg_parse(test_args_demo_spec(), argv28)
+    t_false("missing value at end", arg_ok(p29))
+    t_eq_str("missing value message", arg_error(p29, 0), "option '--jobs' requires a value")
+
+    // ── required options ──
+    let spec3: ArgSpec = arg_new("deploy", "ship it")
+    spec3 = arg_option(spec3, "target", short: "t", required: true)
+    let argv29: array<string> = array_new(0)
+    let p30: ArgParsed = arg_parse(spec3, argv29)
+    t_false("missing required", arg_ok(p30))
+    t_eq_str("missing required message", arg_error(p30, 0), "missing required option '--target'")
+
+    let argv30: array<string> = ["-t", "prod"]
+    let p31: ArgParsed = arg_parse(spec3, argv30)
+    t_true("required satisfied", arg_ok(p31))
+    t_eq_str("required value", arg_get_str(p31, "target"), "prod")
+
+    // ── several errors at once: one message each, then still not ok ──
+    let argv31: array<string> = ["--target", "prod", "-t", "stage"]
+    let p32: ArgParsed = arg_parse(spec3, argv31)
+    t_true("repeat required ok", arg_ok(p32))
+    t_eq_str("repeat required value", arg_get_str(p32, "target"), "stage")
+
+    let spec4: ArgSpec = arg_new("multi", "")
+    spec4 = arg_option(spec4, "a", required: true)
+    spec4 = arg_option(spec4, "b", required: true)
+    let argv32: array<string> = array_new(0)
+    let p33: ArgParsed = arg_parse(spec4, argv32)
+    t_eq_int("two missing required", arg_error_count(p33), 2)
+    t_eq_str("first missing", arg_error(p33, 0), "missing required option '--a'")
+    t_eq_str("second missing", arg_error(p33, 1), "missing required option '--b'")
+
+    // ── --help: requested, wins over other garbage, works inside a bundle ──
+    let argv33: array<string> = ["--help"]
+    let p34: ArgParsed = arg_parse(test_args_demo_spec(), argv33)
+    t_true("help requested", arg_help_requested(p34))
+    t_true("help is ok", arg_ok(p34))
+
+    let argv34: array<string> = ["--jbs", "--jobs", "x", "--help"]
+    let p35: ArgParsed = arg_parse(test_args_demo_spec(), argv34)
+    t_true("help wins over errors", arg_help_requested(p35))
+    t_eq_int("help clears errors", arg_error_count(p35), 0)
+
+    let argv35: array<string> = ["-vh"]
+    let p36: ArgParsed = arg_parse(test_args_demo_spec(), argv35)
+    t_true("help inside bundle", arg_help_requested(p36))
+
+    // An author-declared help option is the trigger instead of the automatic one.
+    let spec5: ArgSpec = arg_new("own", "")
+    spec5 = arg_flag(spec5, "help", help: "custom help")
+    let argv36: array<string> = ["--help"]
+    let p37: ArgParsed = arg_parse(spec5, argv36)
+    t_true("author help works", arg_help_requested(p37))
+
+    // ── abbreviations: off by default, on with arg_allow_abbreviations ──
+    let argv37: array<string> = ["--verb"]
+    let p38: ArgParsed = arg_parse(test_args_demo_spec(), argv37)
+    t_false("abbreviation off by default", arg_ok(p38))
+
+    let spec6: ArgSpec = arg_new("copy2", "")
+    spec6 = arg_flag(spec6, "verbose", short: "v")
+    spec6 = arg_flag(spec6, "version")
+    spec6 = arg_allow_abbreviations(spec6)
+    let argv38: array<string> = ["--verb"]
+    let p39: ArgParsed = arg_parse(spec6, argv38)
+    t_true("abbreviation unique", arg_get_flag(p39, "verbose"))
+    t_false("abbreviation not full", arg_get_flag(p39, "version"))
+
+    // Two options sharing a prefix make it ambiguous, and the error says so. "--vers" is
+    // NOT ambiguous: it is a unique prefix of "version" and resolves there.
+    let argv39: array<string> = ["--ver"]
+    let p40: ArgParsed = arg_parse(spec6, argv39)
+    t_false("abbreviation ambiguous", arg_ok(p40))
+    t_eq_str("ambiguous message", arg_error(p40, 0),
+        "option '--ver' is ambiguous ('--verbose', '--version')")
+
+    // ── sub-commands ──
+    let spec7: ArgSpec = arg_new("tool", "a demo tool")
+    spec7 = arg_commands(spec7)
+    spec7 = arg_command(spec7, "add", "stage files")
+    spec7 = arg_command(spec7, "rm", "unstage files")
+    spec7 = arg_flag(spec7, "global", help: "system-wide")
+
+    let argv40: array<string> = ["--global", "add", "--force", "x.txt"]
+    let p41: ArgParsed = arg_parse(spec7, argv40)
+    t_true("subcommand ok", arg_ok(p41))
+    t_true("option before command", arg_get_flag(p41, "global"))
+    t_eq_str("command name", arg_command_name(p41), "add")
+    let tail: array<string> = arg_command_args(p41)
+    t_eq_int("tail count", tail.length(), 2)
+    t_eq_str("tail verbatim", tail[0], "--force")
+    t_eq_str("tail second", tail[1], "x.txt")
+    t_eq_int("subcommand has no positionals", arg_positional_count(p41), 0)
+
+    // A misspelled command is an error with a tagged suggestion.
+    let argv41: array<string> = ["ad"]
+    let p42: ArgParsed = arg_parse(spec7, argv41)
+    t_false("unknown command", arg_ok(p42))
+    t_eq_str("command suggestion", arg_error(p42, 0), "unknown command 'ad' (did you mean 'add (a command)'?)")
+
+    // No command at all is an error listing what was expected.
+    let argv42: array<string> = ["--global"]
+    let p43: ArgParsed = arg_parse(spec7, argv42)
+    t_false("missing command", arg_ok(p43))
+    t_eq_str("missing command message", arg_error(p43, 0), "missing command (expected one of: add, rm)")
+
+    // command_required: false downgrades that to "no command", still with the tail handed over.
+    let spec8: ArgSpec = arg_new("tool2", "")
+    spec8 = arg_commands(spec8, command_required: false)
+    spec8 = arg_command(spec8, "add", "stage files")
+    let argv43: array<string> = array_new(0)
+    let p44: ArgParsed = arg_parse(spec8, argv43)
+    t_true("command optional", arg_ok(p44))
+    t_eq_str("no command", arg_command_name(p44), "")
+
+    // ── help text: rendered as lines, aligned, containing the pieces users look for ──
+    // Layout facts rather than whole-line snapshots: the summary, usage and headers are exact;
+    // the column alignment is pinned by where each description begins.
+    let lines: array<string> = arg_help_lines(test_args_demo_spec())
+    t_eq_str("help summary", lines[0], "copy files around")
+    t_eq_str("help usage", lines[2], "Usage: copy [options] <src> <dst>")
+    t_eq_str("help options header", lines[4], "Options:")
+    t_eq_int("row 1 aligned at column", lines[5].indexOf("explain what is being done"), 25)
+    t_eq_int("row 1 long name", lines[5].indexOf("--verbose"), 4)
+    t_eq_int("default note help column", lines[7].indexOf("parallel jobs"), 25)
+    t_eq_int("default note present", lines[7].indexOf("(default 4)"), 39)
+    t_eq_int("long-only row reserves short column", lines[9].indexOf("--include <PATTERN>"), 4)
+    t_eq_int("long-only row aligned too", lines[9].indexOf("globs to include (repeatable)"), 25)
+    t_eq_int("help row aligned", lines[10].indexOf("show this help"), 25)
+
+    let usage: string = arg_usage_line(test_args_demo_spec())
+    t_eq_str("usage line", usage, "copy [options] <src> <dst>")
+
+    // Hidden options stay out of the help but keep working.
+    let spec9: ArgSpec = arg_new("hid", "")
+    spec9 = arg_flag(spec9, "verbose")
+    spec9 = arg_flag(spec9, "secret", hidden: true)
+    let hiddenLines: array<string> = arg_help_lines(spec9)
+    let found_secret: bool = false
+    let li: int = 0
+    while (li < hiddenLines.length()) {
+        if (hiddenLines[li].indexOf("secret") >= 0) {
+            found_secret = true
+        }
+        li = li + 1
+    }
+    t_false("hidden option omitted from help", found_secret)
+    let argv44: array<string> = ["--secret"]
+    let p45: ArgParsed = arg_parse(spec9, argv44)
+    t_true("hidden option still parses", arg_get_flag(p45, "secret"))
+
+    // arg_usage_line without a positional placeholder.
+    let noPosUsage: string = arg_usage_line(spec9)
+    t_eq_str("usage without positionals", noPosUsage, "hid [options]")
+
+    // ── arg_parse_int_strict: the whole 32-bit range, and only it ──
+    t_true("int zero", arg_parse_int_strict("0").ok)
+    t_eq_int("int zero value", arg_parse_int_strict("0").value, 0)
+    t_eq_int("int plus", arg_parse_int_strict("+7").value, 7)
+    t_eq_int("int negative", arg_parse_int_strict("-7").value, 0 - 7)
+    t_eq_int("int max", arg_parse_int_strict("2147483647").value, 2147483647)
+    t_eq_int("int min", arg_parse_int_strict("-2147483648").value, 0 - 2147483647 - 1)
+    t_true("int min ok", arg_parse_int_strict("-2147483648").ok)
+    t_false("int overflows", arg_parse_int_strict("2147483648").ok)
+    t_false("int underflows", arg_parse_int_strict("-2147483649").ok)
+    t_false("int junk", arg_parse_int_strict("12a").ok)
+    t_false("int empty", arg_parse_int_strict("").ok)
+    t_false("int bare sign", arg_parse_int_strict("-").ok)
+    t_false("int spaces", arg_parse_int_strict("1 2").ok)
+
+    // util_parse_int in std/util refuses signs and overflows silently; this one exists because
+    // option values need both handled. Same digits, different contract.
+    t_true("int long but valid", arg_parse_int_strict("2147483647").ok)
+
+    // ── accessors on names that were never declared: fallbacks, no crash ──
+    t_eq_str("unknown name str", arg_get_str(p17, "nonexistent", "fallback"), "fallback")
+    t_eq_int("unknown name int", arg_get_int(p17, "nonexistent", 42), 42)
+    t_false("unknown name flag", arg_get_flag(p17, "nonexistent"))
+    t_eq_int("unknown name count", arg_get_count(p17, "nonexistent"), 0)
+
+    // An int asked from a VALUE slot reads 0 — a programming slip, defined not fatal.
+    t_eq_int("int from value slot", arg_get_int(p17, "output"), 0)
+}

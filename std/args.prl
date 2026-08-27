@@ -1,0 +1,1613 @@
+/*
+ * Command-line argument parsing
+ *
+ * main() hands you a raw array of strings and that is all the language offers for reading the
+ * command line. This module turns that array into options, values and positionals with the
+ * conventions users already know from GNU tools — so a program built on it behaves the way
+ * `--help` and tab completion expect, without each program re-implementing the folklore.
+ *
+ * ─── The three-step pattern ─────────────────────────────────────────────────────────────────
+ *
+ *   1. Build a spec. One call per option; builders return a new spec, so reassign it:
+ *
+ *         let spec: ArgSpec = arg_new("copy", "copy files around")
+ *         spec = arg_flag(spec, "verbose", short: "v", help: "explain what is being done")
+ *         spec = arg_int(spec, "jobs", short: "j", default: 1, help: "parallel jobs")
+ *         spec = arg_option(spec, "output", short: "o", required: true, help: "destination")
+ *
+ *   2. Parse. `args` is the parameter main() already receives (the program name is NOT in it —
+ *      the compiler gives you the arguments only, so pass them straight through):
+ *
+ *         let parsed: ArgParsed = arg_parse(spec, args)
+ *
+ *   3. Handle, in this order. `--help` beats errors, errors beat everything else:
+ *
+ *         if (arg_help_requested(parsed)) { arg_print_help(spec); return }
+ *         if (!arg_ok(parsed))             { arg_print_errors(parsed); return }
+ *
+ *         if (arg_get_flag(parsed, "verbose")) { ... }
+ *         let out: string = arg_get_str(parsed, "output")
+ *         let jobs: int = arg_get_int(parsed, "jobs", 1)
+ *         let first: string = arg_positional(parsed, 0)
+ *
+ * ─── Syntax accepted ────────────────────────────────────────────────────────────────────────
+ *
+ *     --long                 boolean flag
+ *     --long value           value option, separated value
+ *     --long=value           value option, attached value (also the way to pass "" or "-3")
+ *     -s value               short option, separated value
+ *     -svalue                short option, attached value
+ *     -abc                   bundling: three flags, or flags ending in a value option
+ *     -                      a positional argument (stdin, by convention)
+ *     --                     terminator: every token after it is a positional
+ *
+ * Options may appear anywhere, before or after positional arguments (GNU getopt's interleaving).
+ * A repeated option wins with its last value; declaring `multiple: true` instead collects every
+ * occurrence, in order, readable with arg_values(). A token that looks like a negative number
+ * (-3) is a value or a positional, never an option, so `--level -3` works; pass a value that
+ * begins with a dash some other way with `=`: `--name=-weird`.
+ *
+ * Two extras are opt-in because they can surprise:
+ *
+ *     arg_allow_abbreviations(spec)   accepts unique prefixes: --verb for --verbose. Off by
+ *                                     default; it turns typos into silent successes.
+ *     arg_commands(spec)              git-style sub-commands: the first positional word is the
+ *                                     command, and everything after it is passed through
+ *                                     verbatim for a second arg_parse over a command-specific
+ *                                     spec. See the "Sub-commands" block near the bottom.
+ *
+ * ─── Errors ────────────────────────────────────────────────────────────────────────────────
+ *
+ * prolang has no exceptions, so arg_parse never throws: it records a message per problem and
+ * keeps going, so one run reports every error rather than the first. Each message names the
+ * offending option and, for a near miss, adds a "did you mean" suggestion from the declared
+ * options and commands. arg_print_errors formats them as `program: error: ...` and points at
+ * `program --help`. The program cannot set its own exit code — that is a language limit, not a
+ * choice here — so a failing parse still exits 0; callers who care can route the same messages
+ * through assert() to fail hard.
+ *
+ * Unset options read as their declared defaults: arg_get_int("jobs") is the declared default,
+ * 0 unless one was given, and arg_get_str falls back to the value you pass at the call site
+ * when neither the command line nor a declared default supplied one. An option given with an
+ * empty value (`--name=`) returns "" — an explicit value beats every fallback.
+ *
+ * ─── Efficiency ────────────────────────────────────────────────────────────────────────────
+ *
+ * One pass over argv, no allocation per character, and every lookup is a linear scan over the
+ * declared options — the right shape for a command line, where a program declares tens of
+ * options and receives a handful of arguments. Result storage is allocated once, before the
+ * scan, with a bound computed from argv's length, so parsing performs no reallocation at all.
+ * The expensive machinery — Levenshtein distances for suggestions, help text layout — runs only
+ * on the paths that need it: an error, or a --help.
+ *
+ * All names are prefixed `arg_`: prolang has one flat namespace across imported files, and an
+ * unqualified name that matches nothing binds to an arbitrary .NET method instead of erroring.
+ *
+ * Author errors — a duplicate option name, a short form longer than one character, an integer
+ * default outside its own declared range — call the `assert` builtin and end the program, on
+ * the principle that a broken command-line spec should fail loudly in the first test run.
+ */
+
+import "io"
+import "test"
+
+/*
+ * What an option accepts. Members are int constants; an option's kind is stored as a plain int
+ * and compared against these, which costs nothing at runtime.
+ */
+enum ArgKind {
+    FLAG,        // boolean switch: --verbose
+    VALUE,       // one string value: --output build/
+    INT,         // value validated as a 32-bit integer, optionally range-checked
+    COUNT        // repeatable flag: -v -v -v means verbosity 3
+}
+
+/*
+ * The character codes this module dispatches on, as named constants. `charCode` compares a
+ * character to its numeric code, so spelling them out is clearer than bare 45 and 61 in the
+ * parsing loops.
+ */
+enum ArgCh {
+    PLUS = 43,       // +
+    DASH = 45,       // -
+    EQUALS = 61,     // =
+    NINE = 57,       // 9 — the top of the digit range
+    H = 104,         // h — the conventional short help letter
+    ZERO = 48        // 0 — the bottom of the digit range
+}
+
+/*
+ * One declared option. Built by arg_flag / arg_option / arg_int / arg_int_range / arg_count,
+ * stored in the ArgSpec's backing array, and read by the parser through its slot index.
+ */
+struct ArgOpt {
+    name: string,            // long form, without the leading dashes
+    short_form: string,      // one character, or "" when the option has no short form
+    short_code: int,         // charCode of short_form, or 0 — precomputed so the parse loop never calls charCode on an option
+    kind: int,               // one of ArgKind
+    help: string,            // the description shown in the options list
+    placeholder: string,     // value options only: <PLACEHOLDER> in help, e.g. "FILE" or "N"
+    default_value: string,   // VALUE options only: applied when the option was not given
+    default_int: int,        // INT options only: what arg_get_int returns when unset (0 by default)
+    min_val: int,            // INT options with a range: inclusive lower bound
+    max_val: int,            // INT options with a range: inclusive upper bound
+    has_range: bool,         // whether min_val/max_val were declared
+    required: bool,          // an error is reported when the option never appeared
+    multiple: bool,          // repeatable: every occurrence is kept for arg_values()
+    hidden: bool             // omitted from help output, still fully functional
+}
+
+/*
+ * The program's command-line contract: its name, its options, its commands, and how positionals
+ * are shaped. Built once with the arg_* builders, then handed to arg_parse. A struct copy is
+ * cheap — a handful of references and ints — which is what makes the builder style affordable.
+ */
+struct ArgSpec {
+    program: string,             // the name in usage lines and error prefixes
+    summary: string,             // one-line description printed above the usage
+    options: array<ArgOpt>,      // backing storage for declared options (grows by doubling)
+    opt_capacity: int,           // how many slots options[] currently has
+    opt_count: int,              // how many are in use
+    commands: array<string>,     // declared sub-command names, in declaration order
+    command_helps: array<string>,// one-line description per declared command
+    command_count: int,
+    command_mode: bool,          // set by arg_commands(): first positional becomes a command
+    command_required: bool,      // in command_mode, is typing no command an error?
+    pos_help: string,            // usage placeholder for positionals, e.g. "<src> <dst>"
+    pos_max: int,                // positional limit, or -1 for unlimited
+    abbreviations: bool          // accept unique prefixes of long names
+}
+
+/*
+ * The result of one arg_parse call. Occurrences are kept in an occurrence log — parallel arrays
+ * recording (option slot, value) in the order they appeared — which is what lets arg_values()
+ * return a repeated option's values in the order the user typed them, and keeps the per-option
+ * slots a fixed size (one entry per declared option) no matter how often an option repeats.
+ *
+ * next_idx is the parser's cursor: the helper that consumes one token writes the index after the
+ * last token it consumed there, because prolang functions return one value and the parse loop
+ * needs the updated struct and the position. It means nothing after arg_parse returns.
+ */
+struct ArgParsed {
+    spec: ArgSpec,               // the spec this parse ran against (with the help option ensured)
+    vals: array<string>,         // per-option: latest value, or the declared default
+    counts: array<int>,          // per-option: how many times it appeared
+    int_vals: array<int>,        // per-option: parsed integer for INT options
+    occ_slots: array<int>,       // occurrence log, parallel with occ_vals
+    occ_vals: array<string>,
+    occ_count: int,
+    poss: array<string>,         // positional arguments in order
+    pos_count: int,
+    sub_args: array<string>,     // command mode: raw tokens after the command
+    sub_arg_count: int,
+    sub_name: string,            // command mode: the command token, or ""
+    raw_args: array<string>,     // the argv this parse consumed, for command-mode slicing
+    sub_start: int,              // command mode: index of the first raw tail token, or -1
+    errors: array<string>,       // one human-readable message per problem
+    error_count: int,
+    next_idx: int,               // internal: where the parse loop resumes
+    help_slot: int,              // which option slot is --help, or -1
+    ok: bool,                    // false when any error was recorded
+    help_requested: bool         // the user asked for --help; errors were discarded
+}
+
+// The result of a strict integer parse: ok false means the text was not a 32-bit integer.
+struct ArgIntResult {
+    ok: bool,
+    value: int
+}
+
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// Building a spec
+// ────────────────────────────────────────────────────────────────────────────────────────────
+
+/*
+ * An empty spec for the program named `program` — the name printed in usage lines and error
+ * messages. Pass what users type to run it: "copy", not "copy.exe" or an absolute path.
+ * `summary` is one line above the usage; leave it "" for a bare-bones help screen.
+ */
+func arg_new(program: string, summary: string = "") : ArgSpec {
+    return ArgSpec {
+        program: program,
+        summary: summary,
+        options: array_new(16),
+        opt_capacity: 16,
+        opt_count: 0,
+        commands: array_new(16),
+        command_helps: array_new(16),
+        command_count: 0,
+        command_mode: false,
+        command_required: true,
+        pos_help: "",
+        pos_max: 0 - 1,
+        abbreviations: false
+    }
+}
+
+/*
+ * The shared tail of every builder: fill an ArgOpt with per-kind defaults, then add it.
+ * Every public builder goes through arg_opt_base, so a new field only needs adding here.
+ */
+func arg_opt_base(spec: ArgSpec, name: string, short: string, kind: int, help: string, hidden: bool) : ArgSpec {
+    assert(arg_find(spec, name) < 0, "arg: option '" + name + "' is declared twice")
+    if (short.length() > 0) {
+        assert(short.length() == 1, "arg: short form of '" + name + "' must be one character")
+        assert(arg_find_short(spec, short.charCode(0)) < 0, "arg: short option '" + short + "' is declared twice")
+    }
+
+    let opt: ArgOpt = ArgOpt {
+        name: name,
+        short_form: short,
+        short_code: 0,
+        kind: kind,
+        help: help,
+        placeholder: "VALUE",
+        default_value: "",
+        default_int: 0,
+        min_val: 0,
+        max_val: 0,
+        has_range: false,
+        required: false,
+        multiple: false,
+        hidden: hidden
+    }
+    if (short.length() > 0) {
+        opt.short_code = short.charCode(0)
+    }
+    return arg_add_opt(spec, opt)
+}
+
+// Appends one option to the spec's backing array, growing it by doubling when full.
+func arg_add_opt(spec: ArgSpec, opt: ArgOpt) : ArgSpec {
+    if (spec.opt_count == spec.opt_capacity) {
+        let grown: array<ArgOpt> = array_new(spec.opt_capacity * 2)
+        let i: int = 0
+        while (i < spec.opt_count) {
+            grown[i] = spec.options[i]
+            i = i + 1
+        }
+        spec.options = grown
+        spec.opt_capacity = spec.opt_capacity * 2
+    }
+    spec.options[spec.opt_count] = opt
+    spec.opt_count = spec.opt_count + 1
+    return spec
+}
+
+/*
+ * Declares a boolean switch. Appearing once or a hundred times makes no difference: the value
+ * is true when the flag appeared at all. If you care how many times, declare arg_count instead.
+ */
+func arg_flag(spec: ArgSpec, name: string, short: string = "", help: string = "", hidden: bool = false) : ArgSpec {
+    return arg_opt_base(spec, name, short, ArgKind.FLAG, help, hidden)
+}
+
+/*
+ * Declares a value option. `placeholder` is the word shown in help — `--output <FILE>` — so
+ * make it a noun, not "VALUE", wherever a specific word fits. `default` applies when the option
+ * is not given, and is shown in help.
+ */
+func arg_option(spec: ArgSpec, name: string, short: string = "", placeholder: string = "VALUE",
+                default: string = "", required: bool = false, help: string = "",
+                multiple: bool = false, hidden: bool = false) : ArgSpec {
+    let spec2: ArgSpec = arg_opt_base(spec, name, short, ArgKind.VALUE, help, hidden)
+    let opt: ArgOpt = spec2.options[spec2.opt_count - 1]
+    opt.placeholder = placeholder
+    opt.default_value = default
+    opt.required = required
+    opt.multiple = multiple
+    spec2.options[spec2.opt_count - 1] = opt
+    return spec2
+}
+
+/*
+ * Declares an integer option. The default is 0 unless `default` says otherwise; because 0 is a
+ * legitimate value, an int option always has one and the help screen says so. Out-of-range
+ * input is rejected with a message that names the range. For a non-zero default with a range,
+ * use arg_int_range, which also checks the default itself and asserts when the author got it
+ * wrong — the one case where this module ends the program deliberately.
+ */
+func arg_int(spec: ArgSpec, name: string, short: string = "", default: int = 0,
+             help: string = "", required: bool = false, hidden: bool = false) : ArgSpec {
+    return arg_int_range(spec, name, 0 - 2147483647 - 1, 2147483647, short, default, help, required, hidden)
+}
+
+/*
+ * Declares an integer option with an inclusive range: values outside min..max are rejected with
+ * a message that names both bounds. The declared default is checked against the range here — a
+ * default the option itself would reject is a spec bug, and it should not survive to the first
+ * user who does not pass the option.
+ */
+func arg_int_range(spec: ArgSpec, name: string, min: int, max: int, short: string = "", default: int = 0,
+                   help: string = "", required: bool = false, hidden: bool = false) : ArgSpec {
+    assert(min <= max, "arg: option '" + name + "' declares an empty range")
+    assert(default >= min && default <= max, "arg: default of '" + name + "' is outside its own range")
+
+    let spec2: ArgSpec = arg_opt_base(spec, name, short, ArgKind.INT, help, hidden)
+    let opt: ArgOpt = spec2.options[spec2.opt_count - 1]
+    opt.placeholder = "N"
+    opt.default_int = default
+    opt.min_val = min
+    opt.max_val = max
+    opt.has_range = true
+    opt.required = required
+    opt.multiple = false
+    spec2.options[spec2.opt_count - 1] = opt
+    return spec2
+}
+
+/*
+ * Declares a counting flag — a flag whose occurrences are the value. `-v -v -v` is verbosity 3,
+ * read with arg_get_count. Its help should say "repeatable" on its behalf; the annotation is
+ * added automatically.
+ */
+func arg_count(spec: ArgSpec, name: string, short: string = "", help: string = "", hidden: bool = false) : ArgSpec {
+    let spec2: ArgSpec = arg_opt_base(spec, name, short, ArgKind.COUNT, help, hidden)
+    return spec2
+}
+
+/*
+ * Describes the positional arguments for the usage line, e.g. "<src> <dst>". Purely presentational
+ * — the parser accepts any number of positionals unless arg_limit_positionals tightens it.
+ */
+func arg_positional_help(spec: ArgSpec, text: string) : ArgSpec {
+    spec.pos_help = text
+    return spec
+}
+
+/*
+ * Caps positional arguments at `max`. Anything beyond is an error, which is how a parser that
+ * otherwise accepts interleaved options can still say "expected at most 2 arguments" instead of
+ * silently reading the third file as an option name.
+ */
+func arg_limit_positionals(spec: ArgSpec, max: int) : ArgSpec {
+    spec.pos_max = max
+    return spec
+}
+
+/*
+ * Turns on git-style sub-commands: the first positional argument is a command name, and every
+ * token after it is passed through untouched (arg_command_args) so a command-specific spec can
+ * parse it with another arg_parse. Declare the commands themselves with arg_command. Options
+ * before the command belong to the main program; options after it belong to the command's own
+ * parser, which is how `git --git-dir=... stash push -m ...` reads.
+ */
+func arg_commands(spec: ArgSpec, command_required: bool = true) : ArgSpec {
+    spec.command_mode = true
+    spec.command_required = command_required
+    return spec
+}
+
+/*
+ * Declares one sub-command. The name is what the user types; help is one line shown in the
+ * commands section of the help screen.
+ */
+func arg_command(spec: ArgSpec, name: string, help: string = "") : ArgSpec {
+    if (spec.command_count == spec.commands.length()) {
+        let grown: array<string> = array_new(spec.command_count * 2)
+        let i: int = 0
+        while (i < spec.command_count) {
+            grown[i] = spec.commands[i]
+            i = i + 1
+        }
+        spec.commands = grown
+        let grownHelps: array<string> = array_new(spec.command_count * 2)
+        i = 0
+        while (i < spec.command_count) {
+            grownHelps[i] = spec.command_helps[i]
+            i = i + 1
+        }
+        spec.command_helps = grownHelps
+    }
+    spec.commands[spec.command_count] = name
+    spec.command_helps[spec.command_count] = help
+    spec.command_count = spec.command_count + 1
+    return spec
+}
+
+/*
+ * Accepts unambiguous prefixes of long option names: --verb matches --verbose when no other
+ * option starts with "verb". GNU getopt behaviour. Off by default because the convenience is
+ * real but so is the failure mode — a new option that shares a prefix silently changes what an
+ * existing script's abbreviation means. With it off, a prefix is just an unknown option and
+ * arg_parse says so.
+ */
+func arg_allow_abbreviations(spec: ArgSpec) : ArgSpec {
+    spec.abbreviations = true
+    return spec
+}
+
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// Parsing
+// ────────────────────────────────────────────────────────────────────────────────────────────
+
+/*
+ * Parses `args` — the same array main() received, program name excluded — against `spec`.
+ *
+ * Never throws. Problems are collected as messages; `--help` anywhere (in `-abc` bundles too)
+ * sets arg_help_requested and discards whatever else was on the line, matching the convention
+ * that `--help` wins over arguments a user typed before it. Positionals, options and defaults
+ * land in the returned struct; read them with the arg_get_* accessors.
+ */
+func arg_parse(spec: ArgSpec, args: array<string>) : ArgParsed {
+    // The help option is appended to a copy of the spec unless the author declared one (either
+    // --help or -h), so an author who wants custom help text can own the flag and still query
+    // arg_help_requested. The shared backing array gets the same value written to the same
+    // free slot by every call, so this is idempotent and harmless to the caller's spec.
+    let spec2: ArgSpec = arg_ensure_help(spec)
+    let argCount: int = args.length()
+    let optCount: int = spec2.opt_count
+
+    // Every buffer is sized once, here, from bounds established before the loop. Positionals,
+    // errors and long-option records are bounded by argv's length; a bundle like -vvv records
+    // one occurrence per option letter, so the occurrence log is bounded by argv's total
+    // character count — each record consumes one letter from some token. The validation pass
+    // can add one error per option plus one for a missing command.
+    let total_chars: int = 0
+    let ci: int = 0
+    while (ci < argCount) {
+        total_chars = total_chars + args[ci].length()
+        ci = ci + 1
+    }
+    let parsed: ArgParsed = ArgParsed {
+        spec: spec2,
+        vals: array_new(optCount),
+        counts: array_new(optCount),
+        int_vals: array_new(optCount),
+        occ_slots: array_new(total_chars),
+        occ_vals: array_new(total_chars),
+        occ_count: 0,
+        poss: array_new(argCount),
+        pos_count: 0,
+        sub_args: array_new(argCount),
+        sub_arg_count: 0,
+        sub_name: "",
+        raw_args: args,
+        sub_start: 0 - 1,
+        errors: array_new(argCount + optCount + 2),
+        error_count: 0,
+        next_idx: 0,
+        help_slot: arg_find(spec2, "help"),
+        ok: false,
+        help_requested: false
+    }
+
+    // array_new zero-fills numbers and booleans, but a string element stays null until it is
+    // written — and the accessors read vals for every declared slot, so unset string options
+    // must read "" rather than null. Fill vals immediately, before anything can observe it.
+    let vi: int = 0
+    while (vi < optCount) {
+        parsed.vals[vi] = ""
+        vi = vi + 1
+    }
+
+    let i: int = 0
+    let only_positionals: bool = false     // set by `--`
+
+    while (i < argCount) {
+        let tok: string = args[i]
+        let k: int = i
+        i = i + 1
+
+        if (only_positionals) {
+            parsed = arg_positional_add(parsed, tok, k)
+            continue
+        }
+        if (tok == "--") {
+            only_positionals = true
+            continue
+        }
+
+        let len: int = tok.length()
+        if (len == 0) {
+            // An empty token — a shell can produce one from `""`. It carries no option syntax,
+            // so it is a positional argument like any other.
+            parsed = arg_positional_add(parsed, tok, k)
+            continue
+        }
+
+        // c0 is only read after the empty-token guard, since charCode(0) on "" would crash.
+        let c0: int = tok.charCode(0)
+
+        // && does not short-circuit in prolang — both operands always evaluate — so the
+        // character read that distinguishes a negative number from an option lives inside a
+        // sequential guard: charCode(1) on a one-character token like "-" would end the
+        // program rather than skip the check.
+        let optionish: bool = false
+        if (c0 == ArgCh.DASH && len > 1) {
+            optionish = !arg_looks_number(tok)
+        }
+
+        if (optionish) {
+            if (len > 2 && tok.charCode(1) == ArgCh.DASH) {
+                parsed = arg_parse_long(parsed, tok, k, args)
+                i = parsed.next_idx
+                continue
+            }
+            parsed = arg_parse_short(parsed, tok, args, k)
+            i = parsed.next_idx
+            continue
+        }
+
+        // A positional. In command mode the first one is the command, and everything after it
+        // belongs to the command rather than this spec — capture the tail and stop parsing.
+        parsed = arg_positional_add(parsed, tok, k)
+        if (parsed.spec.command_mode && parsed.sub_start >= 0) {
+            while (i < argCount) {
+                parsed.sub_args[parsed.sub_arg_count] = args[i]
+                parsed.sub_arg_count = parsed.sub_arg_count + 1
+                i = i + 1
+            }
+            break
+        }
+    }
+
+    // ── help wins over everything ──
+    // Sequential guards again: counts[-1] would end the program when no help option exists.
+    if (parsed.help_slot >= 0) {
+        if (parsed.counts[parsed.help_slot] > 0) {
+            parsed.help_requested = true
+        }
+    }
+    if (parsed.help_requested) {
+        parsed.error_count = 0
+        parsed.ok = true
+        return parsed
+    }
+
+    // ── validation: defaults first, then requirements ──
+    let s: int = 0
+    while (s < spec2.opt_count) {
+        let opt: ArgOpt = spec2.options[s]
+        if (parsed.counts[s] == 0) {
+            // Materialise declared defaults so accessors do not have to know about them. An
+            // int option always has one (0 unless declared); a string option only when the
+            // author set one. The count stays 0, so arg_has() still reports "not given".
+            if (opt.kind == ArgKind.INT) {
+                parsed.int_vals[s] = opt.default_int
+            } else if (opt.kind == ArgKind.VALUE && opt.default_value.length() > 0) {
+                parsed.vals[s] = opt.default_value
+            }
+        }
+        if (opt.required && parsed.counts[s] == 0) {
+            parsed = arg_error_add(parsed, "missing required option '--" + opt.name + "'")
+        }
+        s = s + 1
+    }
+
+    // ── sub-commands: absence is an error when commands were declared and are required ──
+    if (spec2.command_mode && spec2.command_required && spec2.command_count > 0 && parsed.sub_name.length() == 0) {
+        let names: string = arg_join_names(spec2.commands, spec2.command_count)
+        parsed = arg_error_add(parsed, "missing command (expected one of: " + names + ")")
+    }
+
+    parsed.ok = parsed.error_count == 0
+    return parsed
+}
+
+/*
+ * Appends the automatic help option to a copy of the spec unless the author declared their own
+ * --help or -h, in which case theirs is the trigger. Both arg_parse and the help renderer call
+ * this, so an author-owned help flag works in both places.
+ */
+func arg_ensure_help(spec: ArgSpec) : ArgSpec {
+    if (arg_find(spec, "help") >= 0 || arg_find_short(spec, ArgCh.H) >= 0) {
+        return spec
+    }
+    return arg_flag(spec, "help", short: "h", help: "show this help")
+}
+
+// Records one occurrence: the per-option slots, the occurrence log, and validation for INTs.
+func arg_record(parsed: ArgParsed, slot: int, value: string) : ArgParsed {
+    let opt: ArgOpt = parsed.spec.options[slot]
+
+    parsed.counts[slot] = parsed.counts[slot] + 1
+    parsed.vals[slot] = value
+
+    if (opt.kind == ArgKind.INT) {
+        let r: ArgIntResult = arg_parse_int_strict(value)
+        if (r.ok) {
+            parsed.int_vals[slot] = r.value
+            if (opt.has_range && (r.value < opt.min_val || r.value > opt.max_val)) {
+                parsed = arg_error_add(parsed, "option '--" + opt.name + "' expects a value between "
+                    + opt.min_val + " and " + opt.max_val + ", got '" + value + "'")
+            }
+        } else {
+            parsed = arg_error_add(parsed, "option '--" + opt.name + "' expects an integer, got '" + value + "'")
+        }
+    }
+
+    parsed.occ_slots[parsed.occ_count] = slot
+    parsed.occ_vals[parsed.occ_count] = value
+    parsed.occ_count = parsed.occ_count + 1
+    return parsed
+}
+
+// Records an error unless --help has already been seen; help output is about to replace them.
+func arg_error_add(parsed: ArgParsed, message: string) : ArgParsed {
+    if (parsed.help_requested) {
+        return parsed
+    }
+    // The buffers are sized so this cannot fill (see arg_parse), but prolang crashes on an
+    // out-of-bounds write, so the guard stays: a dropped message in an impossible case is
+    // better than a crash in a user's program.
+    if (parsed.error_count >= parsed.errors.length()) {
+        return parsed
+    }
+    parsed.errors[parsed.error_count] = message
+    parsed.error_count = parsed.error_count + 1
+    return parsed
+}
+
+/*
+ * Records a positional argument, or the sub-command when command mode is on. `raw_idx` is the
+ * token's index in argv, which the command case remembers so arg_command_args can slice the
+ * tail out of raw_args.
+ */
+func arg_positional_add(parsed: ArgParsed, tok: string, raw_idx: int) : ArgParsed {
+    if (parsed.spec.command_mode && parsed.sub_name.length() == 0) {
+        parsed.sub_name = tok
+        parsed.sub_start = raw_idx
+        if (parsed.spec.command_count > 0) {
+            let c: int = 0
+            let found: bool = false
+            while (c < parsed.spec.command_count) {
+                if (parsed.spec.commands[c] == tok) {
+                    found = true
+                }
+                c = c + 1
+            }
+            if (!found) {
+                let hint: string = arg_suggest(parsed.spec, tok)
+                parsed = arg_error_add(parsed, "unknown command '" + tok + "'" + hint)
+            }
+        }
+        return parsed
+    }
+
+    parsed.poss[parsed.pos_count] = tok
+    parsed.pos_count = parsed.pos_count + 1
+
+    if (parsed.spec.pos_max >= 0 && parsed.pos_count > parsed.spec.pos_max) {
+        parsed = arg_error_add(parsed, "unexpected argument '" + tok + "'")
+    }
+    return parsed
+}
+
+/*
+ * Parses one long-option token: `--name`, `--name value`, `--name=value`.
+ * `i` is the index of the option token itself; the separated-value lookahead reads
+ * args[i + 1]. Sets next_idx to the index after the last token consumed.
+ */
+func arg_parse_long(parsed: ArgParsed, tok: string, i: int, args: array<string>) : ArgParsed {
+    let body: string = tok.substring(2, tok.length())
+    let name: string = body
+    let inline_value: string = ""
+    let has_inline: bool = false
+
+    let eq: int = body.indexOf("=")
+    if (eq >= 0) {
+        has_inline = true
+        name = body.substring(0, eq)
+        inline_value = body.substring(eq + 1, body.length())
+    }
+
+    if (name.length() == 0) {
+        // "--=" or "--=value": malformed no matter how you read it.
+        parsed = arg_error_add(parsed, "unknown option '" + tok + "'")
+        parsed.next_idx = i + 1
+        return parsed
+    }
+
+    let slot: int = arg_find(parsed.spec, name)
+
+    if (slot < 0 && parsed.spec.abbreviations) {
+        slot = arg_find_prefix(parsed.spec, name)
+        if (slot == 0 - 2) {
+            parsed = arg_error_add(parsed, "option '--" + name + "' is ambiguous (" + arg_list_prefixes(parsed.spec, name) + ")")
+            parsed.next_idx = i + 1
+            return parsed
+        }
+        // slot < 0 here means no option shares the prefix; fall through to the unknown case.
+    }
+
+    if (slot >= 0) {
+        return arg_apply_long(parsed, slot, args, i, has_inline, inline_value)
+    }
+
+    let hint: string = arg_suggest(parsed.spec, name)
+    parsed = arg_error_add(parsed, "unknown option '--" + name + "'" + hint)
+    parsed.next_idx = i + 1
+    return parsed
+}
+
+/*
+ * Records one resolved long option, consuming the following token for its value when needed.
+ * A value option may take its value inline (`--out=x`), from the next token (`--out x`), or
+ * not at all — the last is an error whose message points at the `=` form, because the next
+ * token looking like an option is more likely a stray than an intended value.
+ */
+func arg_apply_long(parsed: ArgParsed, slot: int, args: array<string>, i: int,
+                    has_inline: bool, inline_value: string) : ArgParsed {
+    let opt: ArgOpt = parsed.spec.options[slot]
+
+    if (opt.kind == ArgKind.FLAG || opt.kind == ArgKind.COUNT) {
+        if (has_inline) {
+            parsed = arg_error_add(parsed, "option '--" + opt.name + "' takes no value (remove '=...')")
+        } else {
+            parsed = arg_record(parsed, slot, "")
+            if (slot == parsed.help_slot) {
+                parsed.help_requested = true
+            }
+        }
+        parsed.next_idx = i + 1
+        return parsed
+    }
+
+    if (has_inline) {
+        parsed = arg_record(parsed, slot, inline_value)
+        if (slot == parsed.help_slot) {
+            parsed.help_requested = true
+        }
+        parsed.next_idx = i + 1
+        return parsed
+    }
+
+    if (i + 1 < args.length()) {
+        let next_tok: string = args[i + 1]
+        if (!arg_token_is_option(next_tok)) {
+            parsed = arg_record(parsed, slot, next_tok)
+            if (slot == parsed.help_slot) {
+                parsed.help_requested = true
+            }
+            parsed.next_idx = i + 2
+            return parsed
+        }
+        parsed = arg_error_add(parsed, "option '--" + opt.name + "' requires a value (try '--" + opt.name + "=VALUE')")
+        parsed.next_idx = i + 1
+        return parsed
+    }
+
+    parsed = arg_error_add(parsed, "option '--" + opt.name + "' requires a value")
+    parsed.next_idx = i + 1
+    return parsed
+}
+
+/*
+ * Parses one short-option token: `-x` alone, a bundle like `-vvv`, or a bundle whose last
+ * option takes a value (`-j4`, or `-j 4` with the value in the next token). Scanning stops at
+ * the first unknown letter, like getopt: after an error the rest of the token would be read
+ * with no idea which options the user meant.
+ */
+func arg_parse_short(parsed: ArgParsed, tok: string, args: array<string>, i: int) : ArgParsed {
+    // `i` is the index of the option token itself; the separated-value lookahead reads
+    // args[i + 1].
+    let j: int = 1
+    let consumed_next: bool = false
+
+    while (j < tok.length()) {
+        let c: int = tok.charCode(j)
+        let slot: int = arg_find_short(parsed.spec, c)
+
+        if (slot < 0) {
+            let ch: string = tok.substring(j, j + 1)
+            parsed = arg_error_add(parsed, "unknown option '-" + ch + "'")
+            break
+        }
+
+        let opt: ArgOpt = parsed.spec.options[slot]
+
+        if (opt.kind == ArgKind.FLAG || opt.kind == ArgKind.COUNT) {
+            parsed = arg_record(parsed, slot, "")
+            if (slot == parsed.help_slot) {
+                parsed.help_requested = true
+            }
+            j = j + 1
+            continue
+        }
+
+        // A value option inside a bundle: everything after it is its value, or the next
+        // token is. `-jvo 4` gives -v a flag and -o the value "4".
+        let rest: string = tok.substring(j + 1, tok.length())
+        if (rest.length() > 0) {
+            // Strip a leading '=' so `-o=file` works like `--out=file`. A value that genuinely
+            // starts with '=' is not a thing command lines carry.
+            if (rest.charCode(0) == ArgCh.EQUALS) {
+                rest = rest.substring(1, rest.length())
+            }
+            parsed = arg_record(parsed, slot, rest)
+            if (slot == parsed.help_slot) {
+                parsed.help_requested = true
+            }
+            j = tok.length()
+            break
+        }
+
+        if (i + 1 < args.length()) {
+            let next_tok: string = args[i + 1]
+            if (!arg_token_is_option(next_tok)) {
+                parsed = arg_record(parsed, slot, next_tok)
+                if (slot == parsed.help_slot) {
+                    parsed.help_requested = true
+                }
+                consumed_next = true
+                break
+            }
+            parsed = arg_error_add(parsed, "option '-" + opt.short_form + "' requires a value (try '-" + opt.short_form + "VALUE')")
+            break
+        }
+
+        parsed = arg_error_add(parsed, "option '-" + opt.short_form + "' requires a value")
+        break
+    }
+
+    if (consumed_next) {
+        parsed.next_idx = i + 2
+    } else {
+        parsed.next_idx = i + 1
+    }
+    return parsed
+}
+
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// Token classification
+// ────────────────────────────────────────────────────────────────────────────────────────────
+
+/*
+ * Whether a token starts an option. "-" alone is not: it is the conventional stdin/stdout
+ * placeholder and arrives as a positional or a value. A dash followed by digits is a negative
+ * number, which is why `--level -3` works; everything else dash-prefixed is an option.
+ */
+func arg_token_is_option(tok: string) : bool {
+    let len: int = tok.length()
+    if (len < 2) {
+        return false
+    }
+    if (tok.charCode(0) != ArgCh.DASH) {
+        return false
+    }
+    return !arg_looks_number(tok)
+}
+
+// True when a dash-prefixed token is a negative number rather than an option.
+func arg_looks_number(tok: string) : bool {
+    let c: int = tok.charCode(1)
+    return c >= ArgCh.ZERO && c <= ArgCh.NINE
+}
+
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// Option lookup
+// ────────────────────────────────────────────────────────────────────────────────────────────
+
+// The slot of the option whose long name equals `name`, or -1.
+func arg_find(spec: ArgSpec, name: string) : int {
+    let i: int = 0
+    while (i < spec.opt_count) {
+        if (spec.options[i].name == name) {
+            return i
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+// The slot of the option whose short form has code `code`, or -1.
+func arg_find_short(spec: ArgSpec, code: int) : int {
+    let i: int = 0
+    while (i < spec.opt_count) {
+        if (spec.options[i].short_code == code && spec.options[i].short_form.length() > 0) {
+            return i
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+/*
+ * Prefix matching for abbreviations. Returns the matching slot when exactly one option's name
+ * starts with `name`, -2 when several do, and -1 when none do. Hidden options still match:
+ * hidden means "not in help", not "not usable".
+ */
+func arg_find_prefix(spec: ArgSpec, name: string) : int {
+    let match: int = 0 - 1
+    let matches: int = 0
+    let i: int = 0
+    while (i < spec.opt_count) {
+        if (arg_starts_with(spec.options[i].name, name)) {
+            if (matches == 0) {
+                match = i
+            }
+            matches = matches + 1
+        }
+        i = i + 1
+    }
+    if (matches == 1) {
+        return match
+    }
+    if (matches > 1) {
+        return 0 - 2
+    }
+    return 0 - 1
+}
+
+// True when `text` begins with `prefix`. A prefix longer than the text is never a match.
+func arg_starts_with(text: string, prefix: string) : bool {
+    let plen: int = prefix.length()
+    if (plen > text.length()) {
+        return false
+    }
+    return text.substring(0, plen) == prefix
+}
+
+// Joins the names of every option starting with `name`, for the "ambiguous" message.
+func arg_list_prefixes(spec: ArgSpec, name: string) : string {
+    let out: string = ""
+    let i: int = 0
+    while (i < spec.opt_count) {
+        if (arg_starts_with(spec.options[i].name, name)) {
+            if (out.length() > 0) {
+                out = out + ", "
+            }
+            out = out + "'--" + spec.options[i].name + "'"
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// Reading the results
+// ────────────────────────────────────────────────────────────────────────────────────────────
+
+// True when arg_parse recorded no errors. Check this before reading any values.
+func arg_ok(parsed: ArgParsed) : bool {
+    return parsed.ok
+}
+
+// How many problems arg_parse found, one human-readable message each.
+func arg_error_count(parsed: ArgParsed) : int {
+    return parsed.error_count
+}
+
+// The error message at `index`, or "" when out of range. Usually arg_print_errors is enough.
+func arg_error(parsed: ArgParsed, index: int) : string {
+    if (index < 0 || index >= parsed.error_count) {
+        return ""
+    }
+    return parsed.errors[index]
+}
+
+// True when the user asked for --help. When this is set, ok is true and errors were discarded,
+// so check it before checking arg_ok.
+func arg_help_requested(parsed: ArgParsed) : bool {
+    return parsed.help_requested
+}
+
+/*
+ * The value of a string option: what the command line supplied, else the declared default,
+ * else the `fallback` from this call. An explicit empty value (`--name=`) returns "" — a value
+ * the user typed outranks every fallback. Unknown option names (a typo in your own code) also
+ * return the fallback; use arg_has to tell "absent" from "absent because misspelled".
+ */
+func arg_get_str(parsed: ArgParsed, name: string, fallback: string = "") : string {
+    let slot: int = arg_find(parsed.spec, name)
+    if (slot < 0) {
+        return fallback
+    }
+    if (parsed.counts[slot] > 0) {
+        return parsed.vals[slot]
+    }
+    // Not given: the declared default is already materialised in vals.
+    let v: string = parsed.vals[slot]
+    if (v.length() > 0) {
+        return v
+    }
+    return fallback
+}
+
+/*
+ * The integer value of an INT option: what the command line supplied, else the declared
+ * default. The fallback only applies when the name matches no option at all. Asking for the
+ * integer value of a non-INT option returns 0 — a mistake in your own code, not a runtime case.
+ */
+func arg_get_int(parsed: ArgParsed, name: string, fallback: int = 0) : int {
+    let slot: int = arg_find(parsed.spec, name)
+    if (slot < 0) {
+        return fallback
+    }
+    if (parsed.counts[slot] > 0) {
+        return parsed.int_vals[slot]
+    }
+    let opt: ArgOpt = parsed.spec.options[slot]
+    return opt.default_int
+}
+
+// True when the flag appeared on the command line, however many times. False for unknown names.
+func arg_get_flag(parsed: ArgParsed, name: string) : bool {
+    let slot: int = arg_find(parsed.spec, name)
+    if (slot < 0) {
+        return false
+    }
+    return parsed.counts[slot] > 0
+}
+
+// How many times the option appeared. Flags count too: `-v -v` gives 2, the basis of verbosity.
+func arg_get_count(parsed: ArgParsed, name: string) : int {
+    let slot: int = arg_find(parsed.spec, name)
+    if (slot < 0) {
+        return 0
+    }
+    return parsed.counts[slot]
+}
+
+// True when the option appeared at all — the same question as arg_get_flag, by another name.
+func arg_has(parsed: ArgParsed, name: string) : bool {
+    return arg_get_flag(parsed, name)
+}
+
+/*
+ * Every value the option received, in command-line order. For an option declared
+ * `multiple: true` this is the accumulator — `--include a --include b` yields ["a", "b"].
+ * For single-value options it is the occurrences anyway: ["x"] or []. Returns [] for an
+ * unknown name.
+ */
+func arg_values(parsed: ArgParsed, name: string) : array<string> {
+    let slot: int = arg_find(parsed.spec, name)
+    if (slot < 0) {
+        return array_new(0)
+    }
+    let count: int = 0
+    let i: int = 0
+    while (i < parsed.occ_count) {
+        if (parsed.occ_slots[i] == slot) {
+            count = count + 1
+        }
+        i = i + 1
+    }
+    let out: array<string> = array_new(count)
+    let k: int = 0
+    i = 0
+    while (i < parsed.occ_count) {
+        if (parsed.occ_slots[i] == slot) {
+            out[k] = parsed.occ_vals[i]
+            k = k + 1
+        }
+        i = i + 1
+    }
+    return out
+}
+
+// How many positional arguments the command line carried.
+func arg_positional_count(parsed: ArgParsed) : int {
+    return parsed.pos_count
+}
+
+/*
+ * The positional argument at `index`, in the order typed, or "" when there is none. In
+ * sub-command mode there are no positionals at all — the first became the command.
+ */
+func arg_positional(parsed: ArgParsed, index: int) : string {
+    if (index < 0 || index >= parsed.pos_count) {
+        return ""
+    }
+    return parsed.poss[index]
+}
+
+// In sub-command mode, the command the user typed, or "" when none was given.
+func arg_command_name(parsed: ArgParsed) : string {
+    return parsed.sub_name
+}
+
+/*
+ * In sub-command mode, every token after the command, verbatim — the input for a second
+ * arg_parse against a command-specific spec. Returns [] outside sub-command mode or when no
+ * command was typed.
+ */
+func arg_command_args(parsed: ArgParsed) : array<string> {
+    let out: array<string> = array_new(parsed.sub_arg_count)
+    let i: int = 0
+    while (i < parsed.sub_arg_count) {
+        out[i] = parsed.sub_args[i]
+        i = i + 1
+    }
+    return out
+}
+
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// Help and error output
+// ────────────────────────────────────────────────────────────────────────────────────────────
+
+/*
+ * The usage line: "copy [options] <src> <dst>". Sub-command programs get
+ * "copy [options] <command> [args]" instead of positional placeholders, because everything
+ * after the command is the command's business.
+ */
+func arg_usage_line(spec: ArgSpec) : string {
+    let line: string = spec.program
+    if (spec.opt_count > 0) {
+        line = line + " [options]"
+    }
+    if (spec.command_mode) {
+        line = line + " <command> [args]"
+    } else if (spec.pos_help.length() > 0) {
+        line = line + " " + spec.pos_help
+    }
+    return line
+}
+
+/*
+ * The width of the help screen's shared alignment column: the widest left-hand part among the
+ * visible options and the command names, capped at 30 so one long option does not push every
+ * description onto its own line.
+ */
+func arg_help_column(spec: ArgSpec) : int {
+    // Whether any visible option has a short form decides how long-only rows are padded.
+    let any_short: bool = false
+    let i: int = 0
+    while (i < spec.opt_count) {
+        if (spec.options[i].short_form.length() > 0) {
+            any_short = true
+        }
+        i = i + 1
+    }
+
+    let max: int = 0
+    i = 0
+    while (i < spec.opt_count) {
+        if (!spec.options[i].hidden) {
+            let width: int = arg_help_left(spec.options[i], any_short).length()
+            if (width > max) {
+                max = width
+            }
+        }
+        i = i + 1
+    }
+    i = 0
+    while (i < spec.command_count) {
+        if (spec.commands[i].length() > max) {
+            max = spec.commands[i].length()
+        }
+        i = i + 1
+    }
+    if (max > 30) {
+        return 30
+    }
+    return max
+}
+
+/*
+ * The help screen, one string per line: summary, usage, the aligned options list, and the
+ * commands section in sub-command mode. A list of lines rather than one joined string, because
+ * prolang string literals have no escape sequences — there is no "\n" to embed in a string.
+ *
+ * Columns are computed from the widest row so nothing needs hand-alignment; when a left column
+ * runs past 30 characters, its description drops to the next line at the shared indent rather
+ * than pushing every other row out. A help description must itself be one line.
+ */
+func arg_help_lines(spec: ArgSpec) : array<string> {
+    let spec2: ArgSpec = arg_ensure_help(spec)
+
+    // Upper bound — a wrapped row is two lines, the fixed frame is five:
+    // [summary] "" usage "" "Options:". Sizing once keeps this free of reallocation.
+    let lines: array<string> = array_new(5 + spec2.opt_count * 2 + spec2.command_count * 2)
+    let n: int = 0
+
+    if (spec2.summary.length() > 0) {
+        lines[n] = spec2.summary
+        n = n + 1
+    }
+    lines[n] = ""
+    n = n + 1
+    lines[n] = "Usage: " + arg_usage_line(spec2)
+    n = n + 1
+    lines[n] = ""
+    n = n + 1
+
+    // One alignment column across options and commands, capped so a long option name does not
+    // drag the whole table to the right.
+    let indent: int = arg_help_column(spec2) + 2
+
+    // Whether any visible option has a short form decides how long-only rows are padded.
+    let any_short: bool = false
+    let i: int = 0
+    while (i < spec2.opt_count) {
+        if (spec2.options[i].short_form.length() > 0) {
+            any_short = true
+        }
+        i = i + 1
+    }
+
+    lines[n] = "Options:"
+    n = n + 1
+    i = 0
+    while (i < spec2.opt_count) {
+        let opt: ArgOpt = spec2.options[i]
+        if (!opt.hidden) {
+            let left: string = arg_help_left(opt, any_short)
+            let right: string = opt.help + arg_help_note(opt)
+            if (right.length() == 0) {
+                lines[n] = left
+                n = n + 1
+            } else if (left.length() >= indent) {
+                // Too wide to align to — description moves below rather than dragging every
+                // other row that far right.
+                lines[n] = left
+                n = n + 1
+                lines[n] = arg_spaces(indent) + right
+                n = n + 1
+            } else {
+                lines[n] = left + arg_spaces(indent - left.length()) + right
+                n = n + 1
+            }
+        }
+        i = i + 1
+    }
+
+    if (spec2.command_count > 0) {
+        lines[n] = ""
+        n = n + 1
+        lines[n] = "Commands:"
+        n = n + 1
+        i = 0
+        while (i < spec2.command_count) {
+            let left: string = spec2.commands[i]
+            let right: string = spec2.command_helps[i]
+            if (right.length() == 0) {
+                lines[n] = left
+                n = n + 1
+            } else if (left.length() >= indent) {
+                lines[n] = left
+                n = n + 1
+                lines[n] = arg_spaces(indent) + right
+                n = n + 1
+            } else {
+                lines[n] = left + arg_spaces(indent - left.length()) + right
+                n = n + 1
+            }
+            i = i + 1
+        }
+    }
+
+    return arg_exact(lines, n)
+}
+
+/*
+ * Prints the help screen, one print() per line. Buffered like any print, so the screen appears
+ * whole and in order; there is nothing to join because each line is already its own string.
+ */
+func arg_print_help(spec: ArgSpec) : void {
+    let lines: array<string> = arg_help_lines(spec)
+    let i: int = 0
+    while (i < lines.length()) {
+        print(lines[i])
+        i = i + 1
+    }
+}
+
+/*
+ * Prints every error as `program: error: message`, then the standard pointer at --help — the
+ * shape git and cargo use. Errors go to stdout because that is the only stream prolang's print
+ * writes to; there is no way to set an exit code from prolang, so a program that cares about
+ * its exit status should follow the print with assert(false, ...) or rely on its caller.
+ */
+func arg_print_errors(parsed: ArgParsed) : void {
+    if (parsed.error_count == 0) {
+        return
+    }
+    let i: int = 0
+    while (i < parsed.error_count) {
+        print(parsed.spec.program + ": error: " + parsed.errors[i])
+        i = i + 1
+    }
+    print("Try '" + parsed.spec.program + " --help' for more information.")
+}
+
+// The left column of one options row: "-j, --jobs <N>", aligned so that bundles line up.
+func arg_help_left(opt: ArgOpt, any_short: bool) : string {
+    let left: string = ""
+    if (opt.short_form.length() > 0) {
+        left = "-" + opt.short_form + ", "
+    } else if (any_short) {
+        // Reserve the short-option column so every long name starts at the same character.
+        left = "    "
+    }
+    left = left + "--" + opt.name
+    if (opt.kind == ArgKind.VALUE || opt.kind == ArgKind.INT) {
+        left = left + " <" + opt.placeholder + ">"
+    }
+    return left
+}
+
+// The parenthesised annotations after the help text: required, defaults, repeatability.
+func arg_help_note(opt: ArgOpt) : string {
+    if (opt.required) {
+        return " (required)"
+    }
+    if (opt.kind == ArgKind.INT) {
+        return " (default " + opt.default_int + ")"
+    }
+    if (opt.kind == ArgKind.VALUE && opt.default_value.length() > 0) {
+        return " (default " + opt.default_value + ")"
+    }
+    if (opt.kind == ArgKind.COUNT || opt.multiple) {
+        return " (repeatable)"
+    }
+    return ""
+}
+
+/*
+ * Copies the first `count` entries of `src` into an exactly-sized array. Result arrays leave
+ * arg_help_lines and the accessors sized to what they actually hold, so a caller that prints
+ * `lines.length()` lines prints lines, not the buffer's capacity.
+ */
+func arg_exact(src: array<string>, count: int) : array<string> {
+    let out: array<string> = array_new(count)
+    let i: int = 0
+    while (i < count) {
+        out[i] = src[i]
+        i = i + 1
+    }
+    return out
+}
+
+// `count` spaces. Only the help renderer uses this, so its cost does not matter.
+func arg_spaces(count: int) : string {
+    let out: string = ""
+    let i: int = 0
+    while (i < count) {
+        out = out + " "
+        i = i + 1
+    }
+    return out
+}
+
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// Numbers
+// ────────────────────────────────────────────────────────────────────────────────────────────
+
+/*
+ * Parses a decimal integer strictly: optional sign, digits only, and no value that a 32-bit
+ * int cannot hold — including the exact minimum, -2147483648, which does not fit the positive
+ * side of the accumulator and is therefore handled as its own case. prolang has no conversion
+ * from string to int, and std/util's util_parse_int is unsigned and unchecked, so option
+ * values need this.
+ */
+func arg_parse_int_strict(text: string) : ArgIntResult {
+    let len: int = text.length()
+    if (len == 0) {
+        return ArgIntResult { ok: false, value: 0 }
+    }
+
+    let i: int = 0
+    let negative: bool = false
+    let c0: int = text.charCode(0)
+    if (c0 == ArgCh.DASH) {
+        negative = true
+        i = 1
+    } else if (c0 == ArgCh.PLUS) {
+        i = 1
+    }
+    if (i >= len) {
+        return ArgIntResult { ok: false, value: 0 }   // "-" or "+" alone
+    }
+
+    // The accumulation is unsigned-magnitude: the largest magnitude a 32-bit int can name is
+    // 2147483648, which only exists on the negative side. Seeing 214748364 followed by 8 with
+    // a minus in front is the one value that walks that edge; anything after it overflows.
+    let total: int = 0
+    let min_edge: bool = false
+    while (i < len) {
+        let c: int = text.charCode(i)
+        if (c < ArgCh.ZERO || c > ArgCh.NINE) {
+            return ArgIntResult { ok: false, value: 0 }
+        }
+        if (min_edge) {
+            return ArgIntResult { ok: false, value: 0 }   // magnitude grew past 2^31
+        }
+        let d: int = c - ArgCh.ZERO
+        if (total > 214748364) {
+            return ArgIntResult { ok: false, value: 0 }
+        }
+        if (total == 214748364) {
+            // 214748364 * 10 + d is in range for d 0..7, overflows for d 8..9 — except the
+            // exact minimum, -2147483648, which lives on the negative side only. Anything
+            // after that edge digit grows the magnitude past 2^31 and fails on the next pass.
+            if (negative && d == 8) {
+                min_edge = true
+            } else if (d > 7) {
+                return ArgIntResult { ok: false, value: 0 }
+            } else {
+                total = total * 10 + d
+            }
+        } else {
+            total = total * 10 + d
+        }
+        i = i + 1
+    }
+
+    if (min_edge) {
+        return ArgIntResult { ok: true, value: 0 - 2147483647 - 1 }
+    }
+    if (negative) {
+        return ArgIntResult { ok: true, value: 0 - total }
+    }
+    return ArgIntResult { ok: true, value: total }
+}
+
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// Suggestions
+// ────────────────────────────────────────────────────────────────────────────────────────────
+
+// Joins names for error text: "add, rm, update". Validation-path only, so cost is irrelevant.
+func arg_join_names(names: array<string>, count: int) : string {
+    let out: string = ""
+    let i: int = 0
+    while (i < count) {
+        if (out.length() > 0) {
+            out = out + ", "
+        }
+        out = out + names[i]
+        i = i + 1
+    }
+    return out
+}
+
+/*
+ * Builds the "did you mean" tail of an unknown-name error, or "" when nothing is close.
+ *
+ * Two signals, in the order git uses them: an exact-prefix match is offered first — `--stat`
+ * against a declared `--stats` is far more likely a truncation than a typo — and otherwise
+ * candidates within Levenshtein distance 2. Command names are candidates too, tagged as
+ * commands, so `copy ad` suggests 'add'. Runs only on error paths.
+ */
+func arg_suggest(spec: ArgSpec, name: string) : string {
+    // Pass one: candidates that the given name is a prefix of. Options are shown in their
+    // long form (--force), commands plain with a tag (add (a command)).
+    let prefix_hits: int = 0
+    let prefix_best: string = ""
+    let i: int = 0
+    while (i < spec.opt_count) {
+        if (arg_starts_with(spec.options[i].name, name)) {
+            prefix_hits = prefix_hits + 1
+            if (prefix_hits == 1) {
+                prefix_best = "--" + spec.options[i].name
+            }
+        }
+        i = i + 1
+    }
+    i = 0
+    while (i < spec.command_count) {
+        if (arg_starts_with(spec.commands[i], name)) {
+            prefix_hits = prefix_hits + 1
+            if (prefix_hits == 1) {
+                prefix_best = spec.commands[i] + " (a command)"
+            }
+        }
+        i = i + 1
+    }
+    if (prefix_hits == 1) {
+        return " (did you mean '" + prefix_best + "'?)"
+    }
+
+    // Pass two: closest candidates by edit distance, ties included.
+    let best: int = 3          // anything further is noise, not a suggestion
+    let hits: int = 0
+    let names: string = ""
+    i = 0
+    while (i < spec.opt_count) {
+        let d: int = arg_levenshtein(name, spec.options[i].name)
+        if (d < best) {
+            best = d
+            hits = 1
+            names = "'--" + spec.options[i].name + "'"
+        } else if (d == best && d <= 2) {
+            hits = hits + 1
+            names = names + " or '--" + spec.options[i].name + "'"
+        }
+        i = i + 1
+    }
+    i = 0
+    while (i < spec.command_count) {
+        let d: int = arg_levenshtein(name, spec.commands[i])
+        if (d < best) {
+            best = d
+            hits = 1
+            names = "'" + spec.commands[i] + "' (a command)"
+        } else if (d == best && d <= 2) {
+            hits = hits + 1
+            names = names + " or '" + spec.commands[i] + "'"
+        }
+        i = i + 1
+    }
+    if (best > 2) {
+        return ""
+    }
+    if (hits == 1) {
+        return " (did you mean " + names + "?)"
+    }
+    return " (did you mean " + names + "?)"
+}
+
+/*
+ * The Levenshtein distance between two strings — insertions, deletions and substitutions —
+ * computed with two rows rather than a full matrix, so the memory is the length of the shorter
+ * word and nothing more. Never called from the parse loop: only an unknown name gets here.
+ */
+func arg_levenshtein(a: string, b: string) : int {
+    let a_len: int = a.length()
+    let b_len: int = b.length()
+    if (a_len == 0) {
+        return b_len
+    }
+    if (b_len == 0) {
+        return a_len
+    }
+
+    let prev: array<int> = array_new(b_len + 1)
+    let curr: array<int> = array_new(b_len + 1)
+    let j: int = 0
+    while (j <= b_len) {
+        prev[j] = j
+        j = j + 1
+    }
+
+    let i: int = 1
+    while (i <= a_len) {
+        curr[0] = i
+        j = 1
+        while (j <= b_len) {
+            let cost: int = 1
+            if (a.substring(i - 1, i) == b.substring(j - 1, j)) {
+                cost = 0
+            }
+            let best: int = prev[j] + 1          // deletion
+            let insert_cost: int = curr[j - 1] + 1
+            let substitute: int = prev[j - 1] + cost
+            if (insert_cost < best) {
+                best = insert_cost
+            }
+            if (substitute < best) {
+                best = substitute
+            }
+            curr[j] = best
+            j = j + 1
+        }
+        // The rows swap roles each pass; only the latest survives in prev.
+        let swap: array<int> = prev
+        prev = curr
+        curr = swap
+        i = i + 1
+    }
+    return prev[b_len]
+}
+
+// ────────────────────────────────────────────────────────────────────────────────────────────
+// Sub-commands, the whole pattern
+// ────────────────────────────────────────────────────────────────────────────────────────────
+
+/*
+ * A git-style program parses twice: once for the options that belong to the program, then once
+ * more for the options that belong to the command the user named. arg_parse does the first;
+ * this is the shape of the second.
+ *
+ *     let spec: ArgSpec = arg_new("tool", "an example")
+ *     spec = arg_commands(spec)
+ *     spec = arg_command(spec, "add", "stage files")
+ *     spec = arg_command(spec, "rm", "unstage files")
+ *
+ *     let parsed: ArgParsed = arg_parse(spec, args)
+ *     if (arg_help_requested(parsed)) { arg_print_help(spec); return }
+ *     if (!arg_ok(parsed))             { arg_print_errors(parsed); return }
+ *
+ *     let command: string = arg_command_name(parsed)
+ *     if (command == "add") {
+ *         let add_spec: ArgSpec = arg_new("tool add", "stage files")
+ *         add_spec = arg_flag(add_spec, "dry-run")
+ *         let add_parsed: ArgParsed = arg_parse(add_spec, arg_command_args(parsed))
+ *         ...
+ *     }
+ *
+ * Everything after the command is handed over raw, so the sub-parser sees the same argv shape
+ * main() did and owns its own --help. Options before the command have already been applied to
+ * the main spec and are not seen twice.
+ */

@@ -1,0 +1,91 @@
+/*
+ * The command-line argument parser at work
+ *
+ * A small but complete CLI: `copy`, with options, two sub-commands, and a plain mode that
+ * takes positional paths. Run with no arguments it prints its help screen — the convention
+ * for multi-command tools, and what the test corpus executes and snapshots.
+ *
+ *   dotnet run --project src/ProLang/ProLang.csproj -- examples/19-args/args-demo.prl -o copy.dll
+ *   dotnet copy.dll                                   (help screen)
+ *   dotnet copy.dll src.txt backup.txt --jobs 4
+ *   dotnet copy.dll add --include "*.log" --include "*.tmp" --dry-run
+ *   dotnet copy.dll rm --force old.txt                (options after the command belong to it)
+ *
+ * Three things worth noticing:
+ *   - main() passes its `args` straight into arg_parse — the compiler already strips argv[0].
+ *   - help beats errors: check arg_help_requested before arg_ok, or `--help` after a typo
+ *     would print an error instead of the screen the user asked for.
+ *   - in sub-command mode, arg_command_args hands the tokens after the command to a second
+ *     parser untouched, so each command owns its own options and its own --help.
+ */
+
+import "io"
+import "args"
+
+func main(args: array<string>) {
+    let spec: ArgSpec = arg_new("copy", "copy and stage files")
+    spec = arg_flag(spec, "verbose", short: "v", help: "explain what is being done")
+    spec = arg_flag(spec, "force", short: "f", help: "overwrite existing files")
+    spec = arg_count(spec, "quiet", short: "q", help: "suppress output")
+    spec = arg_int_range(spec, "jobs", 1, 16, short: "j", default: 1, help: "parallel jobs")
+    spec = arg_option(spec, "output", short: "o", placeholder: "FILE", default: "out.txt", help: "where to write")
+    spec = arg_commands(spec, command_required: false)
+    spec = arg_command(spec, "add", "stage files for copying")
+    spec = arg_command(spec, "rm", "remove staged files")
+
+    let parsed: ArgParsed = arg_parse(spec, args)
+
+    if (arg_help_requested(parsed)) {
+        arg_print_help(spec)
+        return
+    }
+    if (!arg_ok(parsed)) {
+        arg_print_errors(parsed)
+        return
+    }
+
+    // ── sub-command dispatch ──
+    let command: string = arg_command_name(parsed)
+
+    if (command == "add") {
+        let add_spec: ArgSpec = arg_new("copy add", "stage files for copying")
+        add_spec = arg_flag(add_spec, "dry-run", help: "list what would be staged")
+        add_spec = arg_option(add_spec, "include", placeholder: "PATTERN", multiple: true, help: "globs to stage")
+        let add_parsed: ArgParsed = arg_parse(add_spec, arg_command_args(parsed))
+        if (arg_help_requested(add_parsed)) {
+            arg_print_help(add_spec)
+            return
+        }
+        if (!arg_ok(add_parsed)) {
+            arg_print_errors(add_parsed)
+            return
+        }
+        let includes: array<string> = arg_values(add_parsed, "include")
+        print("staging " + includes.length() + " glob(s), dry run: " + arg_get_flag(add_parsed, "dry-run"))
+        return
+    }
+
+    if (command == "rm") {
+        print("removing staged files")
+        return
+    }
+
+    // ── no command: the plain copy path ──
+    if (arg_positional_count(parsed) == 0) {
+        // git's behavior: a bare invocation is a request for help.
+        arg_print_help(spec)
+        return
+    }
+
+    let src: string = arg_positional(parsed, 0)
+    let dst: string = arg_positional(parsed, 1)
+    if (dst.length() == 0) {
+        print("copy: error: expected a destination path after '" + src + "'")
+        print("Try 'copy --help' for more information.")
+        return
+    }
+
+    print("copying " + src + " to " + arg_get_str(parsed, "output", dst)
+        + " with " + arg_get_int(parsed, "jobs") + " job(s)"
+        + ", force: " + arg_get_flag(parsed, "force"))
+}
