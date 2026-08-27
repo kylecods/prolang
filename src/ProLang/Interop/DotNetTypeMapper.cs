@@ -38,14 +38,12 @@ public static class DotNetTypeMapper
 
     private static void TryRegisterDrawingTypes()
     {
-        try
-        {
-            var colorType = Type.GetType("System.Drawing.Color, System.Drawing.Primitives")
-                ?? Type.GetType("System.Drawing.Color, System.Drawing");
-            if (colorType != null)
-                _typeMap[colorType] = TypeSymbol.Int;
-        }
-        catch { }
+        // Metadata-only assemblies are not visible to Type.GetType(string), which searches the
+        // executing context only — so the Color type is looked up through the registry instead.
+        var registry = DotNetAssemblyRegistry.Instance;
+        var colorType = registry.FindType("System.Drawing.Color");
+        if (colorType != null)
+            _typeMap[colorType] = TypeSymbol.Int;
     }
 
     private static void RegisterPrimitiveMapping(Type clrType, TypeSymbol proLangType)
@@ -60,6 +58,13 @@ public static class DotNetTypeMapper
     /// </summary>
     public static TypeSymbol MapToProLangType(Type dotNetType)
     {
+        // Metadata-only types are distinct Type instances from the compiler's own typeof(int),
+        // so the reference-keyed _typeMap misses them. Match primitives by full name instead —
+        // this is what makes an array<int> parameter from a metadata assembly bind as array<int>
+        // rather than array<Int32>.
+        if (TryMapPrimitiveByFullName(dotNetType.FullName, out var primitive))
+            return primitive;
+
         if (_typeMap.TryGetValue(dotNetType, out var mapped))
             return mapped;
 
@@ -99,7 +104,7 @@ public static class DotNetTypeMapper
         // rest of the compiler tests for by reference. Letting it become a DotNetTypeSymbol broke
         // boxing: EmitConversionExpression boxes when the target is TypeSymbol.Any, and a
         // distinct symbol for the same type silently failed that check.
-        if (dotNetType == typeof(object))
+        if (dotNetType == typeof(object) || dotNetType.FullName == "System.Object")
         {
             return TypeSymbol.Any;
         }
@@ -114,6 +119,42 @@ public static class DotNetTypeMapper
     }
 
     /// <summary>
+    /// Maps a primitive .NET type to its ProLang symbol by full name.
+    /// </summary>
+    /// <remarks>
+    /// The reference-keyed <see cref="_typeMap"/> only matches the compiler's own
+    /// <c>typeof(...)</c> instances. A type read from a metadata assembly is a different
+    /// <see cref="Type"/> object with the same full name, so primitives are matched by name here
+    /// before the dictionary is consulted.
+    /// </remarks>
+    private static bool TryMapPrimitiveByFullName(string? fullName, out TypeSymbol symbol)
+    {
+        switch (fullName)
+        {
+            case "System.Void": symbol = TypeSymbol.Void; return true;
+            case "System.Boolean": symbol = TypeSymbol.Bool; return true;
+            case "System.Byte":
+            case "System.SByte":
+            case "System.Int16":
+            case "System.UInt16":
+            case "System.Int32":
+            case "System.UInt32":
+            case "System.Int64":
+            case "System.UInt64":
+                symbol = TypeSymbol.Int; return true;
+            case "System.Single": symbol = TypeSymbol.Float32; return true;
+            case "System.Double":
+            case "System.Decimal":
+                symbol = TypeSymbol.Float64; return true;
+            case "System.String":
+            case "System.Char":
+                symbol = TypeSymbol.String; return true;
+            default:
+                symbol = TypeSymbol.Any; return false;
+        }
+    }
+
+    /// <summary>
     /// Creates a type symbol with a custom name for .NET types.
     /// Useful for representing specific .NET types in diagnostics.
     /// </summary>
@@ -125,6 +166,13 @@ public static class DotNetTypeMapper
     /// <summary>
     /// Converts a ProLang runtime value to the expected .NET type.
     /// </summary>
+    /// <remarks>
+    /// Only ever called with runtime types the compiler itself owns (primitives, List&lt;object&gt;,
+    /// Dictionary&lt;object,object&gt;) — never with a metadata-only interop type, which cannot hold
+    /// a value inside the compiler process. The Color conversion is gone for that reason: it
+    /// reflection-invoked <c>Color.FromArgb</c> on a loaded assembly, which metadata-only
+    /// discovery no longer permits. The emitter handles colours by emitting a call instead.
+    /// </remarks>
     public static object? ConvertToDotNet(object? value, Type targetType)
     {
         if (value == null)
@@ -135,18 +183,6 @@ public static class DotNetTypeMapper
 
         if (targetType.IsInstanceOfType(value))
             return value;
-
-        // Convert int to .NET enum type
-        if (targetType.IsEnum && value is int intVal)
-            return Enum.ToObject(targetType, intVal);
-
-        // Convert int to System.Drawing.Color via Color.FromArgb
-        if (IsColorType(targetType) && value is int argb)
-        {
-            var fromArgb = targetType.GetMethod("FromArgb", new[] { typeof(int) });
-            if (fromArgb != null)
-                return fromArgb.Invoke(null, new object[] { argb })!;
-        }
 
         // Handle numeric conversions
         if (IsNumericType(targetType) && (value is int || value is float || value is double))
@@ -203,23 +239,15 @@ public static class DotNetTypeMapper
     /// <summary>
     /// Converts a .NET return value to a ProLang runtime value.
     /// </summary>
+    /// <remarks>
+    /// Like <see cref="ConvertToDotNet"/>, this only ever sees values the compiler itself owns —
+    /// primitives and collections. The Color branch is gone: it reflection-invoked
+    /// <c>ToArgb</c> on a loaded assembly, which metadata-only discovery no longer permits.
+    /// </remarks>
     public static object? ConvertFromDotNet(object? value)
     {
         if (value == null)
             return null;
-
-        // Convert .NET enum values to int
-        if (value is Enum)
-            return Convert.ToInt32(value);
-
-        // Convert System.Drawing.Color to ARGB int
-        var valueType = value.GetType();
-        if (IsColorType(valueType))
-        {
-            var toArgb = valueType.GetMethod("ToArgb");
-            if (toArgb != null)
-                return (int)toArgb.Invoke(value, null)!;
-        }
 
         // Convert numeric types to int
         if (value is byte or sbyte or short or ushort or int or uint or long or ulong)
@@ -291,9 +319,6 @@ public static class DotNetTypeMapper
         if (type == TypeSymbol.Float64 || type == TypeSymbol.Float) return 0.0d;
         return null;
     }
-
-    private static bool IsColorType(Type type)
-        => type.FullName is "System.Drawing.Color";
 
     /// <summary>
     /// Checks if a .NET type is numeric.

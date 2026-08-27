@@ -4,9 +4,27 @@ using System.Reflection;
 namespace ProLang.Interop;
 
 /// <summary>
-/// Central registry for loaded .NET assemblies. Provides caching and lookup for types, methods, and properties.
-/// Supports loading assemblies from file paths or by name from the runtime.
+/// Central registry for .NET assemblies available to the binder. Provides caching and lookup for
+/// types, methods, and properties. Assemblies are read as <em>metadata only</em> through a
+/// <see cref="MetadataLoadContext"/> — nothing is loaded for execution, no code runs, and the
+/// compiler's own process is never exposed to anything an imported assembly contains.
 /// </summary>
+/// <remarks>
+/// <para>
+/// This used to load assemblies with <see cref="Assembly.LoadFrom"/> into the default load context,
+/// which made the compiler incompatible with Native AOT: AOT binaries cannot JIT-load arbitrary
+/// managed assemblies, and reflection over runtime types requires trimming annotations that cannot
+/// be provided for assemblies the compiler has never seen. <see cref="MetadataLoadContext"/> reads
+/// the same files with the same <c>Type</c>/<c>MethodInfo</c>/<c>ConstructorInfo</c> API surface,
+/// so every consumer — the binder, the interop modules, the type mapper — is unchanged, while the
+/// whole thing becomes pure metadata reading that works identically under AOT.
+/// </para>
+/// <para>
+/// The one behavioural difference: metadata-only types cannot be instantiated or invoked. That is
+/// correct for a compiler — it only ever needs signatures to bind against and emit calls to — and
+/// <see cref="DotNetFunctionSymbol.Invoke"/> now reports that rather than pretending otherwise.
+/// </para>
+/// </remarks>
 public sealed class DotNetAssemblyRegistry
 {
     private static readonly Lazy<DotNetAssemblyRegistry> _instance = new(() => new DotNetAssemblyRegistry());
@@ -16,9 +34,11 @@ public sealed class DotNetAssemblyRegistry
     private readonly ConcurrentDictionary<string, Type[]> _typeCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, Type?> _typeLookupCache = new(StringComparer.OrdinalIgnoreCase);
     private readonly ConcurrentDictionary<string, Type?> _simpleNameCache = new(StringComparer.OrdinalIgnoreCase);
-    private readonly ConcurrentDictionary<RuntimeTypeHandle, MethodInfo[]> _staticMethodCache = new();
-    private readonly ConcurrentDictionary<RuntimeTypeHandle, PropertyInfo[]> _staticPropertyCache = new();
+    private readonly ConcurrentDictionary<Type, MethodInfo[]> _staticMethodCache = new();
+    private readonly ConcurrentDictionary<Type, PropertyInfo[]> _staticPropertyCache = new();
     private readonly HashSet<string> _runtimeAssemblyPaths;
+    private readonly object _contextGate = new();
+    private MetadataLoadContext? _metadataContext;
 
     private DotNetAssemblyRegistry()
     {
@@ -36,11 +56,14 @@ public sealed class DotNetAssemblyRegistry
     {
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Current runtime directory (implementation assemblies — safe to load)
+        // Current runtime directory (implementation assemblies — safe to read as metadata)
         var runtimeDir = System.Runtime.InteropServices.RuntimeEnvironment.GetRuntimeDirectory();
-        foreach (var dll in Directory.GetFiles(runtimeDir, "*.dll"))
+        if (Directory.Exists(runtimeDir))
         {
-            paths.Add(dll);
+            foreach (var dll in Directory.GetFiles(runtimeDir, "*.dll"))
+            {
+                paths.Add(dll);
+            }
         }
 
         // Windows Desktop shared runtime directories (implementation assemblies for WinForms/WPF)
@@ -66,7 +89,7 @@ public sealed class DotNetAssemblyRegistry
         }
 
         // Collect refpack reference assemblies into a separate list (NOT in _runtimeAssemblyPaths).
-        // Reference assemblies cannot be loaded for execution — they are used only for type discovery.
+        // Reference assemblies carry no method bodies at all; they are used only for type discovery.
         foreach (var packsRoot in new[]
         {
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".dotnet", "packs"),
@@ -78,7 +101,7 @@ public sealed class DotNetAssemblyRegistry
             {
                 var packName = Path.GetFileName(packDir);
                 // Skip Windows Desktop refpacks — they contain reference-only assemblies that
-                // poison the load context when attempted (causing subsequent real-assembly loads to fail).
+                // shadow the real implementations when both are visible.
                 if (packName.StartsWith("Microsoft.WindowsDesktop.App.Ref", StringComparison.OrdinalIgnoreCase))
                     continue;
                 var refDirs = Directory.GetDirectories(packDir, "ref", SearchOption.AllDirectories);
@@ -95,7 +118,18 @@ public sealed class DotNetAssemblyRegistry
             }
         }
 
-        return paths;
+        // A MetadataLoadContext's PathAssemblyResolver requires that each assembly simple name map
+        // to exactly one path. The runtime directory and the ref packs both carry mscorlib.dll and
+        // friends, so the set above can hold two files with the same name. The runtime directory
+        // was added first and holds the real implementations, so it wins; a later duplicate is
+        // dropped rather than left to make the resolver throw.
+        var bySimpleName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in paths)
+        {
+            bySimpleName.TryAdd(Path.GetFileName(path), path);
+        }
+
+        return new HashSet<string>(bySimpleName.Values, StringComparer.OrdinalIgnoreCase);
     }
 
     private static Version ParseVersion(string dirName)
@@ -144,31 +178,18 @@ public sealed class DotNetAssemblyRegistry
         if (_loadedAssemblies.ContainsKey(assemblyName))
             return true;
 
-        try
+        // First try among the discovered runtime paths — this covers both the core framework
+        // directory and the Windows Desktop one, where System.Windows.Forms lives.
+        var dllName = assemblyName + ".dll";
+        foreach (var path in _runtimeAssemblyPaths)
         {
-            // First try to load from the runtime
-            var assembly = Assembly.Load(new AssemblyName(assemblyName));
-            _loadedAssemblies[assemblyName] = assembly;
-            return true;
-        }
-        catch
-        {
-            // Try to find it in discovered paths
-            var dllName = assemblyName + ".dll";
-            foreach (var path in _runtimeAssemblyPaths)
+            if (Path.GetFileName(path).Equals(dllName, StringComparison.OrdinalIgnoreCase))
             {
-                if (Path.GetFileName(path).Equals(dllName, StringComparison.OrdinalIgnoreCase))
+                var assembly = LoadMetadataOnly(path);
+                if (assembly != null)
                 {
-                    try
-                    {
-                        var assembly = Assembly.LoadFrom(path);
-                        _loadedAssemblies[assemblyName] = assembly;
-                        return true;
-                    }
-                    catch
-                    {
-                        // Ignore load failures
-                    }
+                    _loadedAssemblies[assemblyName] = assembly;
+                    return true;
                 }
             }
         }
@@ -178,8 +199,7 @@ public sealed class DotNetAssemblyRegistry
 
     /// <summary>
     /// Loads an assembly from a file path. Works with C#, F#, VB.NET, and any .NET assembly.
-    /// Registers an AssemblyResolve handler so that the loaded assembly's dependencies
-    /// (e.g., System.Windows.Forms) can be found via the discovered runtime assembly paths.
+    /// The assembly is read as metadata only — its code is never executed by the compiler.
     /// </summary>
     public Assembly? LoadAssembly(string filePath)
     {
@@ -191,56 +211,55 @@ public sealed class DotNetAssemblyRegistry
         if (!File.Exists(fullPath))
             return null;
 
-        // Ensure the AssemblyResolve hook is installed once, so transitive dependencies
-        // of the loaded assembly can be resolved from our discovered runtime paths.
-        EnsureAssemblyResolveHook();
-
-        try
-        {
-            var assembly = Assembly.LoadFrom(fullPath);
-            _loadedAssemblies[fullPath] = assembly;
-            _loadedAssemblies[assembly.GetName().Name!] = assembly;
-            return assembly;
-        }
-        catch
-        {
+        var assembly = LoadMetadataOnly(fullPath);
+        if (assembly == null)
             return null;
+
+        _loadedAssemblies[fullPath] = assembly;
+        _loadedAssemblies[assembly.GetName().Name!] = assembly;
+        return assembly;
+    }
+
+    /// <summary>
+    /// Gets or creates the shared metadata-only load context.
+    /// </summary>
+    /// <remarks>
+    /// The context's resolver falls back to every discovered runtime assembly path, so a type
+    /// referenced by one assembly resolves against another without either being "loaded". Created
+    /// lazily on first use and kept for the process lifetime: the runtime assemblies cannot change
+    /// while the compiler is running, and sharing one context is what lets types from different
+    /// assemblies compare equal when they name the same file.
+    /// </remarks>
+    private MetadataLoadContext GetMetadataContext()
+    {
+        lock (_contextGate)
+        {
+            if (_metadataContext != null)
+            {
+                return _metadataContext;
+            }
+
+            var resolver = new PathAssemblyResolver(_runtimeAssemblyPaths);
+            _metadataContext = new MetadataLoadContext(resolver);
+            return _metadataContext;
         }
     }
 
-    private bool _assemblyResolveHookInstalled;
-
-    private void EnsureAssemblyResolveHook()
+    /// <summary>
+    /// Reads an assembly from disk into the metadata context.
+    /// </summary>
+    /// <returns>The metadata-only <see cref="Assembly"/>, or null if unreadable.</returns>
+    private Assembly? LoadMetadataOnly(string fullPath)
     {
-        if (_assemblyResolveHookInstalled) return;
-        _assemblyResolveHookInstalled = true;
-
-        AppDomain.CurrentDomain.AssemblyResolve += (_, args) =>
+        try
         {
-            var name = new AssemblyName(args.Name).Name;
-            if (name == null) return null;
-
-            // Return already-loaded assembly if available
-            if (_loadedAssemblies.TryGetValue(name, out var loaded)) return loaded;
-
-            // Search our discovered runtime paths for the DLL
-            var dllName = name + ".dll";
-            foreach (var path in _runtimeAssemblyPaths)
-            {
-                if (Path.GetFileName(path).Equals(dllName, StringComparison.OrdinalIgnoreCase))
-                {
-                    try
-                    {
-                        var asm = Assembly.LoadFrom(path);
-                        _loadedAssemblies[name] = asm;
-                        return asm;
-                    }
-                    catch { }
-                }
-            }
-
+            return GetMetadataContext().LoadFromAssemblyPath(fullPath);
+        }
+        catch
+        {
+            // Not a readable managed assembly, or a dependency could not be resolved.
             return null;
-        };
+        }
     }
 
     /// <summary>
@@ -269,18 +288,10 @@ public sealed class DotNetAssemblyRegistry
         if (_typeLookupCache.TryGetValue(cacheKey, out var cached))
             return cached;
 
-        // Check mscorlib/System.Private.CoreLib first for common types
-        var type = Type.GetType(fullName);
-        if (type != null)
-        {
-            _typeLookupCache[cacheKey] = type;
-            return type;
-        }
-
         // Search all loaded assemblies
         foreach (var assembly in _loadedAssemblies.Values.Distinct())
         {
-            type = assembly.GetType(fullName);
+            var type = assembly.GetType(fullName);
             if (type != null)
             {
                 _typeLookupCache[cacheKey] = type;
@@ -371,7 +382,7 @@ public sealed class DotNetAssemblyRegistry
     /// </summary>
     public IReadOnlyList<MethodInfo> GetStaticMethods(Type type)
     {
-        if (_staticMethodCache.TryGetValue(type.TypeHandle, out var cached))
+        if (_staticMethodCache.TryGetValue(type, out var cached))
             return cached;
 
         MethodInfo[] methods;
@@ -386,7 +397,7 @@ public sealed class DotNetAssemblyRegistry
             methods = Array.Empty<MethodInfo>();
         }
 
-        _staticMethodCache[type.TypeHandle] = methods;
+        _staticMethodCache[type] = methods;
         return methods;
     }
 
@@ -412,7 +423,7 @@ public sealed class DotNetAssemblyRegistry
     /// </summary>
     public IReadOnlyList<PropertyInfo> GetStaticProperties(Type type)
     {
-        if (_staticPropertyCache.TryGetValue(type.TypeHandle, out var cached))
+        if (_staticPropertyCache.TryGetValue(type, out var cached))
             return cached;
 
         PropertyInfo[] props;
@@ -427,7 +438,7 @@ public sealed class DotNetAssemblyRegistry
             props = [];
         }
 
-        _staticPropertyCache[type.TypeHandle] = props;
+        _staticPropertyCache[type] = props;
         return props;
     }
 

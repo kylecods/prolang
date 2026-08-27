@@ -91,26 +91,23 @@ internal static class RuntimeLibrary
 
     private static IEnumerable<string> ProbeRoots()
     {
-        var starts = new[]
+        // AppContext.BaseDirectory only. The compiler assembly's own location used to be a second
+        // root, but under Native AOT that location is the empty string — a single-file executable
+        // has no assembly file to locate — and BaseDirectory already points at the directory the
+        // compiler was installed into, which is where runtime/ sits in every layout.
+        var start = AppContext.BaseDirectory;
+
+        if (string.IsNullOrEmpty(start))
         {
-            Path.GetDirectoryName(typeof(RuntimeLibrary).Assembly.Location),
-            AppContext.BaseDirectory,
-        };
+            yield break;
+        }
 
-        foreach (var start in starts)
+        var directory = new DirectoryInfo(start);
+
+        for (var level = 0; level <= MaxParentDirectoriesToSearch && directory != null; level++)
         {
-            if (string.IsNullOrEmpty(start))
-            {
-                continue;
-            }
-
-            var directory = new DirectoryInfo(start);
-
-            for (var level = 0; level <= MaxParentDirectoriesToSearch && directory != null; level++)
-            {
-                yield return directory.FullName;
-                directory = directory.Parent;
-            }
+            yield return directory.FullName;
+            directory = directory.Parent;
         }
     }
 

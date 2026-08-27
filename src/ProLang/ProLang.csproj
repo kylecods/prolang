@@ -5,6 +5,29 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <!--
+      Declared so a plain `dotnet build` restores the win-x64 RID target. install.ps1 builds
+      without a RID and then publishes with the no-build flag and `-r win-x64`; without this,
+      the assets file has no net10.0/win-x64 target and publish fails with NETSDK1047. The
+      plural form only affects restore, so the ordinary build is unchanged.
+    -->
+    <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <!--
+    Native AOT publish. The compiler is AOT-compatible because .NET interop discovery reads
+    assemblies as metadata only (MetadataLoadContext) and the emitter writes IL with Mono.Cecil —
+    neither loads or JITs foreign code. Publish with:
+
+        dotnet publish src/ProLang/ProLang.csproj -c Release -r win-x64 -p:PublishAot=true
+
+    The ordinary build is unchanged; these properties only apply to that publish.
+  -->
+  <PropertyGroup Condition="'$(PublishAot)' == 'true'">
+    <PublishAot>true</PublishAot>
+    <StripSymbols>true</StripSymbols>
+    <!-- Diagnostics matter for a compiler, so keep stack traces. -->
+    <StackTraceSupport>true</StackTraceSupport>
   </PropertyGroup>
 
   <!--
@@ -50,6 +73,12 @@
     <PackageReference Include="Mono.Cecil" Version="0.11.6" />
     <PackageReference Include="Mono.Options" Version="6.12.0.148" />
     <PackageReference Include="System.CommandLine" Version="2.0.0-beta4.22272.1" />
+    <!--
+      Metadata-only reflection for .NET interop discovery. Reading imported assemblies through
+      MetadataLoadContext instead of loading them for execution is what makes the compiler itself
+      publishable as Native AOT — an AOT binary cannot JIT-load arbitrary managed assemblies.
+    -->
+    <PackageReference Include="System.Reflection.MetadataLoadContext" Version="9.0.0" />
   </ItemGroup>
 
   <!--

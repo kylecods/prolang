@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Installs the ProLang compiler as a command-line application for the current user.
 
@@ -110,7 +110,13 @@ Write-Host "==> Publishing to $Prefix" -ForegroundColor Cyan
 
 if (Test-Path $Prefix) { Remove-Item $Prefix -Recurse -Force }
 
-dotnet publish $project -c $Configuration --nologo -v q --no-build -o $Prefix
+# Native AOT publish: a single self-contained ProLang.exe with no .NET runtime dependency. The
+# compiler is AOT-compatible because interop discovery reads assemblies as metadata only and the
+# emitter writes IL with Mono.Cecil. The RID is fixed to win-x64; add more RIDs here to ship them.
+#
+# No --no-build here: the AOT native compile is a publish-time step, so skipping the build would
+# silently produce a framework-dependent layout instead of the self-contained executable.
+dotnet publish $project -c $Configuration --nologo -v q -r win-x64 -p:PublishAot=true -o $Prefix
 if ($LASTEXITCODE -ne 0) { throw 'publish failed' }
 
 # runtime\ and lib\ are produced by AfterTargets steps in ProLang.csproj that copy into the build

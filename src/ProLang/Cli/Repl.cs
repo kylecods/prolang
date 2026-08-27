@@ -23,21 +23,58 @@ internal abstract class Repl
 
     private void InitializeMetaCommands()
     {
-        var methods = GetType().GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Static | BindingFlags.Instance | BindingFlags.FlattenHierarchy);
-
-        foreach (var method in methods)
+        // Explicit registration rather than reflection over this type's methods: an AOT build
+        // trims reflection metadata, and a table the compiler can see is also easier to reason
+        // about than an attribute scan. The [MetaCommand] attributes stay on the handlers as
+        // documentation of what each one is.
+        var commands = new (string Name, string Description, Action<string[]> Handler)[]
         {
-            var attribute = method.GetCustomAttribute<MetaCommandAttribute>();
+            ("help", "Shows help", _ => EvaluateHelp()),
+            ("cls", "Clears the screen", _ => Console.Clear()),
+            ("reset", "Clears all previous submissions", _ => ResetSubmissions()),
+            ("showTree", "Shows the parse tree", _ => ShowParseTree()),
+            ("showProgram", "Shows the bound tree", _ => ShowBoundTree()),
+            ("load", "Loads a script file", LoadScriptFile),
+            ("ls", "Lists all symbols", ListSymbols),
+            ("dump", "Shows bound tree of a given function", DumpFunction),
+        };
 
-            if (attribute == null)
-            {
-                continue;
-            }
-
-            var metaCommand = new MetaCommand(attribute.Name, attribute.Description, method);
-
-            _metaCommands.Add(metaCommand);
+        foreach (var (name, description, handler) in commands)
+        {
+            _metaCommands.Add(new MetaCommand(name, description, handler));
         }
+    }
+
+    /// <summary>Hook for subclasses that keep state the reset command clears.</summary>
+    protected virtual void ResetSubmissions()
+    {
+        _submissionHistory.Clear();
+        _submissionHistoryIndex = 0;
+    }
+
+    /// <summary>Hook for subclasses that can render the parse tree.</summary>
+    protected virtual void ShowParseTree()
+    {
+    }
+
+    /// <summary>Hook for subclasses that can render the bound tree.</summary>
+    protected virtual void ShowBoundTree()
+    {
+    }
+
+    /// <summary>Hook for subclasses that can load a script file into the session.</summary>
+    protected virtual void LoadScriptFile(string[] args)
+    {
+    }
+
+    /// <summary>Hook for subclasses that can list session symbols.</summary>
+    protected virtual void ListSymbols(string[] args)
+    {
+    }
+
+    /// <summary>Hook for subclasses that can dump a function's bound tree.</summary>
+    protected virtual void DumpFunction(string[] args)
+    {
     }
 
     public void Run()
@@ -554,21 +591,9 @@ internal abstract class Repl
             return;
         }
 
-        var parameters = command.Method.GetParameters();
-
-        if(args.Count != parameters.Length)
-        {
-            var parameterNames = string.Join(" ", parameters.Select(p => $"<{p.Name}>"));
-
-            Console.ForegroundColor = ConsoleColor.Red;
-            Console.WriteLine($"error: invalid number of arguments");
-            Console.WriteLine($"usage: #{command.Name}{parameters}");
-            Console.ResetColor();
-            return;
-        }
-
-        var instance = command.Method.IsStatic ? null : this;
-        command.Method.Invoke(instance,args.ToArray());
+        // Handlers take a string[]; arity is enforced by the concrete REPL, which knows each
+        // command's expected argument count. Zero-argument commands ignore what was passed.
+        command.Handler(args.ToArray());
     }
 
     protected abstract bool IsCompleteSubmission(string text);
@@ -582,9 +607,13 @@ internal abstract class Repl
 
         foreach (var metaCommand in _metaCommands.OrderBy(mc => mc.Name)) 
         {
-            var metaParams = metaCommand.Method.GetParameters();
+            // Commands that take arguments are the ones whose handlers read them; the base class
+            // cannot see that, so it is declared per command in the registration table.
+            var argNames = CommandArgumentNames.TryGetValue(metaCommand.Name, out var names)
+                ? names
+                : Array.Empty<string>();
 
-            if (metaParams.Length == 0)
+            if (argNames.Length == 0)
             {
 
                 var paddedName = metaCommand.Name.PadRight(maxNameLength);
@@ -598,11 +627,11 @@ internal abstract class Repl
                 Console.Out.WritePunctuation("#");
                 Console.Out.WriteIdentifier(metaCommand.Name);
 
-                foreach (var pi in metaParams)
+                foreach (var argName in argNames)
                 {
                     Console.Out.Write(" ");
                     Console.Out.WritePunctuation("<");
-                    Console.Out.WriteIdentifier(pi.Name);
+                    Console.Out.WriteIdentifier(argName);
                     Console.Out.WritePunctuation(">");
                 }
 
@@ -619,4 +648,13 @@ internal abstract class Repl
             Console.Out.Write(" ");
         }
     }
+
+    /// <summary>
+    /// The argument names each command shows in <c>#help</c>, keyed by command name.
+    /// </summary>
+    private static readonly Dictionary<string, string[]> CommandArgumentNames = new(StringComparer.Ordinal)
+    {
+        ["load"] = ["path"],
+        ["dump"] = ["function"],
+    };
 }

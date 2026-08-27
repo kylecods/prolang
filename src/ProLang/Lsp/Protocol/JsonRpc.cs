@@ -70,7 +70,10 @@ internal sealed class JsonRpcError
 /// </remarks>
 internal sealed class JsonRpcConnection
 {
-    private static readonly JsonSerializerOptions Options = new()
+    // Serialization goes through the source-generated context. Under Native AOT the reflection
+    // based resolver is disabled, so the options the helpers below use must resolve metadata from
+    // LspJsonContext or serialization throws at runtime.
+    private static readonly JsonSerializerOptions Options = new(LspJsonContext.Default.Options)
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
@@ -176,7 +179,7 @@ internal sealed class JsonRpcConnection
         Write(new JsonRpcMessage
         {
             Id = id,
-            Result = result == null ? null : JsonSerializer.SerializeToNode(result, Options),
+            Result = result == null ? null : SerializeToNode(result),
         });
     }
 
@@ -194,8 +197,37 @@ internal sealed class JsonRpcConnection
         Write(new JsonRpcMessage
         {
             Method = method,
-            Params = parameters == null ? null : JsonSerializer.SerializeToNode(parameters, Options),
+            Params = parameters == null ? null : SerializeToNode(parameters),
         });
+    }
+
+    /// <summary>
+    /// Serializes an arbitrary result value to a <see cref="JsonNode"/> through the source
+    /// generated context.
+    /// </summary>
+    /// <remarks>
+    /// The value's static type is <see cref="object"/>, so the serialization metadata has to be
+    /// looked up by the runtime type. Every type this server actually sends — the LSP types and
+    /// the collections of them — is registered on <see cref="LspJsonContext"/>, and
+    /// <see cref="JsonSerializerContext.GetTypeInfo(Type)"/> resolves those registrations without
+    /// reflection. A type that is not registered throws here rather than silently emitting an
+    /// empty node, which is how a new response type forces its own registration.
+    /// </remarks>
+    private static JsonNode SerializeToNode(object value)
+    {
+        var runtimeType = value.GetType();
+
+        if (runtimeType == typeof(JsonNode))
+        {
+            return (JsonNode)value;
+        }
+
+        var typeInfo = LspJsonContext.Default.GetTypeInfo(runtimeType)
+            ?? throw new InvalidOperationException(
+                $"Type '{runtimeType.FullName}' is not registered on {nameof(LspJsonContext)}; " +
+                "add it to the context so the AOT build can serialize it.");
+
+        return JsonSerializer.SerializeToNode(value, typeInfo);
     }
 
     private string? ReadHeaderLine()

@@ -52,11 +52,18 @@ public sealed class DotNetInteropModule : BuiltInModule
 
             if (type.IsEnum)
             {
-                // Expose each enum member as a zero-arg constant function returning int
-                foreach (var memberName in Enum.GetNames(type))
+                // Expose each enum member as a zero-arg constant function returning int.
+                // Enum.GetNames/Enum.Parse need a runtime type, which a metadata-only enum is
+                // not, so the members are read from the type's literal fields instead — each
+                // enum member is a public static literal field whose value is the underlying int.
+                foreach (var field in type.GetFields(BindingFlags.Public | BindingFlags.Static))
                 {
-                    var memberValue = (int)Convert.ChangeType(Enum.Parse(type, memberName), typeof(int));
-                    var funcName = $"{type.Name}.{memberName}";
+                    if (!field.IsLiteral || field.GetRawConstantValue() is not int memberValue)
+                    {
+                        continue;
+                    }
+
+                    var funcName = $"{type.Name}.{field.Name}";
                     functions.Add(new DotNetEnumConstantSymbol(funcName, memberValue));
                 }
                 continue;
