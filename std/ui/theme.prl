@@ -5,9 +5,8 @@
  *
  * A theme is an int, and each role is a function of it rather than a struct of colours. That is
  * not a stylistic choice: prolang structs are value types with no way to hold a nested struct
- * safely, and there is no module-level state a table could live in, so a lookup chain per role is
- * what the language actually supports. It also means adding a role does not touch any existing
- * theme's definition.
+ * safely, so a lookup chain per role is what the language actually supports. It also means adding
+ * a role does not touch any existing theme's definition.
  *
  * The roles are deliberately about *purpose* rather than appearance — `theme_surface` rather than
  * `theme_dark_grey` — so a light theme is a matter of returning different values, not of every

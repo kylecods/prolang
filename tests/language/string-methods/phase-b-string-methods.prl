@@ -58,6 +58,7 @@ func extractQuotedString(json: string, startPos: int) : string {
 
 // === Phase B Demonstration ===
 
+func main() {
 print("================================================================================")
 print("ProLang Phase B: String Methods Implementation")
 print("================================================================================")
@@ -126,10 +127,7 @@ print("User: " + string(user["username"]))
 print("Email: " + string(user["email"]))
 print("Email domain: " + string(user["email"]).substring(6, 13))
 
-let items = []
-items.push("apple")
-items.push("banana")
-items.push("cherry")
+let items: array<string> = ["apple", "banana", "cherry"]
 print("Items: " + string(items.length()))
 let pos = 0
 while(pos < items.length()) {
@@ -146,3 +144,4 @@ print("  ✅ length(), charAt(), substring(), indexOf() all working")
 print("  ✅ Enable practical text processing and JSON-like data handling")
 print("  ✅ Parser examples demonstrate real-world usage")
 print("================================================================================")
+}

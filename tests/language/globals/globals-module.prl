@@ -1,0 +1,13 @@
+// A library (no main()) may declare globals. They are shared with every file that
+// imports this one — ProLang has one flat namespace, so the names here must be unique.
+
+global module_tag: string = "globals-module"
+global module_count: int = 0
+
+func set_module_count(value: int) {
+    module_count = value
+}
+
+func get_module_count() : int {
+    return module_count
+}

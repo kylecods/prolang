@@ -11,16 +11,17 @@ func parseResult(val: any, pos: int) : ParseResult {
     return result
 }
 
-print("=== Testing ParseResult Struct ===")
+func main() {
+    print("=== Testing ParseResult Struct ===")
+    let result1 = parseResult("hello", 5)
+    print("Result 1:")
+    print("  value: " + string(result1.value))
+    print("  nextPos: " + result1.nextPos)
 
-let result1 = parseResult("hello", 5)
-print("Result 1:")
-print("  value: " + string(result1.value))
-print("  nextPos: " + result1.nextPos)
+    let result2 = parseResult(42, 10)
+    print("Result 2:")
+    print("  value: " + string(result2.value))
+    print("  nextPos: " + string(result2.nextPos))
 
-let result2 = parseResult(42, 10)
-print("Result 2:")
-print("  value: " + string(result2.value))
-print("  nextPos: " + string(result2.nextPos))
-
-print("✅ ParseResult struct works!")
+    print("✅ ParseResult struct works!")
+}

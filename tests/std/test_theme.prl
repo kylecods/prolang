@@ -11,12 +11,10 @@ import "testing"
 import "ui/theme"
 import "ui/color"
 
-func test_theme_run() : TestRun {
-    let r: TestRun = t_new()
-
-    r = t_eq_int(r, "theme count", theme_count(), 4)
-    r = t_eq_str(r, "first theme is named", theme_name(Theme.MIDNIGHT), "Midnight")
-    r = t_eq_str(r, "unknown theme is named", theme_name(99), "Unknown")
+func test_theme_run() : void {
+    t_eq_int("theme count", theme_count(), 4)
+    t_eq_str("first theme is named", theme_name(Theme.MIDNIGHT), "Midnight")
+    t_eq_str("unknown theme is named", theme_name(99), "Unknown")
 
     // Cycling visits every theme and comes back to the start.
     let seen: int = 0
@@ -27,8 +25,8 @@ func test_theme_run() : TestRun {
         current = theme_next(current)
         step = step + 1
     }
-    r = t_eq_int(r, "cycling wraps to the start", current, Theme.MIDNIGHT)
-    r = t_eq_int(r, "cycling visits every theme", seen, theme_count())
+    t_eq_int("cycling wraps to the start", current, Theme.MIDNIGHT)
+    t_eq_int("cycling visits every theme", seen, theme_count())
 
     // ── Properties every theme must satisfy ──────────────────────────────────
     let opaque: int = 0
@@ -75,11 +73,11 @@ func test_theme_run() : TestRun {
         i = i + 1
     }
 
-    r = t_eq_int(r, "every theme is opaque", opaque, theme_count())
-    r = t_eq_int(r, "every theme has readable text", readable, theme_count())
-    r = t_eq_int(r, "every accent stands out", accented, theme_count())
-    r = t_eq_int(r, "every theme layers its surfaces", layered, theme_count())
-    r = t_eq_int(r, "every grid stays visible on white", gridVisible, theme_count())
+    t_eq_int("every theme is opaque", opaque, theme_count())
+    t_eq_int("every theme has readable text", readable, theme_count())
+    t_eq_int("every accent stands out", accented, theme_count())
+    t_eq_int("every theme layers its surfaces", layered, theme_count())
+    t_eq_int("every grid stays visible on white", gridVisible, theme_count())
 
     // Hover and pressed have to differ from the resting surface, or a button gives no feedback.
     let feedback: int = 0
@@ -92,19 +90,17 @@ func test_theme_run() : TestRun {
         }
         k = k + 1
     }
-    r = t_eq_int(r, "every theme gives button feedback", feedback, theme_count())
+    t_eq_int("every theme gives button feedback", feedback, theme_count())
 
     // theme_is_dark is derived from the surface rather than listed, so it cannot disagree with
     // the palette it describes.
-    r = t_true(r, "midnight is dark", theme_is_dark(Theme.MIDNIGHT))
-    r = t_false(r, "paper is light", theme_is_dark(Theme.PAPER))
-    r = t_true(r, "ember is dark", theme_is_dark(Theme.EMBER))
-    r = t_true(r, "contrast is dark", theme_is_dark(Theme.CONTRAST))
+    t_true("midnight is dark", theme_is_dark(Theme.MIDNIGHT))
+    t_false("paper is light", theme_is_dark(Theme.PAPER))
+    t_true("ember is dark", theme_is_dark(Theme.EMBER))
+    t_true("contrast is dark", theme_is_dark(Theme.CONTRAST))
 
     // An out-of-range theme falls back rather than returning a transparent colour, so a bad id
     // cannot paint the interface invisible.
-    r = t_eq_int(r, "unknown theme falls back", theme_background(99), theme_background(Theme.MIDNIGHT))
-    r = t_eq_int(r, "unknown accent falls back", theme_accent(99), theme_accent(Theme.MIDNIGHT))
-
-    return r
+    t_eq_int("unknown theme falls back", theme_background(99), theme_background(Theme.MIDNIGHT))
+    t_eq_int("unknown accent falls back", theme_accent(99), theme_accent(Theme.MIDNIGHT))
 }

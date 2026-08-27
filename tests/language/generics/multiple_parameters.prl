@@ -1,4 +1,6 @@
 // Test: Generic struct with multiple type parameters
+import "io"
+
 struct Pair<A, B> {
     first: A;
     second: B;

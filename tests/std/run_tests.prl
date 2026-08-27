@@ -45,28 +45,87 @@ func main()
     print("prolang standard library test suite")
     print("")
 
-    let total: TestRun = t_new()
+    t_reset()
 
-    total = t_merge(total, test_util_run(), "util")
-    total = t_merge(total, test_intstack_run(), "intstack")
-    total = t_merge(total, test_color_run(), "ui/color")
-    total = t_merge(total, test_document_run(), "ui/document")
-    total = t_merge(total, test_raster_run(), "ui/raster")
-    total = t_merge(total, test_shape_run(), "ui/shape")
-    total = t_merge(total, test_fill_run(), "ui/fill")
-    total = t_merge(total, test_history_run(), "ui/history")
-    total = t_merge(total, test_palette_run(), "ui/palette")
-    total = t_merge(total, test_view_run(), "ui/view")
-    total = t_merge(total, test_theme_run(), "ui/theme")
-    total = t_merge(total, test_icons_run(), "ui/icons")
-    total = t_merge(total, test_layout_run(), "ui/layout")
-    total = t_merge(total, test_font_run(), "ui/font")
-    total = t_merge(total, test_widget_run(), "ui/widget")
-    total = t_merge(total, test_box_run(), "ui/box")
-    total = t_merge(total, test_hit_run(), "ui/hit")
-    total = t_merge(total, test_draw_run(), "ui/draw")
-    total = t_merge(total, test_scene_run(), "ui/scene")
-    total = t_merge(total, test_fps_run(), "ui/fps")
+    t_begin_module()
+    test_util_run()
+    t_end_module("util")
 
-    t_report(total)
+    t_begin_module()
+    test_intstack_run()
+    t_end_module("intstack")
+
+    t_begin_module()
+    test_color_run()
+    t_end_module("ui/color")
+
+    t_begin_module()
+    test_document_run()
+    t_end_module("ui/document")
+
+    t_begin_module()
+    test_raster_run()
+    t_end_module("ui/raster")
+
+    t_begin_module()
+    test_shape_run()
+    t_end_module("ui/shape")
+
+    t_begin_module()
+    test_fill_run()
+    t_end_module("ui/fill")
+
+    t_begin_module()
+    test_history_run()
+    t_end_module("ui/history")
+
+    t_begin_module()
+    test_palette_run()
+    t_end_module("ui/palette")
+
+    t_begin_module()
+    test_view_run()
+    t_end_module("ui/view")
+
+    t_begin_module()
+    test_theme_run()
+    t_end_module("ui/theme")
+
+    t_begin_module()
+    test_icons_run()
+    t_end_module("ui/icons")
+
+    t_begin_module()
+    test_layout_run()
+    t_end_module("ui/layout")
+
+    t_begin_module()
+    test_font_run()
+    t_end_module("ui/font")
+
+    t_begin_module()
+    test_widget_run()
+    t_end_module("ui/widget")
+
+    t_begin_module()
+    test_box_run()
+    t_end_module("ui/box")
+
+    t_begin_module()
+    test_hit_run()
+    t_end_module("ui/hit")
+
+    t_begin_module()
+    test_draw_run()
+    t_end_module("ui/draw")
+
+    t_begin_module()
+    test_scene_run()
+    t_end_module("ui/scene")
+
+    t_begin_module()
+    test_fps_run()
+    t_end_module("ui/fps")
+
+    t_report()
 }

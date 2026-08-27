@@ -510,4 +510,17 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         var message = "All statements must be inside a main() function. Global statements are not allowed without an explicit main() definition.";
         Report(location, message);
     }
+
+    /// <summary>
+    /// Reports a <c>global</c> declaration with no type clause.
+    /// </summary>
+    /// <remarks>
+    /// A global's storage exists before any initializer runs, so its type cannot be inferred from
+    /// the initializer the way a local's can — it must be spelled out.
+    /// </remarks>
+    public void ReportGlobalRequiresType(TextLocation location, string name)
+    {
+        var message = $"Global '{name}' must declare a type, e.g. global {name}: int = 0.";
+        Report(location, message);
+    }
 }

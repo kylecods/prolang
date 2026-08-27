@@ -41,6 +41,9 @@ namespace ProLang.Compiler
 
         private Dictionary<FunctionSymbol, MethodDefinition> _methods = new();
 
+        /// <summary>Static fields backing <c>global</c> variables, keyed by their symbol.</summary>
+        private readonly Dictionary<VariableSymbol, FieldDefinition> _globalFields = new();
+
 
 
         private TypeDefinition _typeDefinition;
@@ -223,6 +226,10 @@ namespace ProLang.Compiler
                 _types.EmitStruct(structType);
             }
 
+            // Static storage for `global` variables. Declared before any function body is emitted
+            // so every body can reference them.
+            EmitGlobalFields(program.GlobalVariables);
+
             foreach (var functionWithBody in program.Functions)
             {
                 // Skip synthetic functions - they will be emitted separately
@@ -240,6 +247,10 @@ namespace ProLang.Compiler
                     EmitFunctionBody(functionWithBody.Key, functionWithBody.Value);
                 }
             }
+
+            // Emit __GlobalsInit (and, for libraries, the static constructor that runs it) before
+            // __Main, whose body calls it.
+            EmitGlobalsInitMethod(program);
 
             // Emit synthetic __Main entry point if we have a main function
             if (program.MainFunction != null && program.MainFunction.Name == SyntheticNames.Main)
@@ -379,7 +390,14 @@ namespace ProLang.Compiler
             // 1. Start the runtime's output buffer
             scope.IL.Emit(OpCodes.Call, _outputInitMethod);
 
-            // 2. Prepare to call __UserMain
+            // 2. Run global initializers, so every global is ready before user code runs
+            var globalsInitFunction = program.Functions.Keys.FirstOrDefault(f => f.Name == SyntheticNames.GlobalsInit);
+            if (globalsInitFunction != null)
+            {
+                scope.IL.Emit(OpCodes.Call, _methods[globalsInitFunction]);
+            }
+
+            // 3. Prepare to call __UserMain
             // If __UserMain expects args, pass the string[] directly
             // If __UserMain takes no args, don't pass anything
 
@@ -396,10 +414,10 @@ namespace ProLang.Compiler
                 scope.IL.Emit(OpCodes.Call, _methods[userMainFunction]);
             }
 
-            // 3. Call __FlushOutput() to print accumulated output
+            // 4. Call __FlushOutput() to print accumulated output
             scope.IL.Emit(OpCodes.Call, _outputFlushMethod);
 
-            // 4. Return void
+            // 5. Return void
             scope.IL.Emit(OpCodes.Ret);
 
             mainMethod.Body.OptimizeMacros();
@@ -407,12 +425,104 @@ namespace ProLang.Compiler
             _methods[program.MainFunction] = mainMethod;
         }
 
+        /// <summary>
+        /// Declares one static field on <c>Program</c> per <c>global</c> variable.
+        /// </summary>
+        /// <remarks>
+        /// These are the assembly's first static fields — everything else in a compiled program
+        /// lives in locals or parameters. Globals are the exception because their lifetime is the
+        /// whole program, not one call.
+        /// </remarks>
+        private void EmitGlobalFields(ImmutableArray<VariableSymbol> globalVariables)
+        {
+            foreach (var variable in globalVariables)
+            {
+                var fieldType = GetTypeReference(variable.Type);
+
+                var field = new FieldDefinition(
+                    variable.Name,
+                    FieldAttributes.Static | FieldAttributes.Public,
+                    fieldType);
+
+                _typeDefinition.Fields.Add(field);
+
+                _globalFields[variable] = field;
+            }
+        }
+
+        /// <summary>
+        /// Emits the synthetic <c>__GlobalsInit</c> method that runs every
+        /// <c>global</c> initializer, and wires up library initialization.
+        /// </summary>
+        /// <remarks>
+        /// For executables the entry point calls this before user code. For libraries there is no
+        /// entry point, so a static constructor on <c>Program</c> runs it on first use instead —
+        /// the CLR guarantees a type's cctor executes before its members are touched.
+        /// </remarks>
+        private void EmitGlobalsInitMethod(BoundProgram program)
+        {
+            var initFunction = program.Functions.Keys.FirstOrDefault(f => f.Name == SyntheticNames.GlobalsInit);
+
+            if (initFunction == null || !program.Functions.TryGetValue(initFunction, out var body))
+            {
+                return;
+            }
+
+            var voidType = GetTypeReference(TypeSymbol.Void);
+
+            var initMethod = new MethodDefinition(SyntheticNames.GlobalsInit,
+                CecilMethodAttributes.Static | CecilMethodAttributes.Public,
+                voidType);
+
+            _typeDefinition.Methods.Add(initMethod);
+            _methods[initFunction] = initMethod;
+
+            var scope = new MethodBodyScope(initMethod);
+
+            foreach (var statement in body.Statements)
+            {
+                EmitStatement(scope, statement);
+            }
+
+            scope.IL.Emit(OpCodes.Ret);
+
+            scope.PatchBranches();
+            initMethod.Body.OptimizeMacros();
+
+            // A library has no entry point to call __GlobalsInit from, so hook it into the type's
+            // static constructor. The CLR runs it exactly once, before any member of Program.
+            if (program.MainFunction == null)
+            {
+                EmitLibraryStaticConstructor(initMethod);
+            }
+        }
+
+        /// <summary>
+        /// Emits a static constructor on <c>Program</c> that calls <paramref name="initMethod"/>.
+        /// </summary>
+        private void EmitLibraryStaticConstructor(MethodDefinition initMethod)
+        {
+            var voidType = GetTypeReference(TypeSymbol.Void);
+
+            var cctor = new MethodDefinition(".cctor",
+                CecilMethodAttributes.Static | CecilMethodAttributes.Private,
+                voidType);
+
+            var scope = new MethodBodyScope(cctor);
+
+            scope.IL.Emit(OpCodes.Call, initMethod);
+            scope.IL.Emit(OpCodes.Ret);
+
+            cctor.Body.InitLocals = true;
+            cctor.Body.OptimizeMacros();
+            _typeDefinition.Methods.Add(cctor);
+        }
+
         private void EmitFunctionDeclaration(FunctionSymbol function)
         {
             var functionType = GetTypeReference(function.Type);
 
             var method = new MethodDefinition(function.Name, CecilMethodAttributes.Static | CecilMethodAttributes.Public, functionType);
-
 
             foreach (var parameter in function.Parameters)
             {
@@ -444,19 +554,65 @@ namespace ProLang.Compiler
                 EmitStatement(scope, statement);
             }
 
-            if (method.ReturnType.FullName == "System.Void")
+            // A body whose every path returns (e.g. an if/elif chain where each branch returns)
+            // still ends with the chain's end label, so the last instruction is a nop rather than
+            // a ret. Falling off the end of a non-void method is invalid IL, so close the body
+            // explicitly unless the last instruction already returns.
+            var lastInstruction = method.Body.Instructions.Count > 0
+                ? method.Body.Instructions[^1]
+                : null;
+
+            if (lastInstruction == null || lastInstruction.OpCode.Code != Code.Ret)
             {
-                scope.IL.Emit(OpCodes.Ret);
-            }
-            else if (function.Type == TypeSymbol.Any && method.ReturnType.IsValueType)
-            {
-                scope.IL.Emit(OpCodes.Box, method.ReturnType);
-                scope.IL.Emit(OpCodes.Ret);
+                if (method.ReturnType.FullName == "System.Void")
+                {
+                    scope.IL.Emit(OpCodes.Ret);
+                }
+                else
+                {
+                    // Non-void: push the type's default value so the stack is balanced at ret.
+                    EmitDefaultValue(scope, method.ReturnType);
+                    scope.IL.Emit(OpCodes.Ret);
+                }
             }
 
             scope.PatchBranches();
 
             method.Body.OptimizeMacros();
+        }
+
+        /// <summary>
+        /// Emits instructions leaving the default value of <paramref name="type"/> on the stack.
+        /// </summary>
+        private void EmitDefaultValue(MethodBodyScope scope, TypeReference type)
+        {
+            switch (type.FullName)
+            {
+                case "System.Void":
+                    return;
+                case "System.Int32":
+                    scope.IL.Emit(OpCodes.Ldc_I4_0);
+                    return;
+                case "System.Boolean":
+                    scope.IL.Emit(OpCodes.Ldc_I4_0);
+                    return;
+                case "System.String":
+                    scope.IL.Emit(OpCodes.Ldnull);
+                    return;
+                default:
+                    if (type.IsValueType)
+                    {
+                        var local = scope.DeclareTemporary(type);
+                        scope.IL.Emit(OpCodes.Ldloca, local);
+                        scope.IL.Emit(OpCodes.Initobj, type);
+                        scope.IL.Emit(OpCodes.Ldloc, local);
+                    }
+                    else
+                    {
+                        scope.IL.Emit(OpCodes.Ldnull);
+                    }
+                    return;
+            }
         }
 
         private void EmitStatement(MethodBodyScope scope, BoundStatement node)
@@ -534,6 +690,15 @@ namespace ProLang.Compiler
 
         private void EmitVariableDeclaration(MethodBodyScope scope, BoundVariableDeclaration node)
         {
+            // A `global` has static storage declared once for the whole assembly; only its
+            // initializer runs here, storing into the field rather than a local.
+            if (node.Variable is GlobalVariableSymbol)
+            {
+                EmitExpression(scope, node.Initializer);
+                scope.IL.Emit(OpCodes.Stsfld, MakeGlobalFieldReference(node.Variable));
+                return;
+            }
+
             var typeReference = GetTypeReference(node.Variable.Type);
 
             var variableDefinition = scope.DeclareLocal(node.Variable, typeReference);
@@ -1319,6 +1484,10 @@ namespace ProLang.Compiler
             {
                 scope.IL.Emit(OpCodes.Starg, scope.Method.Parameters[parameter.Ordinal]);
             }
+            else if (node.Variable is GlobalVariableSymbol)
+            {
+                scope.IL.Emit(OpCodes.Stsfld, MakeGlobalFieldReference(node.Variable));
+            }
             else
             {
                 var variableDefinition = scope.GetLocal(node.Variable);
@@ -1332,12 +1501,27 @@ namespace ProLang.Compiler
             {
                 scope.IL.Emit(OpCodes.Ldarg, scope.Method.Parameters[parameter.Ordinal]);
             }
+            else if (node.Variable is GlobalVariableSymbol)
+            {
+                scope.IL.Emit(OpCodes.Ldsfld, MakeGlobalFieldReference(node.Variable));
+            }
             else
             {
                 var variableDefinition = scope.GetLocal(node.Variable);
 
                 scope.IL.Emit(OpCodes.Ldloc, variableDefinition);
             }
+        }
+
+        /// <summary>Builds a reference to the static field backing a <c>global</c>.</summary>
+        private FieldReference MakeGlobalFieldReference(VariableSymbol variable)
+        {
+            var field = _globalFields[variable];
+
+            return new FieldReference(field.Name, field.FieldType)
+            {
+                DeclaringType = _typeDefinition,
+            };
         }
 
         private void EmitLiteralExpression(MethodBodyScope scope, BoundLiteralExpression node)
@@ -1499,6 +1683,12 @@ namespace ProLang.Compiler
                     if (variable.Variable is ParameterSymbol parameter)
                     {
                         scope.IL.Emit(OpCodes.Ldarga, scope.Method.Parameters[parameter.Ordinal]);
+                    }
+                    else if (variable.Variable is GlobalVariableSymbol)
+                    {
+                        // ldsflda yields the address of the static field itself, so a write
+                        // through it lands in the global rather than in a copy.
+                        scope.IL.Emit(OpCodes.Ldsflda, MakeGlobalFieldReference(variable.Variable));
                     }
                     else
                     {

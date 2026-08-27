@@ -79,6 +79,7 @@ internal sealed class Binder
         var enumDeclarations = allDeclarations.OfType<EnumDeclarationSyntax>();
         var functionDeclarations = allDeclarations.OfType<FunctionDeclarationSyntax>();
         var globalStatements = allDeclarations.OfType<GlobalStatementSyntax>();
+        var globalVariableDeclarations = allDeclarations.OfType<GlobalVariableDeclarationSyntax>().ToList();
 
         foreach (var enumDecl in enumDeclarations)
         {
@@ -98,6 +99,10 @@ internal sealed class Binder
         // Pre-register global variables from all files so they are visible
         // regardless of statement processing order (important for imports)
         binder.RegisterGlobalVariables(syntaxTrees);
+
+        // Bind the `global` initializers now that every symbol exists. Done here rather than in
+        // RegisterGlobalVariables so an initializer can reference a global declared in any file.
+        var globalInitializers = binder.BindGlobalInitializers(globalVariableDeclarations.ToImmutableArray());
 
         var statements = ImmutableArray.CreateBuilder<BoundStatement>();
 
@@ -192,6 +197,7 @@ internal sealed class Binder
 
                 // Remove the user's "main" from the scope and replace with "__UserMain"
                 // We need to update the scope to use __UserMain instead
+                var declaredVariables = binder._scope.GetDeclaredVariables();
                 binder._scope = new BoundScope(binder._scope.Parent);
                 foreach (var fn in initialFunctions)
                 {
@@ -201,6 +207,14 @@ internal sealed class Binder
                     }
                 }
                 binder._scope.TryDeclareFunction(userMainFunction);
+
+                // Re-declare the top-level variables the old scope held — they were registered
+                // before this rebuild and must survive it, or every function body would see an
+                // undeclared name.
+                foreach (var variable in declaredVariables)
+                {
+                    binder._scope.TryDeclareVariable(variable);
+                }
 
                 // Now set mainFunction to the user's main (will track as __UserMain)
                 mainFunction = userMainFunction;
@@ -265,7 +279,8 @@ internal sealed class Binder
         // This ensures the entry point is properly set to __Main
         var finalMainFunction = syntheticMainFunction ?? mainFunction;
 
-        return new BoundGlobalScope(previous, diagnostics, finalMainFunction, scriptFunction, functions, variables, statements.ToImmutableArray(), structTypes, importedModules, enumTypes);
+        return new BoundGlobalScope(previous, diagnostics, finalMainFunction, scriptFunction, functions, variables, statements.ToImmutableArray(), structTypes, importedModules, enumTypes,
+            binder._scope.GetDeclaredVariables().OfType<GlobalVariableSymbol>().ToImmutableArray<VariableSymbol>(), globalInitializers);
     }
 
     /// <summary>
@@ -386,6 +401,20 @@ internal sealed class Binder
             structuredBodies.Add(globalScope.ScriptFunction, structured);
         }
 
+        // Synthesize __GlobalsInit when the program declares any `global`. It runs the
+        // initializers once before user code; backends call it from their entry path.
+        if (globalScope.GlobalVariables.Any())
+        {
+            var initSymbol = new FunctionSymbol(
+                SyntheticNames.GlobalsInit, ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Void, null);
+
+            var structured = new BoundBlockStatement(globalScope.GlobalInitializers);
+            var lowered = Lowerer.Lower(structured);
+
+            functionBodies.Add(initSymbol, lowered);
+            structuredBodies.Add(initSymbol, structured);
+        }
+
         // Add all collected generic instantiations to the function bodies
         foreach (var (_, (concreteSymbol, instBody)) in sharedInstantiations)
         {
@@ -393,7 +422,8 @@ internal sealed class Binder
                 functionBodies.Add(concreteSymbol, instBody);
         }
 
-        return new BoundProgram(previous, diagnostics.ToImmutable(), globalScope.MainFunction, globalScope.ScriptFunction, functionBodies.ToImmutable(), globalScope.StructTypes, globalScope.EnumTypes, structuredBodies.ToImmutable());
+        return new BoundProgram(previous, diagnostics.ToImmutable(), globalScope.MainFunction, globalScope.ScriptFunction, functionBodies.ToImmutable(), globalScope.StructTypes, globalScope.EnumTypes, structuredBodies.ToImmutable(),
+            globalScope.GlobalVariables, globalScope.GlobalInitializers);
     }
 
     private void BindFunctionDeclaration(FunctionDeclarationSyntax syntax)
@@ -832,6 +862,58 @@ internal sealed class Binder
                 BindVariable(varStmt.Identifier, false, variableType);
             }
         }
+
+        // Declare every `global` across all files before any function body is bound, so a
+        // function can reference a global declared in an imported file regardless of order.
+        // Initializers are bound afterwards, once the symbols exist.
+        foreach (var decl in syntaxTrees
+                     .SelectMany(st => st.Root.Declarations)
+                     .OfType<GlobalVariableDeclarationSyntax>())
+        {
+            var type = BindTypeClause(decl.TypeClause);
+
+            if (type == null)
+            {
+                _diagnostics.ReportGlobalRequiresType(decl.Identifier.Location, decl.Identifier.Text ?? "?");
+                continue;
+            }
+
+            BindVariable(decl.Identifier, false, type);
+        }
+    }
+
+    /// <summary>
+    /// Binds one assignment statement per <c>global</c>, in declaration order.
+    /// </summary>
+    /// <remarks>
+    /// Called after <see cref="RegisterGlobalVariables"/> has declared every symbol across all
+    /// files, so an initializer may reference a global declared earlier — including one from
+    /// another file. The statements are emitted by the backends as the body of
+    /// <see cref="SyntheticNames.GlobalsInit"/>, which runs once before user code.
+    /// </remarks>
+    private ImmutableArray<BoundStatement> BindGlobalInitializers(
+        ImmutableArray<GlobalVariableDeclarationSyntax> declarations)
+    {
+        var statements = ImmutableArray.CreateBuilder<BoundStatement>();
+
+        foreach (var decl in declarations)
+        {
+            // The symbol was declared during registration; look it up rather than minting a new
+            // one so that references inside other initializers and function bodies see the same
+            // symbol.
+            if (!_scope.TryLookupVariable(decl.Identifier.Text ?? "?", out var variable) || variable == null)
+            {
+                continue;
+            }
+
+            var initializer = BindExpression(decl.Expression, variable.Type);
+            var converted = BindConversion(decl.Expression.Location, initializer, variable.Type);
+
+            statements.Add(new BoundExpressionStatement(
+                new BoundAssignmentExpression(variable, converted)));
+        }
+
+        return statements.ToImmutable();
     }
 
     private BoundStatement BindErrorStatement()

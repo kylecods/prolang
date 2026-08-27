@@ -45,17 +45,16 @@ func cube_step() : int {
     return 4
 }
 
+// The painter's state and the spin flag, as globals — same reasoning as cube_desktop.prl.
+global state: array<int> = cube_state_new()
+global spinning: int = 1
+
 func main()
 {
     let theme: int = Theme.MIDNIGHT
 
-    let state: array<int> = cube_state_new()
-
     cube_set_angles(state, 30, 40, 0)
     cube_set_colour(state, theme_accent(theme))
-
-    let spinning: array<int> = array_new(1)
-    spinning[0] = 1
 
     let host: PspHost = hostp_open(512)
     let fonts: FontSet = hostp_fonts()
@@ -67,7 +66,7 @@ func main()
         // 20 — rather than sliding, which is what makes it worth showing on the hardware.
         fps_tick(frames)
 
-        if (spinning[0] == 1) {
+        if (spinning == 1) {
             cube_turn_by(state, 1, 2, 0)
         }
 
@@ -134,7 +133,7 @@ func main()
         } elif (act == CubeAct.RESET) {
             cube_set_angles(state, 0, 0, 0)
         } elif (act == CubeAct.SPIN) {
-            spinning[0] = 1 - spinning[0]
+            spinning = 1 - spinning
         }
     }
 }

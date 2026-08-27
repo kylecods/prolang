@@ -55,19 +55,15 @@ func test_scene_multi(ops: array<int>, at: int, tag: int,
     return next
 }
 
-func test_scene_run() : TestRun {
-    let run: TestRun = t_new()
-
-    run = test_scene_widget(run)
-    run = test_scene_paints(run)
-    run = test_scene_order(run)
-
-    return run
+func test_scene_run() : void {
+    test_scene_widget()
+    test_scene_paints()
+    test_scene_order()
 }
 
 // ── It is an ordinary widget ─────────────────────────────────────────────────
 
-func test_scene_widget(run: TestRun) : TestRun {
+func test_scene_widget() : void {
     let fonts: FontSet = test_scene_fonts()
     let ui: Ui = ui_new(32)
 
@@ -77,32 +73,30 @@ func test_scene_widget(run: TestRun) : TestRun {
         let scene: int = ui_scene(ui, tag: 7, flex: 1)
     ui_end(ui)
 
-    run = t_eq_int(run, "scene kind", ui_kind(ui, scene), UiKind.SCENE)
-    run = t_eq_int(run, "tag recorded", ui_get(ui, scene, UiF.SCENE_TAG), 7)
-    run = t_false(run, "a scene is a leaf", ui_is_container(ui, scene))
-    run = t_eq_int(run, "a scene takes no children", ui_child_count(ui, scene), 0)
+    t_eq_int("scene kind", ui_kind(ui, scene), UiKind.SCENE)
+    t_eq_int("tag recorded", ui_get(ui, scene, UiF.SCENE_TAG), 7)
+    t_false("a scene is a leaf", ui_is_container(ui, scene))
+    t_eq_int("a scene takes no children", ui_child_count(ui, scene), 0)
 
     box_layout(ui, fonts, root, 0, 0, 200, 100)
 
     // flex: 1 means it absorbs what the label leaves, inside the column's padding.
-    run = t_eq_int(run, "scene fills the leftover height", box_h(ui, scene), 55)
-    run = t_eq_int(run, "scene spans the content width", box_w(ui, scene), 180)
-    run = t_eq_int(run, "scene sits below the label", box_y(ui, scene), 35)
+    t_eq_int("scene fills the leftover height", box_h(ui, scene), 55)
+    t_eq_int("scene spans the content width", box_w(ui, scene), 180)
+    t_eq_int("scene sits below the label", box_y(ui, scene), 35)
 
     // Not clickable unless it asks to be — a scene is not a button.
-    run = t_eq_int(run, "no id by default", ui_get(ui, scene, UiF.ID), 0)
+    t_eq_int("no id by default", ui_get(ui, scene, UiF.ID), 0)
 
     ui_begin(ui, 0, 0, false)
     let clickable: int = ui_scene(ui, tag: 1, action: 42)
-    run = t_eq_int(run, "a scene may take an action", ui_get(ui, clickable, UiF.ACTION), 42)
-    run = t_eq_int(run, "and is then hit tested", ui_get(ui, clickable, UiF.ID), 42)
-
-    return run
+    t_eq_int("a scene may take an action", ui_get(ui, clickable, UiF.ACTION), 42)
+    t_eq_int("and is then hit tested", ui_get(ui, clickable, UiF.ID), 42)
 }
 
 // ── The painter ──────────────────────────────────────────────────────────────
 
-func test_scene_paints(run: TestRun) : TestRun {
+func test_scene_paints() : void {
     let fonts: FontSet = test_scene_fonts()
     let ui: Ui = ui_new(32)
     let ops: array<int> = array_new(64 * dl_stride())
@@ -119,29 +113,29 @@ func test_scene_paints(run: TestRun) : TestRun {
     // Without a painter the scene still reserves its space and shows its background, which is what
     // makes a forgotten painter look like an empty panel rather than a crash.
     let bare: int = dl_build(ui, fonts, scene, ops)
-    run = t_eq_int(run, "no painter emits only the background", bare, 1)
-    run = t_eq_int(run, "the background is a rect", dl_op(ops, 0), DlOp.RECT)
-    run = t_eq_int(run, "the painter was not called", state[0], 0)
+    t_eq_int("no painter emits only the background", bare, 1)
+    t_eq_int("the background is a rect", dl_op(ops, 0), DlOp.RECT)
+    t_eq_int("the painter was not called", state[0], 0)
 
     // With one, its records follow the background.
     let painted: int = dl_build_scenes(ui, fonts, scene, ops, test_scene_painter, state)
-    run = t_eq_int(run, "painter adds a record", painted, 2)
-    run = t_eq_int(run, "painter called once", state[0], 1)
-    run = t_eq_int(run, "painter got the tag", state[1], 5)
+    t_eq_int("painter adds a record", painted, 2)
+    t_eq_int("painter called once", state[0], 1)
+    t_eq_int("painter got the tag", state[1], 5)
 
     // The rectangle handed over is inside the scene's own padding.
-    run = t_eq_int(run, "painter x is inside the padding", state[2], 4)
-    run = t_eq_int(run, "painter y is inside the padding", state[3], 4)
-    run = t_eq_int(run, "painter width less padding", state[4], 92)
-    run = t_eq_int(run, "painter height less padding", state[5], 52)
+    t_eq_int("painter x is inside the padding", state[2], 4)
+    t_eq_int("painter y is inside the padding", state[3], 4)
+    t_eq_int("painter width less padding", state[4], 92)
+    t_eq_int("painter height less padding", state[5], 52)
 
-    run = t_eq_int(run, "the painter's record is present", dl_op(ops, 1), DlOp.RECT)
-    run = t_eq_int(run, "with the painter's colour", dl_arg(ops, 1, 4), ink)
+    t_eq_int("the painter's record is present", dl_op(ops, 1), DlOp.RECT)
+    t_eq_int("with the painter's colour", dl_arg(ops, 1, 4), ink)
 
     // A painter may emit as many records as it likes.
     let many: int = dl_build_scenes(ui, fonts, scene, ops, test_scene_multi, state)
-    run = t_eq_int(run, "several records from one scene", many, 4)
-    run = t_eq_int(run, "all of them are the painter's", dl_op(ops, 3), DlOp.LINE)
+    t_eq_int("several records from one scene", many, 4)
+    t_eq_int("all of them are the painter's", dl_op(ops, 3), DlOp.LINE)
 
     // A scene with no room left does not call the painter at all, so a painter never has to guard
     // against a zero or negative size.
@@ -152,9 +146,7 @@ func test_scene_paints(run: TestRun) : TestRun {
     hit_resolve(ui)
 
     let none: int = dl_build_scenes(ui, fonts, squashed, ops, test_scene_painter, state)
-    run = t_eq_int(run, "no room means no painter call", state[0], 0)
-
-    return run
+    t_eq_int("no room means no painter call", state[0], 0)
 }
 
 // ── Tree order ───────────────────────────────────────────────────────────────
@@ -165,7 +157,7 @@ func test_scene_paints(run: TestRun) : TestRun {
  * This is the property that separates a real widget from a viewport drawn around the interface: a
  * sibling built after the scene must paint over it, and one built before must paint under it.
  */
-func test_scene_order(run: TestRun) : TestRun {
+func test_scene_order() : void {
     let fonts: FontSet = test_scene_fonts()
     let ui: Ui = ui_new(32)
     let ops: array<int> = array_new(64 * dl_stride())
@@ -191,10 +183,8 @@ func test_scene_order(run: TestRun) : TestRun {
 
     let count: int = dl_build_scenes(ui, fonts, root, ops, test_scene_painter, state)
 
-    run = t_eq_int(run, "three records", count, 3)
-    run = t_eq_int(run, "the earlier sibling comes first", dl_arg(ops, 0, 4), under)
-    run = t_eq_int(run, "the scene is in the middle", dl_arg(ops, 1, 4), sceneInk)
-    run = t_eq_int(run, "the later sibling paints last", dl_arg(ops, 2, 4), over)
-
-    return run
+    t_eq_int("three records", count, 3)
+    t_eq_int("the earlier sibling comes first", dl_arg(ops, 0, 4), under)
+    t_eq_int("the scene is in the middle", dl_arg(ops, 1, 4), sceneInk)
+    t_eq_int("the later sibling paints last", dl_arg(ops, 2, 4), over)
 }

@@ -2,10 +2,11 @@ import "io"
 
 // Test string methods - Phase B Step 1 Implementation
 
-let testStr: string = "Hello World"
+func main() {
+    let testStr: string = "Hello World"
 
-// Test string.length()
-print("=== String Methods Test ===")
+    // Test string.length()
+    print("=== String Methods Test ===")
 print("String: " + testStr)
 print("Length: " + string(testStr.length()))
 
@@ -39,3 +40,4 @@ print("Domain: " + email.substring(5, 12))
 
 print("")
 print("✅ String methods are working!")
+}

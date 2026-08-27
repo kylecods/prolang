@@ -31,4 +31,15 @@ internal static class SyntheticNames
     /// The user's <c>main</c>, renamed so that <see cref="Main"/> can take its place.
     /// </summary>
     public const string UserMain = "__UserMain";
+
+    /// <summary>
+    /// The generated function that runs <c>global</c> variable initializers.
+    /// </summary>
+    /// <remarks>
+    /// Exists only when the program declares at least one <c>global</c>. The .NET backend calls it
+    /// from <see cref="Main"/> (or from a static constructor for libraries); the C backends call it
+    /// at the top of <see cref="UserMain"/>, which covers both the desktop entry point and the PSP
+    /// bootstrap, since both reach user code through it.
+    /// </remarks>
+    public const string GlobalsInit = "__GlobalsInit";
 }

@@ -30,7 +30,7 @@
 
 ### Program Structure
 
-**Important**: All ProLang programs must have an explicit `main()` function. Global statements (code outside of functions) are not allowed.
+**Important**: All ProLang programs must have an explicit `main()` function. Statements (code outside of functions) are not allowed — file-scope state is declared with the `global` keyword instead.
 
 ```prolang
 import "io"
@@ -485,14 +485,13 @@ ProLang supports two types of compilations:
 **Executables** (with `main()` function):
 - Requires an explicit `main()` function
 - Has an entry point and can be run directly with `dotnet program.dll`
-- Can have global statements if they're inside main()
+- Can declare `global` variables at file scope; their initializers run once at program start
 
 **Libraries** (without `main()` function):
 - No `main()` function needed
-- Defines functions, types, and structs for reuse
-- Cannot have global statements
+- Defines functions, types, structs, and `global` variables for reuse
 - Compiled as DLL but cannot be executed directly
-- Can be imported and used by other programs
+- Can be imported and used by other programs; its globals are visible to the importer
 
 ### Main Function in Executables
 
@@ -593,8 +592,8 @@ func main() {
 ### Library Restrictions
 
 - ❌ **No `main()` function** - Libraries are not executable
-- ❌ **No global statements** - Code must be in functions
-- ✅ **Functions, types, and structs** - Libraries define reusable components
+- ❌ **No statements** - Code must be in functions; file-scope state uses `global`
+- ✅ **Functions, types, structs, and `global` variables** - Libraries define reusable components
 
 ### The shared standard library
 
@@ -658,7 +657,7 @@ dotnet run --project src/ProLang/ProLang.csproj -- \
 
 #### "All statements must be inside a main() function"
 
-**Cause**: Global statements (code outside of functions) are not allowed
+**Cause**: Statements (code outside of functions) are not allowed. File-scope state is declared with the `global` keyword instead.
 
 **Solution**:
 ```prolang
@@ -669,6 +668,9 @@ print("Hello")
 func main() {
     print("Hello")
 }
+
+// CORRECT - file-scope state uses global:
+global counter: int = 0
 ```
 
 #### "Cannot convert type 'any' to 'array<any>'"
@@ -867,6 +869,38 @@ let name = map["name"]
 ```
 
 > `map<K, V>` is thinly exercised — two uses in the whole repository. Prefer `array<T>`.
+
+### Global Variables
+
+```prolang
+global counter: int = 0
+global table: array<int> = [10, 20, 30]
+
+func bump() {
+    counter = counter + 1     // any function can read and write it
+}
+
+func main() {
+    bump()
+    bump()
+    print(string(counter))    // 2
+}
+```
+
+A `global` declares a mutable variable at file scope. The rules:
+
+- **Initializers are arbitrary expressions** and run once, before `main()` (or before the first
+  use in a library). An initializer may reference other globals and call functions —
+  `global state: array<int> = cube_state_new()` is how examples/18-psp-cube builds its tables.
+- **Visible across imports.** ProLang has one flat namespace, so a global declared in an imported
+  module is usable by the importer, and two files declaring the same name is a compile error.
+- **Work in libraries.** A module without `main()` may declare globals; importers see them.
+- **Structs are values, arrays are references.** Assigning `p.x = 1` on a struct-typed global
+  writes the global; an `array<T>` global is shared by reference like any array.
+
+Before `global` existed, file-scope state was simulated with one-element arrays
+(`count[0] = count[0] + 1`) or by threading a state struct through every function's parameters.
+Both patterns still appear in older code; prefer a global for genuine module-level state.
 
 ### Time
 
@@ -1139,7 +1173,7 @@ Other `prl_*` runtime functions (print, sleep, console) also get PSP implementat
 
 **Key Requirements**:
 - All programs must have an explicit `main()` function
-- Global statements (code outside functions) are not allowed
+- Statements (code outside functions) are not allowed; file-scope state uses the `global` keyword
 - `main()` can optionally accept `args: array<string>` for command-line arguments
 - All output is collected and flushed after main() completes
 

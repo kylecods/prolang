@@ -1,0 +1,67 @@
+import "io"
+import "test"
+import "globals-module.prl"
+
+// The `global` keyword declares a variable at file scope. Its lifetime is the whole
+// program, its initializer runs once before main(), and every function in every
+// imported file can read and write it — the language's one piece of module-level state.
+
+global counter: int = 0
+global label: string = "count"
+global factor: int = 2 * 5
+global scale: int = 10
+
+struct Point {
+    x: int,
+    y: int
+}
+
+global origin: Point = Point { x: 0, y: 0 }
+global history: array<int> = array_new(16)
+
+func bump() {
+    counter = counter + 1
+}
+
+func bump_by(amount: int) {
+    counter = counter + amount
+}
+
+func record(value: int) {
+    history[counter] = value
+}
+
+func main() {
+    // Initializers ran before main(): factor is 2 * 5.
+    assert(factor == 10, "expression initializers run once at startup")
+
+    // Mutation from a function that takes no parameters and captures nothing explicitly.
+    bump()
+    bump()
+    bump_by(7)
+    assert(counter == 9, "functions mutate globals")
+
+    // A global declared in an imported file is visible and mutable here.
+    assert(module_tag == "globals-module", "globals are visible across imports")
+    set_module_count(counter)
+    assert(get_module_count() == 9, "imported functions mutate shared globals")
+
+    // Globals interact with locals and parameters normally.
+    let local = scale * 2
+    assert(local == 20, "locals still work alongside globals")
+    scale = local + 1
+    assert(scale == 21, "assignment to a global from inside a block")
+
+    // Struct-typed globals: field writes go through to the global itself.
+    origin.x = 3
+    origin.y = 4
+    assert(origin.x + origin.y == 7, "struct-typed globals are assignable through fields")
+
+    // Array-typed globals: writes through an index land in the array the global refers to.
+    record(42)
+    assert(history[9] == 42, "array-typed globals are writable by index")
+
+    print(label + ": " + string(counter))
+    print("module count: " + string(get_module_count()))
+    print("origin: (" + string(origin.x) + ", " + string(origin.y) + ")")
+}

@@ -16,6 +16,11 @@ internal sealed class CEmitter
     // Collected array element types that need typed array structs
     private readonly HashSet<string> _emittedArrayTypes = new(StringComparer.Ordinal);
 
+    // True while emitting the body of prl___GlobalsInit. An array literal there must allocate
+    // from the arena rather than use a compound literal: the literal's storage dies when the
+    // initializer function returns, and a global would be left pointing at a dead stack frame.
+    private bool _emittingGlobalsInit;
+
     /// <summary>
     /// Function-pointer typedefs to emit, keyed by the generated name.
     /// </summary>
@@ -105,15 +110,36 @@ internal sealed class CEmitter
         foreach (var e in _program.EnumTypes)
             EmitEnumDefinition(e);
 
+        // File-scope storage for `global` variables. Zero-initialised here; the real initializers
+        // run in prl_GlobalsInit, which every entry path calls before user code.
+        foreach (var g in _program.GlobalVariables)
+            Line($"{EmitTypeName(g.Type)} {SanitizeName(g.Name)}; /* global */");
+        if (_program.GlobalVariables.Any())
+            Line();
+
         // Function forward declarations
         foreach (var (func, _) in _program.Functions)
             EmitFunctionForwardDecl(func);
         Line();
 
-        // Function bodies
+        // The global initializer runs first from every entry path: C's main() and the PSP
+        // bootstrap both reach user code through __UserMain.
+        if (_program.GlobalVariables.Any())
+        {
+            var initFunc = _program.Functions.Keys.FirstOrDefault(f => f.Name == SyntheticNames.GlobalsInit);
+            if (initFunc != null && _program.Functions.TryGetValue(initFunc, out var initBody))
+            {
+                _emittingGlobalsInit = true;
+                EmitFunction(initFunc, initBody);
+                _emittingGlobalsInit = false;
+            }
+        }
+
+        // Function bodies. __GlobalsInit is emitted above, ahead of everything that could
+        // reference it, so it is skipped here to avoid a duplicate definition.
         foreach (var (func, body) in _program.Functions)
         {
-            if (func != _program.MainFunction)
+            if (func != _program.MainFunction && func.Name != SyntheticNames.GlobalsInit)
                 EmitFunction(func, body);
         }
 
@@ -193,6 +219,10 @@ internal sealed class CEmitter
             foreach (var f in s.Fields)
                 NoteType(f.Type);
         }
+
+        // From globals
+        foreach (var g in _program.GlobalVariables)
+            NoteType(g.Type);
 
         // From function parameters and bodies
         foreach (var (func, body) in _program.Functions)
@@ -404,6 +434,13 @@ internal sealed class CEmitter
         Line($"{retType} {SanitizeName(func.Name)}({paramList}) {{");
         _indent++;
 
+        // Globals are initialised at the top of __UserMain, which is the one function every
+        // entry path reaches: the generated desktop main() and the PSP bootstrap both call it.
+        if (func.Name == SyntheticNames.UserMain && _program.GlobalVariables.Any())
+        {
+            Line($"{SanitizeName(SyntheticNames.GlobalsInit)}();");
+        }
+
         // A block at function level contributes the function's own braces, so its statements are
         // emitted directly rather than nested in a redundant inner scope.
         if (body is BoundBlockStatement block)
@@ -526,6 +563,27 @@ internal sealed class CEmitter
     {
         var typeName = EmitTypeName(vd.Variable.Type);
         var name = SanitizeName(vd.Variable.Name);
+
+        // An array literal in the globals initializer is emitted as an arena allocation (see
+        // EmitArrayLiteral); the elements are written separately below, since the allocation
+        // itself is zero-initialised.
+        if (_emittingGlobalsInit && vd.Initializer is BoundArrayExpression arrayInit)
+        {
+            var elemType = arrayInit.Type.TypeArguments.FirstOrDefault() ?? TypeSymbol.Int;
+            var suffix = GetArraySuffix(elemType);
+            var n = arrayInit.Elements.Length;
+
+            Write($"{Indent()}{typeName} {name} = prl_array_new_{suffix}({n});");
+            _sb.AppendLine();
+            for (int i = 0; i < n; i++)
+            {
+                Write($"{Indent()}{name}.data[{i}] = ");
+                EmitExpression(arrayInit.Elements[i]);
+                _sb.AppendLine(";");
+            }
+            return;
+        }
+
         Write($"{Indent()}{typeName} {name} = ");
         EmitExpression(vd.Initializer, vd.Variable.Type);
         _sb.AppendLine(";");
@@ -697,6 +755,26 @@ internal sealed class CEmitter
                 break;
             case BoundNodeKind.BoundAssignmentExpression:
                 var assign = (BoundAssignmentExpression)expr;
+
+                // An array literal assigned to a global inside the globals initializer: the
+                // right side is an arena allocation (see EmitArrayLiteral), so the elements are
+                // written by a block rather than the single assignment expression.
+                if (_emittingGlobalsInit && assign.Expression is BoundArrayExpression arrayAssign)
+                {
+                    var elemTypeA = arrayAssign.Type.TypeArguments.FirstOrDefault() ?? TypeSymbol.Int;
+                    var suffixA = GetArraySuffix(elemTypeA);
+                    var nA = arrayAssign.Elements.Length;
+                    var nameA = SanitizeName(assign.Variable.Name);
+
+                    _sb.Append($"{nameA} = prl_array_new_{suffixA}({nA})");
+                    for (int i = 0; i < nA; i++)
+                    {
+                        _sb.Append($", {nameA}.data[{i}] = ");
+                        EmitExpression(arrayAssign.Elements[i]);
+                    }
+                    break;
+                }
+
                 _sb.Append($"{SanitizeName(assign.Variable.Name)} = ");
                 EmitExpression(assign.Expression);
                 break;
@@ -1042,6 +1120,16 @@ internal sealed class CEmitter
         var cElem = EmitTypeName(elemType);
         var suffix = GetArraySuffix(elemType);
         var n = expr.Elements.Length;
+
+        if (_emittingGlobalsInit)
+        {
+            // A compound literal's storage dies when the initializer function returns, so a
+            // global assigned one would dangle. Allocate from the arena — which lives for the
+            // whole process — and fill it in element by element.
+            _sb.Append($"prl_array_new_{suffix}({n})");
+            return;
+        }
+
         _sb.Append($"(PrlArray_{suffix}){{({cElem}[]){{");
         for (int i = 0; i < n; i++)
         {

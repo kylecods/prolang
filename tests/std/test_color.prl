@@ -5,50 +5,46 @@
 import "testing"
 import "ui/color"
 
-func test_color_run() : TestRun {
-    let r: TestRun = t_new()
-
+func test_color_run() : void {
     let opaqueRed: int = color_argb(255, 220, 50, 47)
 
-    r = t_eq_int(r, "alpha round-trip", color_a(opaqueRed), 255)
-    r = t_eq_int(r, "red round-trip", color_r(opaqueRed), 220)
-    r = t_eq_int(r, "green round-trip", color_g(opaqueRed), 50)
-    r = t_eq_int(r, "blue round-trip", color_b(opaqueRed), 47)
+    t_eq_int("alpha round-trip", color_a(opaqueRed), 255)
+    t_eq_int("red round-trip", color_r(opaqueRed), 220)
+    t_eq_int("green round-trip", color_g(opaqueRed), 50)
+    t_eq_int("blue round-trip", color_b(opaqueRed), 47)
 
     // An alpha above 127 sets the sign bit, so a fully opaque colour is a negative int. That is
     // the correct bit pattern and the unpackers must still read it, which is what this checks.
-    r = t_true(r, "opaque colour is negative", opaqueRed < 0)
+    t_true("opaque colour is negative", opaqueRed < 0)
 
     let translucent: int = color_argb(64, 1, 2, 3)
-    r = t_true(r, "low alpha colour is positive", translucent > 0)
-    r = t_eq_int(r, "low alpha round-trip", color_a(translucent), 64)
+    t_true("low alpha colour is positive", translucent > 0)
+    t_eq_int("low alpha round-trip", color_a(translucent), 64)
 
     // Channels are masked, not validated: prolang cannot report an error, and wrapping one
     // channel is better than letting it overflow into the next.
-    r = t_eq_int(r, "channel over 255 is masked", color_r(color_argb(255, 256, 0, 0)), 0)
-    r = t_eq_int(r, "channel does not bleed", color_g(color_argb(255, 256, 7, 0)), 7)
+    t_eq_int("channel over 255 is masked", color_r(color_argb(255, 256, 0, 0)), 0)
+    t_eq_int("channel does not bleed", color_g(color_argb(255, 256, 7, 0)), 7)
 
-    r = t_eq_int(r, "rgb implies opaque", color_a(color_rgb(1, 2, 3)), 255)
+    t_eq_int("rgb implies opaque", color_a(color_rgb(1, 2, 3)), 255)
 
-    r = t_true(r, "zero is transparent", color_is_transparent(0))
-    r = t_false(r, "opaque is not transparent", color_is_transparent(opaqueRed))
+    t_true("zero is transparent", color_is_transparent(0))
+    t_false("opaque is not transparent", color_is_transparent(opaqueRed))
 
     let dimmed: int = color_with_alpha(opaqueRed, 128)
-    r = t_eq_int(r, "with_alpha sets alpha", color_a(dimmed), 128)
-    r = t_eq_int(r, "with_alpha keeps red", color_r(dimmed), 220)
-    r = t_eq_int(r, "with_alpha keeps blue", color_b(dimmed), 47)
+    t_eq_int("with_alpha sets alpha", color_a(dimmed), 128)
+    t_eq_int("with_alpha keeps red", color_r(dimmed), 220)
+    t_eq_int("with_alpha keeps blue", color_b(dimmed), 47)
 
-    r = t_eq_int(r, "luma of black", color_luma(color_rgb(0, 0, 0)), 0)
-    r = t_eq_int(r, "luma of white", color_luma(color_rgb(255, 255, 255)), 255)
-    r = t_true(r, "green reads brighter than blue",
+    t_eq_int("luma of black", color_luma(color_rgb(0, 0, 0)), 0)
+    t_eq_int("luma of white", color_luma(color_rgb(255, 255, 255)), 255)
+    t_true("green reads brighter than blue",
                color_luma(color_rgb(0, 255, 0)) > color_luma(color_rgb(0, 0, 255)))
 
-    r = t_eq_str(r, "hex digit low", color_hex_digit(0), "0")
-    r = t_eq_str(r, "hex digit high", color_hex_digit(15), "F")
-    r = t_eq_str(r, "hex byte pads", color_hex_byte(5), "05")
-    r = t_eq_str(r, "hex byte full", color_hex_byte(255), "FF")
-    r = t_eq_str(r, "hex of red", color_hex(color_rgb(220, 50, 47)), "#DC322F")
-    r = t_eq_str(r, "hex of black", color_hex(color_rgb(0, 0, 0)), "#000000")
-
-    return r
+    t_eq_str("hex digit low", color_hex_digit(0), "0")
+    t_eq_str("hex digit high", color_hex_digit(15), "F")
+    t_eq_str("hex byte pads", color_hex_byte(5), "05")
+    t_eq_str("hex byte full", color_hex_byte(255), "FF")
+    t_eq_str("hex of red", color_hex(color_rgb(220, 50, 47)), "#DC322F")
+    t_eq_str("hex of black", color_hex(color_rgb(0, 0, 0)), "#000000")
 }

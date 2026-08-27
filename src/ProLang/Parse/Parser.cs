@@ -133,7 +133,23 @@ public sealed class Parser
             return ParseEnumDeclaration();
         }
 
+        if (Current.Kind == SyntaxKind.GlobalKeyword)
+        {
+            return ParseGlobalVariableDeclaration();
+        }
+
         return ParseGlobalStatement();
+    }
+
+    private GlobalVariableDeclarationSyntax ParseGlobalVariableDeclaration()
+    {
+        var globalKeyword = Match(SyntaxKind.GlobalKeyword);
+        var identifier = Match(SyntaxKind.IdentifierToken);
+        var typeClause = ParseOptionalTypeClause();
+        var equalsToken = Match(SyntaxKind.EqualsToken);
+        var expression = ParseExpression();
+
+        return new GlobalVariableDeclarationSyntax(_syntaxTree, globalKeyword, identifier, typeClause, equalsToken, expression);
     }
 
     private ImportDeclarationSyntax ParseImportDeclaration()

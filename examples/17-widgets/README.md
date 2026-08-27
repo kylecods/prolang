@@ -36,7 +36,7 @@ ui_col(ui, pad: 20, gap: 16, bg: theme_background(theme))
 
     ui_box(ui, pad: 20, radius: 8, flex: 1, bg: theme_surface(theme),
            align: UiAlign.CENTER, justify: UiAlign.CENTER)
-        ui_text(ui, "" + count[0], font: Font.TITLE, fg: theme_accent(theme))
+        ui_text(ui, "" + count, font: Font.TITLE, fg: theme_accent(theme))
     ui_end(ui)
 
     ui_row(ui, gap: 8)
@@ -69,9 +69,9 @@ handles it:
 
 ```prolang
 if (act == Act.INCREMENT) {
-    count[0] = count[0] + 1
+    count = count + 1
 } elif (act == Act.THEME) {
-    activeTheme[0] = theme_next(theme)
+    activeTheme = theme_next(theme)
 }
 ```
 
@@ -80,8 +80,9 @@ what lets them compile to a bare function pointer on the PSP with no garbage col
 handler could not reach `count` anyway. Returning the action to the loop keeps every state change
 in one readable place instead of scattered across handlers.
 
-`count` is an `array<int>` of one rather than a plain `int` for a related reason: a struct field
-would be copied, and an array is the language's mutation channel.
+`count` and `activeTheme` are globals — the language's file-scope mutable state. Before `global`
+existed, each lived in an `array<int>` of one, because an array was the only mutation channel a
+function could see through.
 
 ## Controls
 
