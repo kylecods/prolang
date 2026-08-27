@@ -79,6 +79,7 @@ public enum SyntaxKind
     StructKeyword,
     AsKeyword,
     EnumKeyword,
+    GlobalKeyword,
 
     //html keywords
     ScriptKeyword,
@@ -118,6 +119,7 @@ public enum SyntaxKind
     //nodes
     GlobalDeclaration,
     GlobalStatement,
+    GlobalVariableDeclaration,
     HtmlDeclaration,
     FunctionDeclaration,
     ImportDeclaration,

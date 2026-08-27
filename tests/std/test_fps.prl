@@ -25,59 +25,53 @@ func test_fps_run_frames(fps: Fps, start: int, step: int, count: int) : int {
     return now
 }
 
-func test_fps_run() : TestRun {
-    let run: TestRun = t_new()
-
-    run = test_fps_basics(run)
-    run = test_fps_windowing(run)
-    run = test_fps_edges(run)
-
-    return run
+func test_fps_run() : void {
+    test_fps_basics()
+    test_fps_windowing()
+    test_fps_edges()
 }
 
 // ── Getting started ──────────────────────────────────────────────────────────
 
-func test_fps_basics(run: TestRun) : TestRun {
+func test_fps_basics() : void {
     let fps: Fps = fps_new()
 
     // Nothing measured yet, and it says so rather than claiming zero.
-    run = t_eq_int(run, "starts at zero", fps_value(fps), 0)
-    run = t_false(run, "not ready before the first window", fps_ready(fps))
-    run = t_eq_str(run, "reads as unknown", fps_text(fps), "-- fps")
+    t_eq_int("starts at zero", fps_value(fps), 0)
+    t_false("not ready before the first window", fps_ready(fps))
+    t_eq_str("reads as unknown", fps_text(fps), "-- fps")
 
     // The first sample only sets the origin. Counting it would put the first window one frame over.
     fps_sample(fps, 1000)
-    run = t_eq_int(run, "the first sample measures nothing", fps_frame_ms(fps), 0)
-    run = t_false(run, "still not ready", fps_ready(fps))
+    t_eq_int("the first sample measures nothing", fps_frame_ms(fps), 0)
+    t_false("still not ready", fps_ready(fps))
 
     // A steady 100 fps: ten milliseconds a frame.
     fps_sample(fps, 1010)
-    run = t_eq_int(run, "frame time is the interval", fps_frame_ms(fps), 10)
-    run = t_eq_int(run, "no rate until the window closes", fps_value(fps), 0)
-
-    return run
+    t_eq_int("frame time is the interval", fps_frame_ms(fps), 10)
+    t_eq_int("no rate until the window closes", fps_value(fps), 0)
 }
 
 // ── The window ───────────────────────────────────────────────────────────────
 
-func test_fps_windowing(run: TestRun) : TestRun {
+func test_fps_windowing() : void {
     // A steady 100 fps for exactly one window.
     let fps: Fps = fps_new()
 
     fps_sample(fps, 0)
     let now: int = test_fps_run_frames(fps, 0, 10, 50)
 
-    run = t_eq_int(run, "one window is 500 ms", fps_window_ms(), 500)
-    run = t_true(run, "ready once a window has closed", fps_ready(fps))
-    run = t_eq_int(run, "50 frames in 500 ms is 100 fps", fps_value(fps), 100)
+    t_eq_int("one window is 500 ms", fps_window_ms(), 500)
+    t_true("ready once a window has closed", fps_ready(fps))
+    t_eq_int("50 frames in 500 ms is 100 fps", fps_value(fps), 100)
 
     // The window resets: the count does not keep growing into the next one.
     now = test_fps_run_frames(fps, now, 10, 50)
-    run = t_eq_int(run, "the next window reports the same rate", fps_value(fps), 100)
+    t_eq_int("the next window reports the same rate", fps_value(fps), 100)
 
     // A different rate is picked up.
     now = test_fps_run_frames(fps, now, 20, 25)
-    run = t_eq_int(run, "25 frames in 500 ms is 50 fps", fps_value(fps), 50)
+    t_eq_int("25 frames in 500 ms is 50 fps", fps_value(fps), 50)
 
     // Sixty frames a second is the case the naive `1000 / frameMs` gets wrong: frames alternate
     // between 16 and 17 ms, so a per-frame reading would swing between 62 and 58. Averaging over
@@ -94,16 +88,14 @@ func test_fps_windowing(run: TestRun) : TestRun {
         fps_sample(steady, t)
     }
 
-    run = t_eq_int(run, "sixty frames in a second reads as 60", fps_value(steady), 60)
-    run = t_true(run, "frame time is 16 or 17 ms",
+    t_eq_int("sixty frames in a second reads as 60", fps_value(steady), 60)
+    t_true("frame time is 16 or 17 ms",
         fps_frame_ms(steady) == 16 || fps_frame_ms(steady) == 17)
-
-    return run
 }
 
 // ── The awkward cases ────────────────────────────────────────────────────────
 
-func test_fps_edges(run: TestRun) : TestRun {
+func test_fps_edges() : void {
     // The worst frame is reported, because an average is precisely what hides a stutter.
     let stutter: Fps = fps_new()
 
@@ -115,12 +107,12 @@ func test_fps_edges(run: TestRun) : TestRun {
 
     now = test_fps_run_frames(stutter, now, 10, 30)
 
-    run = t_true(run, "the stutter is reported as the peak", fps_peak_ms(stutter) >= 200)
-    run = t_true(run, "while the average stays respectable", fps_value(stutter) > 50)
+    t_true("the stutter is reported as the peak", fps_peak_ms(stutter) >= 200)
+    t_true("while the average stays respectable", fps_value(stutter) > 50)
 
     // And the peak is per window: a quiet window afterwards reports a small one.
     now = test_fps_run_frames(stutter, now, 10, 60)
-    run = t_true(run, "the peak resets with the window", fps_peak_ms(stutter) < 200)
+    t_true("the peak resets with the window", fps_peak_ms(stutter) < 200)
 
     // Frames faster than the clock can measure. Fifty frames at 0 ms each never close a window, so
     // the counter must not divide by that zero elapsed time.
@@ -129,12 +121,12 @@ func test_fps_edges(run: TestRun) : TestRun {
     fps_sample(fast, 5000)
     test_fps_run_frames(fast, 5000, 0, 50)
 
-    run = t_eq_int(run, "zero-length frames do not close a window", fps_value(fast), 0)
-    run = t_eq_int(run, "and are measured as zero", fps_frame_ms(fast), 0)
+    t_eq_int("zero-length frames do not close a window", fps_value(fast), 0)
+    t_eq_int("and are measured as zero", fps_frame_ms(fast), 0)
 
     // Then time moves and it resolves normally.
     fps_sample(fast, 5600)
-    run = t_true(run, "it recovers once the clock moves", fps_ready(fast))
+    t_true("it recovers once the clock moves", fps_ready(fast))
 
     // A window that overshoots — one long frame carrying it well past 500 ms — is divided by the
     // time that actually elapsed, not by the window length.
@@ -143,7 +135,7 @@ func test_fps_edges(run: TestRun) : TestRun {
     fps_sample(late, 0)
     fps_sample(late, 1000)
 
-    run = t_eq_int(run, "one frame in a second is 1 fps", fps_value(late), 1)
+    t_eq_int("one frame in a second is 1 fps", fps_value(late), 1)
 
     /*
      * The clock wrapping past the end of a 32-bit int.
@@ -158,11 +150,9 @@ func test_fps_edges(run: TestRun) : TestRun {
     fps_sample(wrapped, beforeWrap)
     fps_sample(wrapped, beforeWrap + 10)
 
-    run = t_eq_int(run, "an interval up to the wrap is right", fps_frame_ms(wrapped), 10)
+    t_eq_int("an interval up to the wrap is right", fps_frame_ms(wrapped), 10)
 
     // The next reading has wrapped to a large negative number; the difference is still 10.
     fps_sample(wrapped, beforeWrap + 20)
-    run = t_eq_int(run, "an interval across the wrap is right", fps_frame_ms(wrapped), 10)
-
-    return run
+    t_eq_int("an interval across the wrap is right", fps_frame_ms(wrapped), 10)
 }

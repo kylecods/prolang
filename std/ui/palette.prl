@@ -21,8 +21,8 @@ func palette_count() : int {
 /*
  * The colour at `index`, or transparent for an index outside the palette.
  *
- * A lookup chain rather than an array because prolang has no module-level state: an array would
- * have to be rebuilt on every call, or threaded through every caller as a parameter.
+ * A lookup chain rather than an array: an array would have to be rebuilt on every call, or live
+ * in a global and be kept in step with the palette's definition.
  */
 func palette_colour(index: int) : int {
     if (index == 0)  { return color_rgb(20, 12, 28) }

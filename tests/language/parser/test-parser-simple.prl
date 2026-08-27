@@ -1,15 +1,18 @@
 import "io"
 
-// Test extractQuotedString function
+// Test extractQuotedString function.
+// The delimiter is a bracket rather than a quote because the lexer has no
+// escaped-quote support, and the point of the test is substring extraction,
+// not tokenization.
 
-func extractQuotedString(json: string, startPos: int) : string {
+func extractBracketed(text: string, startPos: int) : string {
     let pos = startPos + 1
     let result = ""
 
-    while(pos < json.length()) {
-        let ch = json.charAt(pos)
+    while(pos < text.length()) {
+        let ch = text.charAt(pos)
 
-        if(ch == "\"") {
+        if(ch == "]") {
             return result
         }
 
@@ -20,8 +23,10 @@ func extractQuotedString(json: string, startPos: int) : string {
     return result
 }
 
-print("Testing extractQuotedString...")
-let testStr = "\"hello world\""
-print("Input: " + testStr)
-let extracted = extractQuotedString(testStr, 0)
-print("Extracted: " + extracted)
+func main() {
+    print("Testing extractBracketed...")
+    let testStr = "[hello world]"
+    print("Input: " + testStr)
+    let extracted = extractBracketed(testStr, 0)
+    print("Extracted: " + extracted)
+}

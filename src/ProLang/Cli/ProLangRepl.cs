@@ -53,39 +53,32 @@ internal sealed class ProLangRepl : Repl
         }
     }
 
-    [MetaCommand("cls", "Clears the screen")]
-    private void EvaluateCls()
-    {
-        Console.Clear();
-    }
+    // The [MetaCommand] attributes document each command; the base class's command table calls
+    // these overrides. Registration is explicit now — see Repl.InitializeMetaCommands.
 
-    [MetaCommand("reset", "Clears all previous submissions")]
-    private void EvaluateReset()
+    protected override void ResetSubmissions()
     {
         _previous = null;
         ClearSubmissions();
     }
 
-    [MetaCommand("showTree", "Shows the parse tree")]
-    private void EvaluateShowTree()
+    protected override void ShowParseTree()
     {
         _showTree = !_showTree;
 
         Console.WriteLine(_showTree ? "Showing parse trees." : "Not showing parse trees.");
     }
 
-    [MetaCommand("showProgram", "Shows the bound tree")]
-    private void EvaluateShowProgram()
+    protected override void ShowBoundTree()
     {
         _showProgram = !_showProgram;
 
         Console.WriteLine(_showProgram ? "Showing bound tree" : "Not showing bound tree.");
     }
 
-    [MetaCommand("load", "Loads a script file")]
-    private void EvaluateLoad(string path)
+    protected override void LoadScriptFile(string[] args)
     {
-        path = Path.GetFullPath(path);
+        var path = Path.GetFullPath(args[0]);
 
         if (!File.Exists(path))
         {
@@ -101,8 +94,7 @@ internal sealed class ProLangRepl : Repl
         EvaluateSubmission(text);
     }
 
-    [MetaCommand("ls", "Lists all symbols")]
-    private void EvaluateLs()
+    protected override void ListSymbols(string[] args)
     {
         if (_previous == null)
         {
@@ -119,9 +111,10 @@ internal sealed class ProLangRepl : Repl
         }
     }
 
-    [MetaCommand("dump", "Shows bound tree of a given function")]
-    private void EvaluateDump(string functionName)
+    protected override void DumpFunction(string[] args)
     {
+        var functionName = args[0];
+
         if (_previous == null)
         {
             return;

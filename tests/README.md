@@ -50,14 +50,11 @@ tests/
 
 ## Known-broken programs
 
-Several programs here predate the rule that all statements must sit inside an explicit `main()`,
-and no longer compile. They are tracked as `KnownBroken` in `TestCorpus.cs` with the reason
-recorded on each entry, rather than deleted, so that the coverage gap is visible.
+A few programs here do not compile, tracked as `KnownBroken` in `TestCorpus.cs` with the reason
+recorded on each entry, rather than deleted, so that the breakage stays visible.
 
-Two are genuine compiler bugs rather than corpus rot:
+Two are genuine compiler bugs rather than deliberate negative tests:
 
-- `language/parser/test-parser-simple.prl` and `test-parse-result.prl` crash the binder with a
-  `NullReferenceException` in `BindReturnStatement` on a top-level `return`.
 - `language/entry-point/main-with-args.prl` cannot resolve `length(args)` on `array<string>`.
 
 If one of these starts compiling, `CorpusIntegrityTests` fails to tell you — promote it out of

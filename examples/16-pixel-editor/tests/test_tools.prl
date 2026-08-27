@@ -12,28 +12,26 @@ import "ui/document"
 import "ui/color"
 import "ui/icons"
 
-func test_tools_run() : TestRun {
-    let r: TestRun = t_new()
-
+func test_tools_run() : void {
     let ink: int = color_rgb(255, 255, 255)
     let paper: int = color_rgb(0, 0, 0)
     let log: array<int> = array_new(8192)
 
     // ── Classification ───────────────────────────────────────────────────────
-    r = t_true(r, "pencil is direct", tool_is_direct(Tool.PENCIL))
-    r = t_true(r, "eraser is direct", tool_is_direct(Tool.ERASER))
-    r = t_false(r, "line is not direct", tool_is_direct(Tool.LINE))
-    r = t_true(r, "line is a shape", tool_is_shape(Tool.LINE))
-    r = t_true(r, "ellipse is a shape", tool_is_shape(Tool.ELLIPSE))
-    r = t_false(r, "fill is not a shape", tool_is_shape(Tool.FILL))
-    r = t_false(r, "picker is not a shape", tool_is_shape(Tool.PICKER))
+    t_true("pencil is direct", tool_is_direct(Tool.PENCIL))
+    t_true("eraser is direct", tool_is_direct(Tool.ERASER))
+    t_false("line is not direct", tool_is_direct(Tool.LINE))
+    t_true("line is a shape", tool_is_shape(Tool.LINE))
+    t_true("ellipse is a shape", tool_is_shape(Tool.ELLIPSE))
+    t_false("fill is not a shape", tool_is_shape(Tool.FILL))
+    t_false("picker is not a shape", tool_is_shape(Tool.PICKER))
 
     // The eraser paints transparency; every other tool paints the selected colour.
-    r = t_eq_int(r, "eraser paints transparent", tool_colour(Tool.ERASER, ink), 0)
-    r = t_eq_int(r, "pencil paints the colour", tool_colour(Tool.PENCIL, ink), ink)
+    t_eq_int("eraser paints transparent", tool_colour(Tool.ERASER, ink), 0)
+    t_eq_int("pencil paints the colour", tool_colour(Tool.PENCIL, ink), ink)
 
-    r = t_eq_str(r, "pencil is named", tool_name(Tool.PENCIL), "pencil")
-    r = t_eq_str(r, "unknown tool is named", tool_name(99), "unknown")
+    t_eq_str("pencil is named", tool_name(Tool.PENCIL), "pencil")
+    t_eq_str("unknown tool is named", tool_name(99), "unknown")
 
     // ── Pencil ───────────────────────────────────────────────────────────────
     let doc: Document = doc_new(16, 16, paper)
@@ -41,20 +39,20 @@ func test_tools_run() : TestRun {
     let s: Stroke = stroke_new(Tool.PENCIL, ink, 1)
 
     s = tool_press(s, doc, preview, log, 2, 2)
-    r = t_true(r, "press starts a drag", s.active)
-    r = t_eq_int(r, "press paints immediately", doc_get(doc, 2, 2), ink)
+    t_true("press starts a drag", s.active)
+    t_eq_int("press paints immediately", doc_get(doc, 2, 2), ink)
 
     // A drag draws a line from the last position, not a dot at the new one: the mouse reports
     // discrete positions and a fast movement would otherwise leave gaps.
     s = tool_drag(s, doc, preview, log, 6, 2)
-    r = t_eq_int(r, "drag fills the gap", doc_get(doc, 4, 2), ink)
-    r = t_eq_int(r, "drag reaches the new point", doc_get(doc, 6, 2), ink)
-    r = t_eq_int(r, "drag records the new position", s.lastX, 6)
-    r = t_false(r, "a drag does not ask for a snapshot", s.commit)
+    t_eq_int("drag fills the gap", doc_get(doc, 4, 2), ink)
+    t_eq_int("drag reaches the new point", doc_get(doc, 6, 2), ink)
+    t_eq_int("drag records the new position", s.lastX, 6)
+    t_false("a drag does not ask for a snapshot", s.commit)
 
     s = tool_release(s, doc, preview, log, 6, 2)
-    r = t_false(r, "release ends the drag", s.active)
-    r = t_true(r, "release asks for a snapshot", s.commit)
+    t_false("release ends the drag", s.active)
+    t_true("release asks for a snapshot", s.commit)
 
     // ── Eraser ───────────────────────────────────────────────────────────────
     let erased: Document = doc_new(8, 8, ink)
@@ -62,8 +60,8 @@ func test_tools_run() : TestRun {
     let e: Stroke = stroke_new(Tool.ERASER, ink, 1)
 
     e = tool_press(e, erased, erasedPreview, log, 3, 3)
-    r = t_eq_int(r, "eraser clears a pixel", doc_get(erased, 3, 3), 0)
-    r = t_eq_int(r, "eraser leaves its neighbour", doc_get(erased, 4, 3), ink)
+    t_eq_int("eraser clears a pixel", doc_get(erased, 3, 3), 0)
+    t_eq_int("eraser leaves its neighbour", doc_get(erased, 4, 3), ink)
 
     // ── Picker ───────────────────────────────────────────────────────────────
     let sampled: Document = doc_new(8, 8, paper)
@@ -71,24 +69,24 @@ func test_tools_run() : TestRun {
     let p: Stroke = stroke_new(Tool.PICKER, paper, 1)
 
     p = tool_press(p, sampled, preview, log, 5, 5)
-    r = t_eq_int(r, "picker reports the colour", p.picked, ink)
-    r = t_false(r, "picker starts no drag", p.active)
-    r = t_false(r, "picker changes nothing to undo", p.commit)
-    r = t_eq_int(r, "picker leaves the image alone", doc_get(sampled, 5, 5), ink)
+    t_eq_int("picker reports the colour", p.picked, ink)
+    t_false("picker starts no drag", p.active)
+    t_false("picker changes nothing to undo", p.commit)
+    t_eq_int("picker leaves the image alone", doc_get(sampled, 5, 5), ink)
 
     // ── Fill ─────────────────────────────────────────────────────────────────
     let bucket: Document = doc_new(4, 4, paper)
     let f: Stroke = stroke_new(Tool.FILL, ink, 1)
 
     f = tool_press(f, bucket, preview, log, 0, 0)
-    r = t_eq_int(r, "fill covers the region", doc_count_colour(bucket, ink), 16)
-    r = t_true(r, "fill asks for a snapshot", f.commit)
-    r = t_false(r, "fill starts no drag", f.active)
+    t_eq_int("fill covers the region", doc_count_colour(bucket, ink), 16)
+    t_true("fill asks for a snapshot", f.commit)
+    t_false("fill starts no drag", f.active)
 
     // A fill that changes nothing must not ask for a snapshot, or undo fills with duplicates.
     let already: Stroke = stroke_new(Tool.FILL, ink, 1)
     already = tool_press(already, bucket, preview, log, 0, 0)
-    r = t_false(r, "a fill that changed nothing skips the snapshot", already.commit)
+    t_false("a fill that changed nothing skips the snapshot", already.commit)
 
     // ── Shape preview ────────────────────────────────────────────────────────
     // The document must not change until release; only the preview does.
@@ -98,26 +96,26 @@ func test_tools_run() : TestRun {
     let line: Stroke = stroke_new(Tool.LINE, ink, 1)
 
     line = tool_press(line, shapeDoc, shapePreview, log, 1, 1)
-    r = t_true(r, "shape press starts a drag", line.active)
-    r = t_true(r, "shape press leaves the document alone", doc_equals(shapeDoc, baseline))
+    t_true("shape press starts a drag", line.active)
+    t_true("shape press leaves the document alone", doc_equals(shapeDoc, baseline))
 
     line = tool_drag(line, shapeDoc, shapePreview, log, 10, 1)
-    r = t_true(r, "shape drag still leaves the document alone", doc_equals(shapeDoc, baseline))
-    r = t_false(r, "shape drag updates the preview", doc_equals(shapePreview, baseline))
-    r = t_true(r, "shape drag records what it touched", line.touched > 0)
-    r = t_eq_int(r, "preview shows the line", doc_get(shapePreview, 5, 1), ink)
+    t_true("shape drag still leaves the document alone", doc_equals(shapeDoc, baseline))
+    t_false("shape drag updates the preview", doc_equals(shapePreview, baseline))
+    t_true("shape drag records what it touched", line.touched > 0)
+    t_eq_int("preview shows the line", doc_get(shapePreview, 5, 1), ink)
 
     // Dragging elsewhere must rewind the previous preview completely, using the touch log. A
     // stale pixel left behind here is the classic rubber-banding bug.
     line = tool_drag(line, shapeDoc, shapePreview, log, 1, 10)
-    r = t_eq_int(r, "old preview pixel is rewound", doc_get(shapePreview, 5, 1), paper)
-    r = t_eq_int(r, "new preview pixel is drawn", doc_get(shapePreview, 1, 5), ink)
+    t_eq_int("old preview pixel is rewound", doc_get(shapePreview, 5, 1), paper)
+    t_eq_int("new preview pixel is drawn", doc_get(shapePreview, 1, 5), ink)
 
     line = tool_release(line, shapeDoc, shapePreview, log, 1, 10)
-    r = t_false(r, "shape release ends the drag", line.active)
-    r = t_true(r, "shape release asks for a snapshot", line.commit)
-    r = t_eq_int(r, "release commits to the document", doc_get(shapeDoc, 1, 5), ink)
-    r = t_true(r, "preview matches the document after release", doc_equals(shapePreview, shapeDoc))
+    t_false("shape release ends the drag", line.active)
+    t_true("shape release asks for a snapshot", line.commit)
+    t_eq_int("release commits to the document", doc_get(shapeDoc, 1, 5), ink)
+    t_true("preview matches the document after release", doc_equals(shapePreview, shapeDoc))
 
     // ── Cancelling a shape ───────────────────────────────────────────────────
     let cancelDoc: Document = doc_new(16, 16, paper)
@@ -129,10 +127,10 @@ func test_tools_run() : TestRun {
     rect = tool_drag(rect, cancelDoc, cancelPreview, log, 9, 9)
     rect = tool_cancel(rect, cancelDoc, cancelPreview, log)
 
-    r = t_false(r, "cancel ends the drag", rect.active)
-    r = t_false(r, "cancel does not ask for a snapshot", rect.commit)
-    r = t_true(r, "cancel rewinds the preview", doc_equals(cancelPreview, cancelBase))
-    r = t_true(r, "cancel leaves the document alone", doc_equals(cancelDoc, cancelBase))
+    t_false("cancel ends the drag", rect.active)
+    t_false("cancel does not ask for a snapshot", rect.commit)
+    t_true("cancel rewinds the preview", doc_equals(cancelPreview, cancelBase))
+    t_true("cancel leaves the document alone", doc_equals(cancelDoc, cancelBase))
 
     // A drag or release without a press must do nothing.
     let idle: Stroke = stroke_new(Tool.PENCIL, ink, 1)
@@ -140,18 +138,18 @@ func test_tools_run() : TestRun {
     let idleBase: Document = doc_clone(idleDoc)
 
     idle = tool_drag(idle, idleDoc, preview, log, 4, 4)
-    r = t_true(r, "drag without press does nothing", doc_equals(idleDoc, idleBase))
+    t_true("drag without press does nothing", doc_equals(idleDoc, idleBase))
     idle = tool_release(idle, idleDoc, preview, log, 4, 4)
-    r = t_false(r, "release without press asks for nothing", idle.commit)
+    t_false("release without press asks for nothing", idle.commit)
 
     // ── Selection changes ────────────────────────────────────────────────────
     let sel: Stroke = stroke_new(Tool.PENCIL, ink, 3)
-    r = t_eq_int(r, "tool change takes effect", stroke_with_tool(sel, Tool.LINE).tool, Tool.LINE)
-    r = t_false(r, "tool change ends any drag", stroke_with_tool(sel, Tool.LINE).active)
-    r = t_eq_int(r, "colour change takes effect", stroke_with_colour(sel, paper).colour, paper)
-    r = t_eq_int(r, "size change takes effect", stroke_with_size(sel, 5).size, 5)
-    r = t_eq_int(r, "size is clamped low", stroke_with_size(sel, 0).size, 1)
-    r = t_eq_int(r, "size is clamped high", stroke_with_size(sel, 999).size, 16)
+    t_eq_int("tool change takes effect", stroke_with_tool(sel, Tool.LINE).tool, Tool.LINE)
+    t_false("tool change ends any drag", stroke_with_tool(sel, Tool.LINE).active)
+    t_eq_int("colour change takes effect", stroke_with_colour(sel, paper).colour, paper)
+    t_eq_int("size change takes effect", stroke_with_size(sel, 5).size, 5)
+    t_eq_int("size is clamped low", stroke_with_size(sel, 0).size, 1)
+    t_eq_int("size is clamped high", stroke_with_size(sel, 999).size, 16)
 
     // ── The icon each tool shows ─────────────────────────────────────────────
     /*
@@ -174,7 +172,7 @@ func test_tools_run() : TestRun {
         t = t + 1
     }
 
-    r = t_eq_int(r, "every tool maps to a real icon", inRange, tool_count())
+    t_eq_int("every tool maps to a real icon", inRange, tool_count())
 
     let duplicates: int = 0
     let a: int = 0
@@ -188,7 +186,5 @@ func test_tools_run() : TestRun {
         }
         a = a + 1
     }
-    r = t_eq_int(r, "each tool has its own icon", duplicates, 0)
-
-    return r
+    t_eq_int("each tool has its own icon", duplicates, 0)
 }

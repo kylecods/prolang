@@ -124,8 +124,8 @@ pixel counts at the one factor the development machine happens to have.
 
 Four — Midnight, Paper, Ember, Contrast — cycled with the theme button or `t`. A theme is an int,
 and each colour role is a function of it (`theme_surface`, `theme_accent`, `theme_grid`, …) rather
-than a struct of colours: ProLang has no module-level state a table could live in, and no way to
-hold a nested struct safely, so a lookup chain per role is what the language actually supports.
+than a struct of colours: ProLang has no way to hold a nested struct safely, so a lookup chain per
+role is what the language actually supports.
 
 The roles are named for purpose rather than appearance, so a light theme is a matter of returning
 different values instead of every call site asking which theme is active.

@@ -144,40 +144,25 @@ public sealed class DotNetFunctionSymbol : FunctionSymbol
     /// <summary>
     /// Invokes this function at runtime.
     /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Interop members are discovered through a <see cref="MetadataLoadContext"/>, so the
+    /// <see cref="MethodInfo"/> and <see cref="ConstructorInfo"/> here are metadata-only: they
+    /// describe signatures but cannot execute. That is correct for a compiler, which only ever
+    /// needs signatures to bind against — the emitted IL calls the real method in the compiled
+    /// program's own process.
+    /// </para>
+    /// <para>
+    /// This used to reflection-invoke for the REPL's benefit. Under metadata-only discovery that
+    /// is no longer possible, and evaluating an interop call inside the compiler was always the
+    /// wrong place for it anyway — the REPL now tells the caller to compile and run instead.
+    /// </para>
+    /// </remarks>
     public object? Invoke(object?[] arguments, object? instance = null)
     {
-        if (ConstructorInfo != null)
-        {
-            var args = DotNetTypeMapper.PrepareArguments(arguments, ConstructorInfo.GetParameters());
-            var result = ConstructorInfo.Invoke(args);
-            return DotNetTypeMapper.ConvertFromDotNet(result);
-        }
-
-        if (MethodInfo != null)
-        {
-            var args = DotNetTypeMapper.PrepareArguments(arguments, MethodInfo.GetParameters());
-            object? target = IsStatic ? null : instance;
-            var result = MethodInfo.Invoke(target, args);
-            return DotNetTypeMapper.ConvertFromDotNet(result);
-        }
-
-        // Static field access
-        if (IsStatic && ConstructorInfo == null && MethodInfo == null)
-        {
-            var field = DeclaringType.GetField(Name);
-            if (field != null)
-            {
-                return DotNetTypeMapper.ConvertFromDotNet(field.GetValue(null));
-            }
-
-            var property = DeclaringType.GetProperty(Name);
-            if (property != null)
-            {
-                return DotNetTypeMapper.ConvertFromDotNet(property.GetValue(null));
-            }
-        }
-
-        throw new InvalidOperationException($"Cannot invoke .NET member '{Name}'");
+        throw new NotSupportedException(
+            $"'{Name}' comes from a .NET assembly, which the compiler reads as metadata only. " +
+            "Compile and run the program to call it.");
     }
 
     public override string ToString()

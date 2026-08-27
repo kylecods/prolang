@@ -49,7 +49,9 @@ Pass the painter to `hostw_present_scene` / `hostp_present_scene` and that is th
 
 `state` is an `array<int>` because a ProLang function value **captures nothing** — which is exactly
 what lets one compile to a bare function pointer on the PSP with no garbage collector. The angles,
-the sine table and the projection scratch all live there.
+the sine table and the projection scratch all live there. It is a `global` of the program rather
+than a local of `main`: the host invokes the painter from inside its own frame, and a global is the
+one thing both sides can see.
 
 ## Three bugs worth recording
 

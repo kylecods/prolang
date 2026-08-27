@@ -250,41 +250,37 @@ internal sealed class LanguageServer
         // before it offers to edit them.
         _analysis.WorkspaceRoots.AddRange(_workspaceRoots.Select(DocumentUri.NormalisePath));
 
-        _connection.Respond(message.Id, new
+        _connection.Respond(message.Id, new InitializeResult
         {
-            capabilities = new
+            // Incremental: a keystroke sends the character typed rather than the whole file,
+            // which matters on the larger modules of the standard library.
+            Capabilities = new ServerCapabilities
             {
-                // Incremental: a keystroke sends the character typed rather than the whole file,
-                // which matters on the larger modules of the standard library.
-                textDocumentSync = new { openClose = true, change = 2, save = true },
-                hoverProvider = true,
-                completionProvider = new
+                TextDocumentSync = new TextDocumentSyncOptions { OpenClose = true, Change = 2, Save = true },
+                HoverProvider = true,
+                CompletionProvider = new CompletionOptions { ResolveProvider = false, TriggerCharacters = [".", "\"", "/", ":"] },
+                SignatureHelpProvider = new SignatureHelpOptions { TriggerCharacters = ["(", ","] },
+                DefinitionProvider = true,
+                ReferencesProvider = true,
+                DocumentHighlightProvider = true,
+                DocumentSymbolProvider = true,
+                WorkspaceSymbolProvider = true,
+                DocumentLinkProvider = new DocumentLinkOptions { ResolveProvider = false },
+                RenameProvider = new RenameOptions { PrepareProvider = true },
+                DocumentFormattingProvider = true,
+                FoldingRangeProvider = true,
+                InlayHintProvider = true,
+                SemanticTokensProvider = new SemanticTokensOptions
                 {
-                    resolveProvider = false,
-                    triggerCharacters = new[] { ".", "\"", "/", ":" },
-                },
-                signatureHelpProvider = new { triggerCharacters = new[] { "(", "," } },
-                definitionProvider = true,
-                referencesProvider = true,
-                documentHighlightProvider = true,
-                documentSymbolProvider = true,
-                workspaceSymbolProvider = true,
-                documentLinkProvider = new { resolveProvider = false },
-                renameProvider = new { prepareProvider = true },
-                documentFormattingProvider = true,
-                foldingRangeProvider = true,
-                inlayHintProvider = true,
-                semanticTokensProvider = new
-                {
-                    legend = new
+                    Legend = new SemanticTokensLegend
                     {
-                        tokenTypes = SemanticTokensHandler.TokenTypes,
-                        tokenModifiers = SemanticTokensHandler.TokenModifiers,
+                        TokenTypes = SemanticTokensHandler.TokenTypes,
+                        TokenModifiers = SemanticTokensHandler.TokenModifiers,
                     },
-                    full = true,
+                    Full = true,
                 },
             },
-            serverInfo = new { name = "ProLang", version = ServerVersion },
+            ServerInfo = new ServerInfo { Name = "ProLang", Version = ServerVersion },
         });
 
         Log($"ProLang language server ready. Standard library: {_analysis.StdRoot ?? AnalysisService.DefaultStdRoot}");
@@ -418,7 +414,11 @@ internal sealed class LanguageServer
     };
 
     private static T? Params<T>(JsonRpcMessage message) where T : class =>
-        message.Params?.Deserialize<T>(JsonRpcConnection.SerializerOptions);
+        message.Params is null
+            ? null
+            : (T?)JsonSerializer.Deserialize(
+                message.Params.ToJsonString(),
+                ProLang.Lsp.Protocol.LspJsonContext.Default.GetTypeInfo(typeof(T))!);
 
     private void Log(string message)
     {

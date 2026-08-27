@@ -23,21 +23,26 @@ struct MoveResult {
 struct FoodPos {
     x: int;
     y: int;
-    seed: int;
 }
 
 // ─── Random (LCG) ───────────────────────────────────────────────────────────
 
-func next_random(seed: int) : int {
-    let r: int = seed * 1664525 + 1013904223
+// The LCG state is a global: every draw advances it, and no caller has to pass the seed in or
+// carry the updated one back out. Before the language had `global`, the seed was threaded
+// through FoodPos.seed and reassigned at every call site.
+global rng_seed: int = 12345
+
+func next_random() : int {
+    let r: int = rng_seed * 1664525 + 1013904223
     if (r < 0) {
         r = 0 - r
     }
+    rng_seed = r
     return r
 }
 
-func rand_range(seed: int, max: int) : int {
-    let r: int = seed % max
+func rand_range(max: int) : int {
+    let r: int = next_random() % max
     if (r < 0) {
         r = r + max
     }
@@ -154,21 +159,18 @@ func snake_extend(snake: Snake, max: int) : Snake {
 
 // ─── Food placement ──────────────────────────────────────────────────────────
 
-func make_food(snake: Snake, seed: int, w: int, h: int) : FoodPos {
+func make_food(snake: Snake, w: int, h: int) : FoodPos {
     let fx: int = 0
     let fy: int = 0
     let found: bool = false
-    let s: int = seed
     while (!found) {
-        s = next_random(s)
-        fx = rand_range(s, w)
-        s = next_random(s)
-        fy = rand_range(s, h)
+        fx = rand_range(w)
+        fy = rand_range(h)
         if (!snake_hit_test(snake, fx, fy)) {
             found = true
         }
     }
-    return FoodPos { x: fx, y: fy, seed: s }
+    return FoodPos { x: fx, y: fy }
 }
 
 // ─── Frame buffer ────────────────────────────────────────────────────────────
@@ -242,17 +244,13 @@ func main() {
     let fb: array<string> = array_new(AREA)
     fb_clear(fb, AREA)
 
-    let seed: int = 12345
     let playing: bool = true
 
     while (playing) {
         // Pick random start position and direction
-        seed = next_random(seed)
-        let start_x: int = rand_range(seed, WIDTH)
-        seed = next_random(seed)
-        let start_y: int = rand_range(seed, HEIGHT)
-        seed = next_random(seed)
-        let start_dir: int = rand_range(seed, 4)
+        let start_x: int = rand_range(WIDTH)
+        let start_y: int = rand_range(HEIGHT)
+        let start_dir: int = rand_range(4)
 
         let bx: array<int> = array_new(MAX_SNAKE)
         let by: array<int> = array_new(MAX_SNAKE)
@@ -268,8 +266,7 @@ func main() {
         }
 
         // Place first food
-        let fp: FoodPos = make_food(snake, seed, WIDTH, HEIGHT)
-        seed = fp.seed
+        let fp: FoodPos = make_food(snake, WIDTH, HEIGHT)
         let food_x: int = fp.x
         let food_y: int = fp.y
 
@@ -348,8 +345,7 @@ func main() {
                         console_read_key()
                         round_running = false
                     } else {
-                        let nfp: FoodPos = make_food(snake, seed, WIDTH, HEIGHT)
-                        seed = nfp.seed
+                        let nfp: FoodPos = make_food(snake, WIDTH, HEIGHT)
                         food_x = nfp.x
                         food_y = nfp.y
                     }

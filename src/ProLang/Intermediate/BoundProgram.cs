@@ -14,7 +14,9 @@ public sealed class BoundProgram
         ImmutableDictionary<FunctionSymbol, BoundBlockStatement> functions,
         ImmutableArray<StructSymbol> structTypes,
         ImmutableArray<EnumSymbol> enumTypes = default,
-        ImmutableDictionary<FunctionSymbol, BoundStatement>? structuredFunctions = null)
+        ImmutableDictionary<FunctionSymbol, BoundStatement>? structuredFunctions = null,
+        ImmutableArray<VariableSymbol>? globalVariables = null,
+        ImmutableArray<BoundStatement>? globalInitializers = null)
     {
         Previous = previous;
         Diagnostics = diagnostics;
@@ -25,6 +27,8 @@ public sealed class BoundProgram
         EnumTypes = enumTypes.IsDefault ? ImmutableArray<EnumSymbol>.Empty : enumTypes;
         StructuredFunctions = structuredFunctions
             ?? ImmutableDictionary<FunctionSymbol, BoundStatement>.Empty;
+        GlobalVariables = globalVariables ?? ImmutableArray<VariableSymbol>.Empty;
+        GlobalInitializers = globalInitializers ?? ImmutableArray<BoundStatement>.Empty;
     }
 
     public BoundProgram Previous { get; }
@@ -66,4 +70,14 @@ public sealed class BoundProgram
     public ImmutableArray<StructSymbol> StructTypes { get; }
 
     public ImmutableArray<EnumSymbol> EnumTypes { get; }
+
+    /// <summary>
+    /// The <c>global</c> variables declared at file scope, in declaration order.
+    /// </summary>
+    public ImmutableArray<VariableSymbol> GlobalVariables { get; }
+
+    /// <summary>
+    /// One statement per <c>global</c>, assigning its initializer, in declaration order.
+    /// </summary>
+    public ImmutableArray<BoundStatement> GlobalInitializers { get; }
 }

@@ -6,10 +6,8 @@ import "testing"
 import "ui/palette"
 import "ui/color"
 
-func test_palette_run() : TestRun {
-    let r: TestRun = t_new()
-
-    r = t_eq_int(r, "palette size", palette_count(), 16)
+func test_palette_run() : void {
+    t_eq_int("palette size", palette_count(), 16)
 
     // Every entry must be opaque and distinct; a transparent swatch would paint nothing and a
     // duplicate would be an unreachable slot.
@@ -21,7 +19,7 @@ func test_palette_run() : TestRun {
         }
         i = i + 1
     }
-    r = t_eq_int(r, "every swatch is opaque", opaque, 16)
+    t_eq_int("every swatch is opaque", opaque, 16)
 
     let duplicates: int = 0
     let a: int = 0
@@ -35,39 +33,39 @@ func test_palette_run() : TestRun {
         }
         a = a + 1
     }
-    r = t_eq_int(r, "no duplicate swatches", duplicates, 0)
+    t_eq_int("no duplicate swatches", duplicates, 0)
 
     // An index outside the palette is transparent rather than an arbitrary colour.
-    r = t_eq_int(r, "index past the end is transparent", palette_colour(16), 0)
-    r = t_eq_int(r, "negative index is transparent", palette_colour(0 - 1), 0)
-    r = t_eq_str(r, "index past the end has no name", palette_name(16), "none")
-    r = t_eq_str(r, "first swatch is named", palette_name(0), "black")
+    t_eq_int("index past the end is transparent", palette_colour(16), 0)
+    t_eq_int("negative index is transparent", palette_colour(0 - 1), 0)
+    t_eq_str("index past the end has no name", palette_name(16), "none")
+    t_eq_str("first swatch is named", palette_name(0), "black")
 
     // ── Strip geometry ───────────────────────────────────────────────────────
     // An 8-wide strip of 20-pixel cells: two rows of eight.
-    r = t_eq_int(r, "rows for 8 columns", palette_rows(8), 2)
-    r = t_eq_int(r, "rows for 16 columns", palette_rows(16), 1)
-    r = t_eq_int(r, "rows for 5 columns rounds up", palette_rows(5), 4)
-    r = t_eq_int(r, "rows for 0 columns", palette_rows(0), 0)
+    t_eq_int("rows for 8 columns", palette_rows(8), 2)
+    t_eq_int("rows for 16 columns", palette_rows(16), 1)
+    t_eq_int("rows for 5 columns rounds up", palette_rows(5), 4)
+    t_eq_int("rows for 0 columns", palette_rows(0), 0)
 
-    r = t_eq_int(r, "hit first swatch", palette_index_at(0, 0, 20, 8), 0)
-    r = t_eq_int(r, "hit within first swatch", palette_index_at(19, 19, 20, 8), 0)
-    r = t_eq_int(r, "hit second swatch", palette_index_at(20, 0, 20, 8), 1)
-    r = t_eq_int(r, "hit second row", palette_index_at(0, 20, 20, 8), 8)
-    r = t_eq_int(r, "hit last swatch", palette_index_at(140, 20, 20, 8), 15)
+    t_eq_int("hit first swatch", palette_index_at(0, 0, 20, 8), 0)
+    t_eq_int("hit within first swatch", palette_index_at(19, 19, 20, 8), 0)
+    t_eq_int("hit second swatch", palette_index_at(20, 0, 20, 8), 1)
+    t_eq_int("hit second row", palette_index_at(0, 20, 20, 8), 8)
+    t_eq_int("hit last swatch", palette_index_at(140, 20, 20, 8), 15)
 
     // The bounds test has to come before the division: a negative coordinate divides toward zero
     // into column 0, so without it a click just left of the strip would select its first entry.
-    r = t_eq_int(r, "negative x misses", palette_index_at(0 - 1, 0, 20, 8), 0 - 1)
-    r = t_eq_int(r, "negative y misses", palette_index_at(0, 0 - 1, 20, 8), 0 - 1)
-    r = t_eq_int(r, "past the last column misses", palette_index_at(160, 0, 20, 8), 0 - 1)
-    r = t_eq_int(r, "past the last row misses", palette_index_at(0, 40, 20, 8), 0 - 1)
+    t_eq_int("negative x misses", palette_index_at(0 - 1, 0, 20, 8), 0 - 1)
+    t_eq_int("negative y misses", palette_index_at(0, 0 - 1, 20, 8), 0 - 1)
+    t_eq_int("past the last column misses", palette_index_at(160, 0, 20, 8), 0 - 1)
+    t_eq_int("past the last row misses", palette_index_at(0, 40, 20, 8), 0 - 1)
 
-    r = t_eq_int(r, "x of first swatch", palette_x(0, 20, 8), 0)
-    r = t_eq_int(r, "x of second swatch", palette_x(1, 20, 8), 20)
-    r = t_eq_int(r, "x wraps at the row end", palette_x(8, 20, 8), 0)
-    r = t_eq_int(r, "y of first row", palette_y(0, 20, 8), 0)
-    r = t_eq_int(r, "y of second row", palette_y(8, 20, 8), 20)
+    t_eq_int("x of first swatch", palette_x(0, 20, 8), 0)
+    t_eq_int("x of second swatch", palette_x(1, 20, 8), 20)
+    t_eq_int("x wraps at the row end", palette_x(8, 20, 8), 0)
+    t_eq_int("y of first row", palette_y(0, 20, 8), 0)
+    t_eq_int("y of second row", palette_y(8, 20, 8), 20)
 
     // Position and hit-testing must agree, or the selection outline lands on the wrong swatch.
     let mismatches: int = 0
@@ -80,13 +78,11 @@ func test_palette_run() : TestRun {
         }
         k = k + 1
     }
-    r = t_eq_int(r, "layout and hit-testing agree", mismatches, 0)
+    t_eq_int("layout and hit-testing agree", mismatches, 0)
 
     // The outline has to flip with the swatch's brightness or it vanishes on half the palette.
-    r = t_eq_int(r, "dark swatch gets a light outline",
+    t_eq_int("dark swatch gets a light outline",
                  palette_outline_for(color_rgb(0, 0, 0)), color_rgb(255, 255, 255))
-    r = t_eq_int(r, "light swatch gets a dark outline",
+    t_eq_int("light swatch gets a dark outline",
                  palette_outline_for(color_rgb(255, 255, 255)), color_rgb(0, 0, 0))
-
-    return r
 }

@@ -31,10 +31,15 @@ func main()
     print("pixel editor test suite")
     print("")
 
-    let total: TestRun = t_new()
+    t_reset()
 
-    total = t_merge(total, test_tools_run(), "tools")
-    total = t_merge(total, test_appicon_run(), "appicon")
+    t_begin_module()
+    test_tools_run()
+    t_end_module("tools")
 
-    t_report(total)
+    t_begin_module()
+    test_appicon_run()
+    t_end_module("appicon")
+
+    t_report()
 }

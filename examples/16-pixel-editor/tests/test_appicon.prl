@@ -21,9 +21,7 @@ func test_appicon_painted(glyph: Document) : int {
     return doc_pixel_count(glyph) - doc_count_colour(glyph, 0)
 }
 
-func test_appicon_run() : TestRun {
-    let r: TestRun = t_new()
-
+func test_appicon_run() : void {
     let base: int = theme_background(Theme.MIDNIGHT)
     let body: int = theme_text_dim(Theme.MIDNIGHT)
     let edge: int = theme_accent(Theme.MIDNIGHT)
@@ -37,28 +35,28 @@ func test_appicon_run() : TestRun {
     // ── A tile, not a glyph ──────────────────────────────────────────────────
     // It brings its own background, because it sits on a desktop or a taskbar that may be any
     // colour. A toolbar glyph is the opposite and must leave the button showing through.
-    r = t_true(r, "the icon fills most of its box", (test_appicon_painted(icon) * 4) > (area * 3))
-    r = t_true(r, "the middle is painted", doc_get(icon, size / 2, size / 2) != 0)
+    t_true("the icon fills most of its box", (test_appicon_painted(icon) * 4) > (area * 3))
+    t_true("the middle is painted", doc_get(icon, size / 2, size / 2) != 0)
 
     // Rounded corners: the very corner pixel is outside the tile and stays clear. A square icon
     // reads as a screenshot rather than as an application.
-    r = t_eq_int(r, "the top-left corner is cut", doc_get(icon, 0, 0), 0)
-    r = t_eq_int(r, "the top-right corner is cut", doc_get(icon, size - 1, 0), 0)
-    r = t_eq_int(r, "the bottom-left corner is cut", doc_get(icon, 0, size - 1), 0)
-    r = t_eq_int(r, "the bottom-right corner is cut", doc_get(icon, size - 1, size - 1), 0)
+    t_eq_int("the top-left corner is cut", doc_get(icon, 0, 0), 0)
+    t_eq_int("the top-right corner is cut", doc_get(icon, size - 1, 0), 0)
+    t_eq_int("the bottom-left corner is cut", doc_get(icon, 0, size - 1), 0)
+    t_eq_int("the bottom-right corner is cut", doc_get(icon, size - 1, size - 1), 0)
 
     // ── All three colours, and only those ────────────────────────────────────
-    r = t_true(r, "the tile is drawn", doc_count_colour(icon, base) > 0)
-    r = t_true(r, "the body of the staircase is drawn", doc_count_colour(icon, body) > 0)
-    r = t_true(r, "the leading edge is drawn", doc_count_colour(icon, edge) > 0)
+    t_true("the tile is drawn", doc_count_colour(icon, base) > 0)
+    t_true("the body of the staircase is drawn", doc_count_colour(icon, body) > 0)
+    t_true("the leading edge is drawn", doc_count_colour(icon, edge) > 0)
 
-    r = t_eq_int(r, "no colour it was not given",
+    t_eq_int("no colour it was not given",
                  doc_count_colour(icon, base) + doc_count_colour(icon, body)
                  + doc_count_colour(icon, edge) + doc_count_colour(icon, 0),
                  area)
 
     // The edge is the larger of the two block colours: three blocks against two.
-    r = t_true(r, "the edge outweighs the body",
+    t_true("the edge outweighs the body",
                doc_count_colour(icon, edge) > doc_count_colour(icon, body))
 
     // ── The staircase climbs ─────────────────────────────────────────────────
@@ -72,21 +70,21 @@ func test_appicon_run() : TestRun {
     let middle: int = doc_get(icon, appicon_step(1) + half, appicon_step(1) + half)
     let topRight: int = doc_get(icon, appicon_step(2) + half, appicon_step(0) + half)
 
-    r = t_eq_int(r, "the staircase starts at the bottom left", lowLeft, edge)
-    r = t_eq_int(r, "it steps through the middle", middle, edge)
-    r = t_eq_int(r, "it finishes at the top right", topRight, edge)
+    t_eq_int("the staircase starts at the bottom left", lowLeft, edge)
+    t_eq_int("it steps through the middle", middle, edge)
+    t_eq_int("it finishes at the top right", topRight, edge)
 
     // And the two cells below the diagonal are the body colour, which is what makes it a stepped
     // edge rather than three loose blocks.
-    r = t_eq_int(r, "the body fills below the first step",
+    t_eq_int("the body fills below the first step",
                  doc_get(icon, appicon_step(1) + half, appicon_step(2) + half), body)
-    r = t_eq_int(r, "the body fills below the second step",
+    t_eq_int("the body fills below the second step",
                  doc_get(icon, appicon_step(2) + half, appicon_step(1) + half), body)
 
     // The cells above the diagonal are the tile, not a block.
-    r = t_eq_int(r, "nothing above the first step",
+    t_eq_int("nothing above the first step",
                  doc_get(icon, appicon_step(0) + half, appicon_step(1) + half), base)
-    r = t_eq_int(r, "nothing above the second step",
+    t_eq_int("nothing above the second step",
                  doc_get(icon, appicon_step(1) + half, appicon_step(0) + half), base)
 
     // ── The same picture at every size ───────────────────────────────────────
@@ -121,13 +119,13 @@ func test_appicon_run() : TestRun {
         i = i + 1
     }
 
-    r = t_eq_int(r, "every size covers the same share", consistent, checked)
+    t_eq_int("every size covers the same share", consistent, checked)
 
     // Even at sixteen pixels the staircase is still three distinguishable blocks.
     let small: Document = doc_new(16, 16, 0)
     appicon_draw(small, base, body, edge)
-    r = t_true(r, "the edge survives at sixteen pixels", doc_count_colour(small, edge) > 8)
-    r = t_true(r, "the body survives at sixteen pixels", doc_count_colour(small, body) > 4)
+    t_true("the edge survives at sixteen pixels", doc_count_colour(small, edge) > 8)
+    t_true("the body survives at sixteen pixels", doc_count_colour(small, body) > 4)
 
     // ── Recolouring ──────────────────────────────────────────────────────────
     // The window icon is redrawn on every theme change, so the colours must actually be used
@@ -138,8 +136,6 @@ func test_appicon_run() : TestRun {
                  theme_text_dim(Theme.PAPER),
                  theme_accent(Theme.PAPER))
 
-    r = t_false(r, "another theme gives another icon", doc_equals(icon, paper))
-    r = t_eq_int(r, "no colour from the old theme survives", doc_count_colour(paper, edge), 0)
-
-    return r
+    t_false("another theme gives another icon", doc_equals(icon, paper))
+    t_eq_int("no colour from the old theme survives", doc_count_colour(paper, edge), 0)
 }

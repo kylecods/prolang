@@ -9,4 +9,7 @@ import "io"
 // print("json1: " + json1)
 // print("str2: " + str2)
 // print("var_name4: " + var_name4)
-print("✅ Phase D1 - Identifiers with digits work!")
+
+func main() {
+    print("✅ Phase D1 - Identifiers with digits work!")
+}

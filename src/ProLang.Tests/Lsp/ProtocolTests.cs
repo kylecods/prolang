@@ -90,13 +90,18 @@ public class ProtocolTests
         var output = new MemoryStream();
         var connection = new JsonRpcConnection(new MemoryStream(), output);
 
-        connection.Respond(JsonValue.Create(7), new { ok = true });
+        // A registered LSP type, not an anonymous object: the connection serializes through the
+        // source-generated context, which has no metadata for anonymous types.
+        connection.Respond(JsonValue.Create(7), new Hover
+        {
+            Contents = new MarkupContent { Kind = "markdown", Value = "x" },
+        });
 
         var written = Encoding.UTF8.GetString(output.ToArray());
 
         Assert.StartsWith("Content-Length: ", written);
         Assert.Contains("\r\n\r\n", written);
-        Assert.Contains("\"ok\":true", written);
+        Assert.Contains("\"value\":\"x\"", written);
     }
 
     [Fact]

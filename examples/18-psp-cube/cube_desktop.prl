@@ -36,20 +36,22 @@ func cube_step() : int {
     return 4
 }
 
+// The painter's state: angles, colour, sine table and projection scratch, in one array. It has to
+// be an array rather than locals because a function value captures nothing, so the painter reaches
+// its state only through what it is passed. It is a global rather than a local of main for the
+// same reason: the painter is invoked from inside the host, and a global is the one thing both
+// sides can see.
+global state: array<int> = cube_state_new()
+
+// Whether the cube is auto-spinning. Was a one-element array for the same reason.
+global spinning: int = 1
+
 func main()
 {
     let theme: int = Theme.MIDNIGHT
 
-    // The painter's state: angles, colour, sine table and projection scratch, in one array. It has
-    // to be an array rather than locals because a function value captures nothing, so the painter
-    // reaches its state only through what it is passed.
-    let state: array<int> = cube_state_new()
-
     cube_set_angles(state, 30, 40, 0)
     cube_set_colour(state, theme_accent(theme))
-
-    let spinning: array<int> = array_new(1)
-    spinning[0] = 1
 
     let host: Host = hostw_open("ProLang Cube", 560, 420,
         background: theme_background(theme))
@@ -65,7 +67,7 @@ func main()
         // input, layout, the scene and the paint submission all included.
         fps_tick(frames)
 
-        if (spinning[0] == 1) {
+        if (spinning == 1) {
             cube_turn_by(state, 1, 2, 0)
         }
 
@@ -78,7 +80,7 @@ func main()
          * the counter above is what made that visible, since it read 40 rather than 60.
          */
         let wait: int = 16
-        if (spinning[0] == 1) {
+        if (spinning == 1) {
             wait = 1
         }
 
@@ -136,7 +138,7 @@ func main()
         } elif (act == CubeAct.RESET) {
             cube_set_angles(state, 0, 0, 0)
         } elif (act == CubeAct.SPIN) {
-            spinning[0] = 1 - spinning[0]
+            spinning = 1 - spinning
         } elif (act == CubeAct.QUIT) {
             hostw_close(host)
         }

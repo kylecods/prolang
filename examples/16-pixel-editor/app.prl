@@ -10,6 +10,8 @@
  * The same constraint explains the shape of the state. prolang structs are .NET value types, so
  * there is no App struct holding the document, history and view together — they are locals of
  * app_run, passed to whatever needs them, and reassigned from the value each helper returns.
+ * (A global would hold them, but these are per-document values that every helper already takes,
+ * and threading them keeps each helper's dependencies visible in its signature.)
  *
  * Control handles are kept in `array<int>`s rather than named locals wherever the interface has a
  * row of similar things. An array is a reference, so a helper can fill one in and the caller sees

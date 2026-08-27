@@ -1,11 +1,15 @@
 // Test: Generic struct with single type parameter
+import "io"
+
 struct Box<T> {
     value: T;
 }
 
-let box : Box<int> = Box<int> 
-{ 
-    value: 5
-}
+func main() {
+    let box : Box<int> = Box<int>
+    {
+        value: 5
+    }
 
-print(box.value)
+    print(box.value)
+}

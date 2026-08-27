@@ -22,17 +22,13 @@ func test_draw_fonts() : FontSet {
     return fonts
 }
 
-func test_draw_run() : TestRun {
-    let run: TestRun = t_new()
-
-    run = test_draw_surfaces(run)
-    run = test_draw_button_states(run)
-    run = test_draw_overflow(run)
-
-    return run
+func test_draw_run() : void {
+    test_draw_surfaces()
+    test_draw_button_states()
+    test_draw_overflow()
 }
 
-func test_draw_surfaces(run: TestRun) : TestRun {
+func test_draw_surfaces() : void {
     let fonts: FontSet = test_draw_fonts()
     let ui: Ui = ui_new(32)
     let ops: array<int> = array_new(64 * dl_stride())
@@ -51,22 +47,22 @@ func test_draw_surfaces(run: TestRun) : TestRun {
     let count: int = dl_build(ui, fonts, root, ops)
 
     // A background and a text run: the structural column contributes nothing else.
-    run = t_eq_int(run, "two records", count, 2)
+    t_eq_int("two records", count, 2)
 
     // A radius turns the background into a rounded rectangle.
-    run = t_eq_int(run, "background is rounded", dl_op(ops, 0), DlOp.RRECT)
-    run = t_eq_int(run, "background x", dl_arg(ops, 0, 0), 0)
-    run = t_eq_int(run, "background width", dl_arg(ops, 0, 2), 100)
-    run = t_eq_int(run, "background colour", dl_arg(ops, 0, 4), panel)
-    run = t_eq_int(run, "background radius", dl_arg(ops, 0, 5), 3)
+    t_eq_int("background is rounded", dl_op(ops, 0), DlOp.RRECT)
+    t_eq_int("background x", dl_arg(ops, 0, 0), 0)
+    t_eq_int("background width", dl_arg(ops, 0, 2), 100)
+    t_eq_int("background colour", dl_arg(ops, 0, 4), panel)
+    t_eq_int("background radius", dl_arg(ops, 0, 5), 3)
 
     // Text sits inside the column's padding, and carries a string-table index rather than a string.
-    run = t_eq_int(run, "text record", dl_op(ops, 1), DlOp.TEXT)
-    run = t_eq_int(run, "text x", dl_arg(ops, 1, 0), 4)
-    run = t_eq_int(run, "text y", dl_arg(ops, 1, 1), 4)
-    run = t_eq_int(run, "text index", dl_arg(ops, 1, 2), 0)
-    run = t_eq_int(run, "text colour", dl_arg(ops, 1, 3), ink)
-    run = t_eq_str(run, "the index resolves", ui.strs[dl_arg(ops, 1, 2)], "ab")
+    t_eq_int("text record", dl_op(ops, 1), DlOp.TEXT)
+    t_eq_int("text x", dl_arg(ops, 1, 0), 4)
+    t_eq_int("text y", dl_arg(ops, 1, 1), 4)
+    t_eq_int("text index", dl_arg(ops, 1, 2), 0)
+    t_eq_int("text colour", dl_arg(ops, 1, 3), ink)
+    t_eq_str("the index resolves", ui.strs[dl_arg(ops, 1, 2)], "ab")
 
     // A transparent background emits nothing — most nodes in a real tree are structural.
     ui_begin(ui, 0, 0, false)
@@ -78,8 +74,8 @@ func test_draw_surfaces(run: TestRun) : TestRun {
     hit_resolve(ui)
 
     count = dl_build(ui, fonts, bare, ops)
-    run = t_eq_int(run, "a transparent surface is skipped", count, 1)
-    run = t_eq_int(run, "only the text remains", dl_op(ops, 0), DlOp.TEXT)
+    t_eq_int("a transparent surface is skipped", count, 1)
+    t_eq_int("only the text remains", dl_op(ops, 0), DlOp.TEXT)
 
     // Without a radius it is a plain rectangle.
     ui_begin(ui, 0, 0, false)
@@ -90,12 +86,10 @@ func test_draw_surfaces(run: TestRun) : TestRun {
     hit_resolve(ui)
 
     count = dl_build(ui, fonts, square, ops)
-    run = t_eq_int(run, "no radius means a plain rect", dl_op(ops, 0), DlOp.RECT)
-
-    return run
+    t_eq_int("no radius means a plain rect", dl_op(ops, 0), DlOp.RECT)
 }
 
-func test_draw_button_states(run: TestRun) : TestRun {
+func test_draw_button_states() : void {
     let fonts: FontSet = test_draw_fonts()
     let ui: Ui = ui_new(32)
     let ops: array<int> = array_new(64 * dl_stride())
@@ -110,12 +104,12 @@ func test_draw_button_states(run: TestRun) : TestRun {
 
     let count: int = dl_build(ui, fonts, idle, ops)
 
-    run = t_eq_int(run, "a button is a surface and a label", count, 2)
-    run = t_eq_int(run, "idle uses the given colour", dl_arg(ops, 0, 4), face)
+    t_eq_int("a button is a surface and a label", count, 2)
+    t_eq_int("idle uses the given colour", dl_arg(ops, 0, 4), face)
 
     // The label is centred within the button by the display list, not by layout.
-    run = t_eq_int(run, "label is centred horizontally", dl_arg(ops, 1, 0), 20)
-    run = t_eq_int(run, "label is centred vertically", dl_arg(ops, 1, 1), 2)
+    t_eq_int("label is centred horizontally", dl_arg(ops, 1, 0), 20)
+    t_eq_int("label is centred vertically", dl_arg(ops, 1, 1), 2)
 
     // Hovered: lighter.
     ui_begin(ui, 30, 12, false)
@@ -124,7 +118,7 @@ func test_draw_button_states(run: TestRun) : TestRun {
     hit_resolve(ui)
 
     count = dl_build(ui, fonts, hovered, ops)
-    run = t_eq_int(run, "hovered lightens", dl_arg(ops, 0, 4), color_shade(face, dl_hover_shade()))
+    t_eq_int("hovered lightens", dl_arg(ops, 0, 4), color_shade(face, dl_hover_shade()))
 
     // Pressed: lighter still, and distinct from hovered.
     ui_begin(ui, 30, 12, true)
@@ -133,11 +127,9 @@ func test_draw_button_states(run: TestRun) : TestRun {
     hit_resolve(ui)
 
     count = dl_build(ui, fonts, pressed, ops)
-    run = t_eq_int(run, "pressed lightens further", dl_arg(ops, 0, 4), color_shade(face, dl_press_shade()))
-    run = t_true(run, "pressed differs from hovered",
+    t_eq_int("pressed lightens further", dl_arg(ops, 0, 4), color_shade(face, dl_press_shade()))
+    t_true("pressed differs from hovered",
         color_shade(face, dl_press_shade()) != color_shade(face, dl_hover_shade()))
-
-    return run
 }
 
 /*
@@ -146,7 +138,7 @@ func test_draw_button_states(run: TestRun) : TestRun {
  * The caller can see it happened by comparing the count against dl_capacity. Dying mid-paint would
  * be worse than a frame missing its last few commands.
  */
-func test_draw_overflow(run: TestRun) : TestRun {
+func test_draw_overflow() : void {
     let fonts: FontSet = test_draw_fonts()
     let ui: Ui = ui_new(32)
     let tiny: array<int> = array_new(2 * dl_stride())
@@ -166,8 +158,6 @@ func test_draw_overflow(run: TestRun) : TestRun {
 
     let count: int = dl_build(ui, fonts, root, tiny)
 
-    run = t_eq_int(run, "capacity is in records", dl_capacity(tiny), 2)
-    run = t_eq_int(run, "emission stops at the capacity", count, 2)
-
-    return run
+    t_eq_int("capacity is in records", dl_capacity(tiny), 2)
+    t_eq_int("emission stops at the capacity", count, 2)
 }

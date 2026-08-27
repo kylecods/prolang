@@ -29,25 +29,23 @@ func test_layout_scales() : array<int> {
     return scales
 }
 
-func test_layout_run() : TestRun {
-    let r: TestRun = t_new()
-
+func test_layout_run() : void {
     // ── Scaling ──────────────────────────────────────────────────────────────
-    r = t_eq_int(r, "an unscaled display changes nothing", layout_px(100, 36), 36)
-    r = t_eq_int(r, "125% of 36", layout_px(125, 36), 45)
-    r = t_eq_int(r, "150% of 36", layout_px(150, 36), 54)
-    r = t_eq_int(r, "200% of 36", layout_px(200, 36), 72)
+    t_eq_int("an unscaled display changes nothing", layout_px(100, 36), 36)
+    t_eq_int("125% of 36", layout_px(125, 36), 45)
+    t_eq_int("150% of 36", layout_px(150, 36), 54)
+    t_eq_int("200% of 36", layout_px(200, 36), 72)
 
     // Rounded, not truncated: at 150% a truncating divide leaves a 3-pixel gap at 4 and a
     // 1-pixel rule at 1, and the two errors pull the layout apart in opposite directions.
-    r = t_eq_int(r, "a half rounds up", layout_px(150, 1), 2)
-    r = t_eq_int(r, "125% of 10 is exact", layout_px(125, 10), 13)
-    r = t_eq_int(r, "zero scales to zero", layout_px(150, 0), 0)
+    t_eq_int("a half rounds up", layout_px(150, 1), 2)
+    t_eq_int("125% of 10 is exact", layout_px(125, 10), 13)
+    t_eq_int("zero scales to zero", layout_px(150, 0), 0)
 
-    r = t_eq_int(r, "a normal factor passes through", layout_clamp_scale(150), 150)
-    r = t_eq_int(r, "an impossible factor is refused", layout_clamp_scale(0), 100)
-    r = t_eq_int(r, "a factor below 100 is refused", layout_clamp_scale(75), 100)
-    r = t_eq_int(r, "an absurd factor is capped", layout_clamp_scale(9600), 350)
+    t_eq_int("a normal factor passes through", layout_clamp_scale(150), 150)
+    t_eq_int("an impossible factor is refused", layout_clamp_scale(0), 100)
+    t_eq_int("a factor below 100 is refused", layout_clamp_scale(75), 100)
+    t_eq_int("an absurd factor is capped", layout_clamp_scale(9600), 350)
 
     // ── Invariants at every scaling factor ───────────────────────────────────
     let scales: array<int> = test_layout_scales()
@@ -129,15 +127,15 @@ func test_layout_run() : TestRun {
         i = i + 1
     }
 
-    r = t_eq_int(r, "the tool bar fits its buttons at every factor", barFits, count)
-    r = t_eq_int(r, "the top bar fits its buttons at every factor", topBarFits, count)
-    r = t_eq_int(r, "an icon fits its button at every factor", iconFits, count)
-    r = t_eq_int(r, "an icon stays identifiable at every factor", iconVisible, count)
-    r = t_eq_int(r, "a rule never vanishes at any factor", ruleVisible, count)
-    r = t_eq_int(r, "the window width is its parts", widthAdds, count)
-    r = t_eq_int(r, "the window height is its parts", heightAdds, count)
-    r = t_eq_int(r, "the canvas keeps its far margin", contentPlaced, count)
-    r = t_eq_int(r, "every metric grows with the display", grows, count - 1)
+    t_eq_int("the tool bar fits its buttons at every factor", barFits, count)
+    t_eq_int("the top bar fits its buttons at every factor", topBarFits, count)
+    t_eq_int("an icon fits its button at every factor", iconFits, count)
+    t_eq_int("an icon stays identifiable at every factor", iconVisible, count)
+    t_eq_int("a rule never vanishes at any factor", ruleVisible, count)
+    t_eq_int("the window width is its parts", widthAdds, count)
+    t_eq_int("the window height is its parts", heightAdds, count)
+    t_eq_int("the canvas keeps its far margin", contentPlaced, count)
+    t_eq_int("every metric grows with the display", grows, count - 1)
 
     // ── The canvas against the room available ────────────────────────────────
     let palette: int = layout_palette_cell(100) * 2
@@ -149,26 +147,26 @@ func test_layout_run() : TestRun {
      * would put the palette and the status bar under the taskbar; using everything the screen has
      * is the honest answer, and the window's minimum is capped the same way for the same reason.
      */
-    r = t_eq_int(r, "a cramped screen falls back to the floor width",
+    t_eq_int("a cramped screen falls back to the floor width",
                  layout_canvas_width(100, 200), layout_min_canvas_width(100))
-    r = t_eq_int(r, "a cramped screen falls back to the floor height",
+    t_eq_int("a cramped screen falls back to the floor height",
                  layout_canvas_height(100, 200, palette), layout_min_canvas_height(100))
 
     // A very wide monitor does not get a window spanning all of it.
-    r = t_eq_int(r, "a wide screen is capped", layout_canvas_width(100, 6000), layout_px(100, 1040))
-    r = t_eq_int(r, "a tall screen is capped", layout_canvas_height(100, 4000, palette), layout_px(100, 700))
+    t_eq_int("a wide screen is capped", layout_canvas_width(100, 6000), layout_px(100, 1040))
+    t_eq_int("a tall screen is capped", layout_canvas_height(100, 4000, palette), layout_px(100, 700))
 
     // Between the two, the canvas takes what is left and the window is exactly the screen.
     let usable: int = 1000
     let middling: int = layout_canvas_width(100, usable)
-    r = t_true(r, "a middling screen is not capped", middling < layout_px(100, 1040))
-    r = t_eq_int(r, "a middling screen is used fully", layout_window_width(100, middling), usable)
+    t_true("a middling screen is not capped", middling < layout_px(100, 1040))
+    t_eq_int("a middling screen is used fully", layout_window_width(100, middling), usable)
 
     // The same window at 200% is about twice the size, which is what "the same window" means on a
     // display with twice the pixels.
     let atOne: int = layout_window_width(100, layout_canvas_width(100, 3000))
     let atTwo: int = layout_window_width(200, layout_canvas_width(200, 6000))
-    r = t_eq_int(r, "the capped window doubles with the display", atTwo, atOne * 2)
+    t_eq_int("the capped window doubles with the display", atTwo, atOne * 2)
 
     // ── Following a resized window ───────────────────────────────────────────
     /*
@@ -208,37 +206,37 @@ func test_layout_run() : TestRun {
         s = s + 1
     }
 
-    r = t_true(r, "the canvas fills the window at every size", exact > 40)
-    r = t_eq_int(r, "the canvas never overflows the window", noOverflow, exact)
+    t_true("the canvas fills the window at every size", exact > 40)
+    t_eq_int("the canvas never overflows the window", noOverflow, exact)
 
     // A window dragged below the minimum gives the canvas the minimum rather than a negative
     // width, which would place every control after it on top of the ones before.
-    r = t_eq_int(r, "a tiny window still yields a usable canvas",
+    t_eq_int("a tiny window still yields a usable canvas",
                  layout_canvas_width_for(100, 10), layout_min_canvas_width(100))
-    r = t_eq_int(r, "a tiny window still yields a usable canvas height",
+    t_eq_int("a tiny window still yields a usable canvas height",
                  layout_canvas_height_for(100, 10, 26), layout_min_canvas_height(100))
 
     // Unlike the opening size, a resized canvas is not capped: dragging the window wider was
     // asked for, where opening full-width on a wide monitor was not.
-    r = t_true(r, "a maximised window is not capped",
+    t_true("a maximised window is not capped",
                layout_canvas_width_for(100, 3000) > layout_canvas_width(100, 3000))
 
     // ── The window's minimum ─────────────────────────────────────────────────
     // The point of a minimum is that the editor is still usable at it, so the window stops while
     // the canvas is a workable size rather than when it reaches the floor that keeps the
     // arithmetic from going negative.
-    r = t_true(r, "the workable canvas is well clear of the floor",
+    t_true("the workable canvas is well clear of the floor",
                layout_workable_width(100) > layout_min_canvas_width(100) * 2)
-    r = t_true(r, "the workable canvas height is well clear of the floor",
+    t_true("the workable canvas height is well clear of the floor",
                layout_workable_height(100) > layout_min_canvas_height(100) * 2)
 
     let roomy: int = 4000
 
     // At the minimum, the canvas is exactly the workable size — no more and no less.
-    r = t_eq_int(r, "the minimum window holds a workable canvas",
+    t_eq_int("the minimum window holds a workable canvas",
                  layout_canvas_width_for(100, layout_min_width(100, 100, roomy)),
                  layout_workable_width(100))
-    r = t_eq_int(r, "the minimum window holds a workable canvas height",
+    t_eq_int("the minimum window holds a workable canvas height",
                  layout_canvas_height_for(100, layout_min_height(100, 26, roomy), 26),
                  layout_workable_height(100))
 
@@ -250,11 +248,11 @@ func test_layout_run() : TestRun {
      * strip run off the right-hand edge at the smallest size the window could be dragged to.
      */
     let wideStrip: int = 900
-    r = t_eq_int(r, "a wide palette sets the minimum instead",
+    t_eq_int("a wide palette sets the minimum instead",
                  layout_canvas_width_for(100, layout_min_width(100, wideStrip, roomy)), wideStrip)
-    r = t_true(r, "a wide palette widens the window",
+    t_true("a wide palette widens the window",
                layout_min_width(100, wideStrip, roomy) > layout_min_width(100, 100, roomy))
-    r = t_eq_int(r, "a narrow palette does not narrow the window",
+    t_eq_int("a narrow palette does not narrow the window",
                  layout_min_width(100, 10, roomy), layout_min_width(100, 100, roomy))
 
     /*
@@ -265,9 +263,9 @@ func test_layout_run() : TestRun {
      * without anything exotic: a 200% laptop wants a minimum in physical pixels twice the size of
      * one at 100%, on a panel that has not doubled.
      */
-    r = t_eq_int(r, "a cramped screen caps the minimum width",
+    t_eq_int("a cramped screen caps the minimum width",
                  layout_min_width(200, 400, 700), 700)
-    r = t_eq_int(r, "a cramped screen caps the minimum height",
+    t_eq_int("a cramped screen caps the minimum height",
                  layout_min_height(200, 52, 500), 500)
 
     let cappedFits: int = 0
@@ -283,20 +281,18 @@ func test_layout_run() : TestRun {
 
         f = f + 1
     }
-    r = t_eq_int(r, "the minimum fits a small screen at every factor", cappedFits, widths.length())
+    t_eq_int("the minimum fits a small screen at every factor", cappedFits, widths.length())
 
     // Below the floor the canvas stops shrinking, so a window smaller than its own minimum — which
     // is what a capped minimum on a small screen leaves possible — still lays out.
-    r = t_eq_int(r, "the canvas stops at the floor",
+    t_eq_int("the canvas stops at the floor",
                  layout_canvas_width_for(100, 10), layout_min_canvas_width(100))
-    r = t_eq_int(r, "the canvas height stops at the floor",
+    t_eq_int("the canvas height stops at the floor",
                  layout_canvas_height_for(100, 10, 26), layout_min_canvas_height(100))
 
     // ── Supersampling ────────────────────────────────────────────────────────
     // It deliberately does not depend on the display: it is about how many coverage levels an
     // edge gets, not how many pixels the edge is.
-    r = t_true(r, "icons are supersampled", layout_supersample() > 1)
-    r = t_true(r, "supersampling stays affordable", layout_supersample() <= 4)
-
-    return r
+    t_true("icons are supersampled", layout_supersample() > 1)
+    t_true("supersampling stays affordable", layout_supersample() <= 4)
 }

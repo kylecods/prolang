@@ -39,69 +39,65 @@ func test_hit_frame(ui: Ui, fonts: FontSet, mouseX: int, mouseY: int, down: bool
     return hit_resolve(ui)
 }
 
-func test_hit_run() : TestRun {
-    let run: TestRun = t_new()
-
+func test_hit_run() : void {
     let fonts: FontSet = test_hit_fonts()
     let ui: Ui = ui_new(32)
 
     // Hovering the first button makes it hot and fires nothing.
     let fired: int = test_hit_frame(ui, fonts, 10, 10, false)
-    run = t_eq_int(run, "hovering fires nothing", fired, 0)
-    run = t_eq_int(run, "the first button is hot", hit_hot_id(ui), 101)
+    t_eq_int("hovering fires nothing", fired, 0)
+    t_eq_int("the first button is hot", hit_hot_id(ui), 101)
 
     // Moving to the second changes what is hot.
     fired = test_hit_frame(ui, fonts, 70, 10, false)
-    run = t_eq_int(run, "the second button is hot", hit_hot_id(ui), 202)
+    t_eq_int("the second button is hot", hit_hot_id(ui), 202)
 
     // Off the row entirely: nothing is hot.
     fired = test_hit_frame(ui, fonts, 70, 500, false)
-    run = t_eq_int(run, "nothing is hot off the row", hit_hot_id(ui), 0)
+    t_eq_int("nothing is hot off the row", hit_hot_id(ui), 0)
 
     // Pressing arms the button but does not fire it — this is the property that lets a press be
     // taken back.
     fired = test_hit_frame(ui, fonts, 10, 10, true)
-    run = t_eq_int(run, "pressing fires nothing", fired, 0)
-    run = t_eq_int(run, "pressing makes the button active", hit_active_id(ui), 101)
+    t_eq_int("pressing fires nothing", fired, 0)
+    t_eq_int("pressing makes the button active", hit_active_id(ui), 101)
 
     // Holding is not a repeat: a second frame with the button still down fires nothing.
     fired = test_hit_frame(ui, fonts, 10, 10, true)
-    run = t_eq_int(run, "holding does not repeat", fired, 0)
-    run = t_eq_int(run, "still active while held", hit_active_id(ui), 101)
+    t_eq_int("holding does not repeat", fired, 0)
+    t_eq_int("still active while held", hit_active_id(ui), 101)
 
     // Releasing on the same button is the click.
     fired = test_hit_frame(ui, fonts, 10, 10, false)
-    run = t_eq_int(run, "releasing fires the action", fired, 101)
-    run = t_eq_int(run, "nothing is active afterwards", hit_active_id(ui), 0)
+    t_eq_int("releasing fires the action", fired, 101)
+    t_eq_int("nothing is active afterwards", hit_active_id(ui), 0)
 
     // And it fires exactly once: the next frame is quiet.
     fired = test_hit_frame(ui, fonts, 10, 10, false)
-    run = t_eq_int(run, "the action fires only once", fired, 0)
+    t_eq_int("the action fires only once", fired, 0)
 
     // Press one button, release over the other: neither fires.
     fired = test_hit_frame(ui, fonts, 10, 10, true)
-    run = t_eq_int(run, "press on the first", hit_active_id(ui), 101)
+    t_eq_int("press on the first", hit_active_id(ui), 101)
 
     fired = test_hit_frame(ui, fonts, 70, 10, false)
-    run = t_eq_int(run, "releasing elsewhere fires nothing", fired, 0)
-    run = t_eq_int(run, "and clears the active widget", hit_active_id(ui), 0)
+    t_eq_int("releasing elsewhere fires nothing", fired, 0)
+    t_eq_int("and clears the active widget", hit_active_id(ui), 0)
 
     // Press, then slide off the row and release: nothing fires.
     fired = test_hit_frame(ui, fonts, 70, 10, true)
-    run = t_eq_int(run, "press on the second", hit_active_id(ui), 202)
+    t_eq_int("press on the second", hit_active_id(ui), 202)
 
     fired = test_hit_frame(ui, fonts, 70, 900, false)
-    run = t_eq_int(run, "releasing off the widget fires nothing", fired, 0)
+    t_eq_int("releasing off the widget fires nothing", fired, 0)
 
     // A held button that the cursor has left is no longer drawn as pressed, even though the press
     // is still armed — the feedback has to say that releasing there will do nothing.
     fired = test_hit_frame(ui, fonts, 70, 10, true)
     let heldButton: int = 2
 
-    run = t_true(run, "held and hovered reads as active", hit_is_active(ui, heldButton))
+    t_true("held and hovered reads as active", hit_is_active(ui, heldButton))
 
     fired = test_hit_frame(ui, fonts, 10, 10, true)
-    run = t_false(run, "held but not hovered does not read as active", hit_is_active(ui, heldButton))
-
-    return run
+    t_false("held but not hovered does not read as active", hit_is_active(ui, heldButton))
 }
