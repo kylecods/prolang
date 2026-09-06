@@ -1,0 +1,6 @@
+/*
+ * ProLang Standard Library — OpenGL Alias (opengl)
+ *
+ * Alias for  import "gl"
+ */
+import "gl"

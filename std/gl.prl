@@ -1,0 +1,298 @@
+/*
+ * ProLang Standard Library — OpenGL (gl)
+ *
+ * Provides cross-platform OpenGL 3D graphics bindings and window management.
+ *
+ * Usage:
+ *   import "gl"
+ *
+ * Calls can be made either via the GL static class or the gl_* helper functions:
+ *   let win = gl_create_window("Window", 800, 600)
+ *   while (!gl_window_should_close(win)) {
+ *       gl_poll_events()
+ *       gl_clear(GL.COLOR_BUFFER_BIT | GL.DEPTH_BUFFER_BIT)
+ *       ...
+ *       gl_swap_buffers(win)
+ *   }
+ */
+import "GLHelper"
+
+// ── Window Management & Event Polling ───────────────────────────────────────
+
+func gl_create_window(title: string, width: int, height: int) : int {
+    return GL.CreateWindow(title, width, height)
+}
+
+func gl_make_current(win: int) {
+    GL.MakeCurrent(win)
+}
+
+func gl_swap_buffers(win: int) {
+    GL.SwapBuffers(win)
+}
+
+func gl_poll_events() {
+    GL.PollEvents()
+}
+
+func gl_window_should_close(win: int) : bool {
+    return GL.WindowShouldClose(win)
+}
+
+func gl_close_window(win: int) {
+    GL.CloseWindow(win)
+}
+
+func gl_get_window_width(win: int) : int {
+    return GL.GetWindowWidth(win)
+}
+
+func gl_get_window_height(win: int) : int {
+    return GL.GetWindowHeight(win)
+}
+
+func gl_key_pressed(key: int) : bool {
+    return GL.IsKeyDown(key)
+}
+
+func gl_mouse_x() : int {
+    return GL.GetMouseX()
+}
+
+func gl_mouse_y() : int {
+    return GL.GetMouseY()
+}
+
+func gl_mouse_down(button: int) : bool {
+    return GL.IsMouseButtonDown(button)
+}
+
+func gl_swap_interval(interval: int) {
+    GL.SwapInterval(interval)
+}
+
+// ── State & Clear ───────────────────────────────────────────────────────────
+
+func gl_clear(mask: int) {
+    GL.Clear(mask)
+}
+
+func gl_clear_color(r: float32, g: float32, b: float32, a: float32) {
+    GL.ClearColor(r, g, b, a)
+}
+
+func gl_clear_colord(r: float64, g: float64, b: float64, a: float64) {
+    GL.ClearColorD(r, g, b, a)
+}
+
+func gl_viewport(x: int, y: int, w: int, h: int) {
+    GL.Viewport(x, y, w, h)
+}
+
+func gl_enable(cap: int) {
+    GL.Enable(cap)
+}
+
+func gl_disable(cap: int) {
+    GL.Disable(cap)
+}
+
+func gl_is_enabled(cap: int) : bool {
+    return GL.IsEnabled(cap)
+}
+
+func gl_depth_func(funcId: int) {
+    GL.DepthFunc(funcId)
+}
+
+func gl_depth_mask(flag: bool) {
+    GL.DepthMask(flag)
+}
+
+func gl_cull_face(mode: int) {
+    GL.CullFace(mode)
+}
+
+func gl_front_face(mode: int) {
+    GL.FrontFace(mode)
+}
+
+func gl_blend_func(sfactor: int, dfactor: int) {
+    GL.BlendFunc(sfactor, dfactor)
+}
+
+func gl_line_width(width: float32) {
+    GL.LineWidth(width)
+}
+
+func gl_point_size(size: float32) {
+    GL.PointSize(size)
+}
+
+func gl_polygon_mode(face: int, mode: int) {
+    GL.PolygonMode(face, mode)
+}
+
+func gl_scissor(x: int, y: int, w: int, h: int) {
+    GL.Scissor(x, y, w, h)
+}
+
+// ── Matrix Transformations ──────────────────────────────────────────────────
+
+func gl_matrix_mode(mode: int) {
+    GL.MatrixMode(mode)
+}
+
+func gl_load_identity() {
+    GL.LoadIdentity()
+}
+
+func gl_push_matrix() {
+    GL.PushMatrix()
+}
+
+func gl_pop_matrix() {
+    GL.PopMatrix()
+}
+
+func gl_rotatef(angle: float32, x: float32, y: float32, z: float32) {
+    GL.Rotatef(angle, x, y, z)
+}
+
+func gl_rotated(angle: float64, x: float64, y: float64, z: float64) {
+    GL.Rotated(angle, x, y, z)
+}
+
+func gl_translatef(x: float32, y: float32, z: float32) {
+    GL.Translatef(x, y, z)
+}
+
+func gl_translated(x: float64, y: float64, z: float64) {
+    GL.Translated(x, y, z)
+}
+
+func gl_scalef(x: float32, y: float32, z: float32) {
+    GL.Scalef(x, y, z)
+}
+
+func gl_scaled(x: float64, y: float64, z: float64) {
+    GL.Scaled(x, y, z)
+}
+
+func gl_ortho(left: float64, right: float64, bottom: float64, top: float64, zNear: float64, zFar: float64) {
+    GL.Ortho(left, right, bottom, top, zNear, zFar)
+}
+
+func gl_frustum(left: float64, right: float64, bottom: float64, top: float64, zNear: float64, zFar: float64) {
+    GL.Frustum(left, right, bottom, top, zNear, zFar)
+}
+
+func gl_perspective(fovy: float64, aspect: float64, zNear: float64, zFar: float64) {
+    GL.Perspective(fovy, aspect, zNear, zFar)
+}
+
+func gl_look_at(eyeX: float64, eyeY: float64, eyeZ: float64,
+                centerX: float64, centerY: float64, centerZ: float64,
+                upX: float64, upY: float64, upZ: float64) {
+    GL.LookAt(eyeX, eyeY, eyeZ, centerX, centerY, centerZ, upX, upY, upZ)
+}
+
+// ── Immediate Mode Drawing ──────────────────────────────────────────────────
+
+func gl_begin(mode: int) {
+    GL.Begin(mode)
+}
+
+func gl_end() {
+    GL.End()
+}
+
+func gl_vertex2f(x: float32, y: float32) {
+    GL.Vertex2f(x, y)
+}
+
+func gl_vertex2d(x: float64, y: float64) {
+    GL.Vertex2d(x, y)
+}
+
+func gl_vertex2i(x: int, y: int) {
+    GL.Vertex2i(x, y)
+}
+
+func gl_vertex3f(x: float32, y: float32, z: float32) {
+    GL.Vertex3f(x, y, z)
+}
+
+func gl_vertex3d(x: float64, y: float64, z: float64) {
+    GL.Vertex3d(x, y, z)
+}
+
+func gl_color3f(r: float32, g: float32, b: float32) {
+    GL.Color3f(r, g, b)
+}
+
+func gl_color3d(r: float64, g: float64, b: float64) {
+    GL.Color3d(r, g, b)
+}
+
+func gl_color4f(r: float32, g: float32, b: float32, a: float32) {
+    GL.Color4f(r, g, b, a)
+}
+
+func gl_color4d(r: float64, g: float64, b: float64, a: float64) {
+    GL.Color4d(r, g, b, a)
+}
+
+func gl_color3ub(r: int, g: int, b: int) {
+    GL.Color3i(r, g, b)
+}
+
+func gl_color4ub(r: int, g: int, b: int, a: int) {
+    GL.Color4i(r, g, b, a)
+}
+
+func gl_normal3f(nx: float32, ny: float32, nz: float32) {
+    GL.Normal3f(nx, ny, nz)
+}
+
+func gl_tex_coord2f(s: float32, t: float32) {
+    GL.TexCoord2f(s, t)
+}
+
+// ── Array Drawing ───────────────────────────────────────────────────────────
+
+func gl_draw_arrays(mode: int, first: int, count: int) {
+    GL.DrawArrays(mode, first, count)
+}
+
+func gl_draw_elements(mode: int, count: int, typeId: int, offset: int) {
+    GL.DrawElementsOffset(mode, count, typeId, offset)
+}
+
+// ── Textures ────────────────────────────────────────────────────────────────
+
+func gl_gen_texture() : int {
+    return GL.GenTexture()
+}
+
+func gl_bind_texture(target: int, texture: int) {
+    GL.BindTexture(target, texture)
+}
+
+func gl_delete_texture(texture: int) {
+    GL.DeleteTexture(texture)
+}
+
+func gl_tex_parameteri(target: int, pname: int, param: int) {
+    GL.TexParameteri(target, pname, param)
+}
+
+// ── State Queries ───────────────────────────────────────────────────────────
+
+func gl_get_error() : int {
+    return GL.GetError()
+}
+
+func gl_get_string(name: int) : string {
+    return GL.GetString(name)
+}

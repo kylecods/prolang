@@ -552,6 +552,7 @@ internal sealed class Binder
                     BoundUnaryOperatorKind.Identity => operand,
                     BoundUnaryOperatorKind.Negation when operand is int i => -i,
                     BoundUnaryOperatorKind.Negation when operand is long l => -l,
+                    BoundUnaryOperatorKind.Negation when operand is float f => -f,
                     BoundUnaryOperatorKind.Negation when operand is double d => -d,
                     BoundUnaryOperatorKind.LogicalNegation when operand is bool b => !b,
                     BoundUnaryOperatorKind.OnesComplement when operand is int i2 => ~i2,

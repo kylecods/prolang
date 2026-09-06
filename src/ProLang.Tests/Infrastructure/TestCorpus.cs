@@ -161,6 +161,8 @@ internal static class TestCorpus
             "Library — the cube scene painter; exercised by examples/18-psp-cube/tests/run_tests.prl."),
         new("examples/18-psp-cube/cube_desktop.prl", CorpusKind.CompileOnly,
             "Windows Forms GUI with an event loop that only ends when the window is closed."),
+        new("examples/19-opengl-cube/cube.prl", CorpusKind.CompileOnly,
+            "Native OpenGL GUI with an event loop that only ends when the window is closed."),
         new("tests/std/test_font.prl", CorpusKind.CompileOnly,
             "Library — test cases; run by tests/std/run_tests.prl."),
         new("tests/std/test_widget.prl", CorpusKind.CompileOnly,

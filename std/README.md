@@ -21,6 +21,8 @@ so an application's own modules and the library's never collide.
 | `dynarray` | a growable array, generic |
 | `testing` | the test harness: a `TestRun` tally threaded through checks, failed by the `assert` builtin |
 | `winforms` | the Windows Forms shim, a C# assembly rather than prolang |
+| `gl` | OpenGL 3D graphics bindings and native windowing via `GLHelper` |
+| `opengl` | alias for `gl` |
 
 ## `ui/` — a toolkit for drawing interfaces
 
