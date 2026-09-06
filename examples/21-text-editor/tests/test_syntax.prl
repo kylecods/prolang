@@ -1,0 +1,127 @@
+/*
+ * Text editor tests — syntax.prl
+ *
+ * The tokenizer is driven line by line the way the renderer drives it, threading the block-comment
+ * state from one line to the next through the out-slot, exactly as ed_rebuild_block does.
+ */
+
+import "testing"
+import "ui/theme"
+import "../syntax.prl"
+
+// Tokenizes one line and reports the kind of the n-th non-space span, so the assertions read like
+// the text they describe.
+func tok_kind(line: string, inBlock: int, wantIndex: int, outState: array<int>) : int {
+    let toks: DynArray<Tok> = syn_line(line, inBlock, outState)
+    let seen: int = 0
+    let i: int = 0
+    while (i < dynarray_length<Tok>(toks)) {
+        let tok: Tok = dynarray_get<Tok>(toks, i)
+        if (tok.kind != TokKind.SPACE) {
+            if (seen == wantIndex) {
+                return tok.kind
+            }
+            seen = seen + 1
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+// The kind of the first span of a line with no leading whitespace.
+func first_kind(line: string) : int {
+    let out: array<int> = array_new(1)
+    return tok_kind(line, 0, 0, out)
+}
+
+func test_syntax_run() : void {
+    let out: array<int> = array_new(1)
+
+    // ── Keywords, types, identifiers, calls ──────────────────────────────────
+    t_eq_int("let is a keyword", first_kind("let x = 1"), TokKind.KEYWORD)
+    t_eq_int("func is a keyword", first_kind("func f()"), TokKind.KEYWORD)
+    t_eq_int("global is a keyword", first_kind("global g: int = 0"), TokKind.KEYWORD)
+    t_eq_int("elif is a keyword", first_kind("elif (x)"), TokKind.KEYWORD)
+    t_eq_int("true is a keyword", first_kind("return true"), TokKind.KEYWORD)
+    t_eq_int("script is still lexed", first_kind("script s"), TokKind.KEYWORD)
+
+    t_eq_int("int is a type", first_kind("int x"), TokKind.TYPE)
+    t_eq_int("uint8 is a type", first_kind("uint8 x"), TokKind.TYPE)
+    t_eq_int("float64 is a type", first_kind("float64 x"), TokKind.TYPE)
+    t_eq_int("string is a type", first_kind("string s"), TokKind.TYPE)
+    t_eq_int("array is a type", first_kind("array<int> a"), TokKind.TYPE)
+
+    t_eq_int("a name is an identifier", first_kind("count"), TokKind.IDENT)
+    t_eq_int("snake_case is an identifier", first_kind("snake_case"), TokKind.IDENT)
+
+    t_eq_int("a call is a call", first_kind("print(x)"), TokKind.FUNC)
+    t_eq_int("a call after spaces is a call", first_kind("print   (x)"), TokKind.FUNC)
+    t_eq_int("a name alone is not a call", first_kind("print x"), TokKind.IDENT)
+    t_eq_int("null is a keyword", tok_kind("x = null", 0, 2, out), TokKind.KEYWORD)
+
+    // ── Numbers ──────────────────────────────────────────────────────────────
+    t_eq_int("decimal", first_kind("42"), TokKind.NUMBER)
+    t_eq_int("hex", first_kind("0x1F"), TokKind.NUMBER)
+    t_eq_int("binary", first_kind("0b1010"), TokKind.NUMBER)
+    t_eq_int("octal", first_kind("0o17"), TokKind.NUMBER)
+    t_eq_int("float", first_kind("1.5"), TokKind.NUMBER)
+    t_eq_int("float32 suffix", first_kind("1.5f32"), TokKind.NUMBER)
+    t_eq_int("float64 suffix", first_kind("1.5f64"), TokKind.NUMBER)
+    t_eq_int("a dot before a digit is a number", first_kind(".5"), TokKind.NUMBER)
+
+    // ── Strings ──────────────────────────────────────────────────────────────
+    // Built from a quote variable rather than written literally: a doubled-quote escape inside a
+    // doubled-quote escape is not something a reader should have to count.
+    let q: string = """"
+    t_eq_int("a string", first_kind(q + "hello" + q), TokKind.STRING)
+    t_eq_int("an empty string", first_kind(q + q), TokKind.STRING)
+    t_eq_int("a doubled quote stays in the string", first_kind(q + "a" + q + q + "b" + q), TokKind.STRING)
+    t_eq_int("an unterminated string still colours", first_kind(q + "oops"), TokKind.STRING)
+
+    // ── Comments ─────────────────────────────────────────────────────────────
+    t_eq_int("line comment", first_kind("// note"), TokKind.COMMENT)
+    t_eq_int("comment after code", tok_kind("x = 1 // note", 0, 3, out), TokKind.COMMENT)
+    t_eq_int("block comment on one line", first_kind("/* note */"), TokKind.COMMENT)
+    t_eq_int("code after a closed block", tok_kind("/* a */ x", 0, 1, out), TokKind.IDENT)
+
+    // Block-comment state carries: the second line of a comment is a comment, and the line after
+    // the close is code again.
+    let carry: array<int> = array_new(1)
+    t_eq_int("open block consumes the line", first_kind_carry("/* beginning", carry), TokKind.COMMENT)
+    t_eq_int("and leaves the state open", carry[0], 1)
+    t_eq_int("next line is still a comment", first_kind_carry("   still inside", carry), TokKind.COMMENT)
+    t_eq_int("still open", carry[0], 1)
+    t_eq_int("the close ends it", first_kind_carry("end */ x", carry), TokKind.COMMENT)
+    t_eq_int("code follows on the same line", tok_kind("end */ x", 1, 1, out), TokKind.IDENT)
+    t_eq_int("state closed again", carry[0], 0)
+
+    // ── Operators and punctuation ────────────────────────────────────────────
+    t_eq_int("plus is an operator", first_kind("+"), TokKind.OPER)
+    t_eq_int("equals is an operator", first_kind("="), TokKind.OPER)
+    t_eq_int("ampersand is an operator", first_kind("&"), TokKind.OPER)
+    t_eq_int("brace is punctuation", first_kind("{"), TokKind.PUNCT)
+    t_eq_int("comma is punctuation", first_kind(","), TokKind.PUNCT)
+
+    // ── A whole line, kinds in order ─────────────────────────────────────────
+    // Spans include the whitespace ones, so "let x: int = 0x2A" is ten spans:
+    // let, __, x, :, __, int, __, =, __, 0x2A.
+    let kinds: DynArray<Tok> = syn_line("let x: int = 0x2A", 0, out)
+    t_eq_int("whole line has ten spans", dynarray_length<Tok>(kinds), 10)
+    t_eq_int("span 0 is let", dynarray_get<Tok>(kinds, 0).kind, TokKind.KEYWORD)
+    t_eq_int("span 1 is whitespace", dynarray_get<Tok>(kinds, 1).kind, TokKind.SPACE)
+    t_eq_int("span 2 is x", dynarray_get<Tok>(kinds, 2).kind, TokKind.IDENT)
+    t_eq_int("span 5 is int", dynarray_get<Tok>(kinds, 5).kind, TokKind.TYPE)
+    t_eq_int("span 9 is the hex number", dynarray_get<Tok>(kinds, 9).kind, TokKind.NUMBER)
+    t_eq_int("span 9 starts where it starts", dynarray_get<Tok>(kinds, 9).start, 13)
+    t_eq_int("span 9 reaches the end", dynarray_get<Tok>(kinds, 9).len, 4)
+
+    // ── Colour ───────────────────────────────────────────────────────────────
+    t_true("keywords colour", syn_color(TokKind.KEYWORD, Theme.MIDNIGHT) != 0)
+    t_true("strings colour", syn_color(TokKind.STRING, Theme.PAPER) != 0)
+    t_eq_int("identifiers fall back to the text colour", syn_color(TokKind.IDENT, Theme.MIDNIGHT), 0)
+}
+
+// first_kind with a caller-owned out-slot, so a test can inspect the carried block state.
+func first_kind_carry(line: string, carry: array<int>) : int {
+    return tok_kind(line, carry[0], 0, carry)
+}

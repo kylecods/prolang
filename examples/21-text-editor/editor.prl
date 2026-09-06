@@ -1,0 +1,601 @@
+/*
+ * Text editor — the application (editor.prl)
+ *
+ * A text editor over the ui toolkit's OpenGL host: widget chrome around a `ui_scene` whose painter
+ * draws the document itself — line numbers, per-token coloured text, the caret, scrolling — by
+ * appending display-list records.
+ *
+ * ── Why everything lives in globals ──────────────────────────────────────────
+ *
+ * The toolkit has no callbacks: a painter is a function value, and function values capture
+ * nothing, so `ed_paint` receives only the rectangle it is painting into. Everything it needs —
+ * the buffer, the scroll, the theme, the cursor — is reached through the `ed_*` globals instead,
+ * which the flat namespace makes visible to the whole assembly. The same is true the other way:
+ * the painter's rectangle lands in `ed_view`, and the input half reads it one frame later to turn
+ * a click into a cursor position.
+ *
+ * ── Where the keystrokes come from ───────────────────────────────────────────
+ *
+ * The OpenGL host polls: `gl_key_pressed(vk)` is a held-down test, not an event. `ed_input` walks
+ * the virtual-key space every frame, remembers the previous frame in `ed_prevKeys`, and treats a
+ * down-now-but-not-then key as a press. Holding repeats through `ed_repAt` — a delay, then a
+ * rate, the way every text field behaves. Characters come from keys.prl's virtual-key-to-text
+ * mapping with the shift state read alongside.
+ *
+ * There is no selection and no clipboard: the toolkit has no text model to borrow, and this
+ * editor is the text model. Everything else a text editor is expected to do — move, insert,
+ * delete, split and join lines, indent, undo, redo, save — is in buffer.prl.
+ *
+ * Build and run:
+ *
+ *   dotnet run --project src/ProLang/ProLang.csproj -- \
+ *     examples/21-text-editor/main.prl --target=winexe -o bin/editor.dll
+ *   dotnet bin/editor.dll [file.prl]
+ */
+
+import "io"
+import "fs"
+import "console"
+import "dotnet:System"
+import "ui/host_gl"
+import "ui/widget"
+import "ui/theme"
+import "ui/color"
+import "ui/font"
+import "ui/fps"
+import "keys.prl"
+import "buffer.prl"
+import "syntax.prl"
+
+// Indices into the FontSet the host builds.
+enum EdFont {
+    UI,
+    CODE
+}
+
+// What the title-bar buttons do.
+enum EdAct {
+    NONE,
+    SAVE,
+    THEME,
+    QUIT
+}
+
+func ed_repeat_delay() : int {
+    return 420
+}
+
+func ed_repeat_rate() : int {
+    return 34
+}
+
+// ── State ────────────────────────────────────────────────────────────────────
+//
+// A painter captures nothing, so the document and every bit of view state sit at file scope.
+
+global ed_ui: Ui = ui_new(4096)
+global ed_buf: Buf = buf_new()
+global ed_path: string = "untitled.prl"
+global ed_theme: int = Theme.MIDNIGHT
+
+global ed_scroll: int = 0          // first visible row
+global ed_hscroll: int = 0         // first visible column
+global ed_cw: int = 8              // monospace cell width, set once the fonts exist
+global ed_lh: int = 16             // monospace line height, ditto
+global ed_view: array<int> = array_new(4)
+
+global ed_prevKeys: array<int> = array_new(256)  // last frame's key state, for transitions
+global ed_repVK: int = 0           // the key currently auto-repeating
+global ed_repAt: int = 0           // when the repeat fires next
+global ed_mousePrev: int = 0
+global ed_caretAt: int = 0         // when the cursor last moved; it stops blinking for a moment
+
+global ed_status: string = ""
+global ed_statusAt: int = 0
+
+global ed_block: array<int> = array_new(256)   // block-comment state at the start of each line
+global ed_blockDirty: bool = true
+
+global ed_frames: Fps = fps_new()
+
+// ── Geometry ─────────────────────────────────────────────────────────────────
+
+func ed_rows_visible(h: int) : int {
+    let rows: int = (h - 8) / ed_lh
+    if (rows < 1) { rows = 1 }
+    return rows
+}
+
+// Digits in the line-number gutter, never fewer than two so a one-line file is not cramped.
+func ed_digits(n: int) : int {
+    if (n < 10) { return 2 }
+    let d: int = 0
+    let v: int = n
+    while (v > 0) {
+        d = d + 1
+        v = v / 10
+    }
+    return d
+}
+
+func ed_gutter_width() : int {
+    return ed_digits(ed_buf.count) * ed_cw + 14
+}
+
+func ed_page_rows() : int {
+    let rows: int = ed_rows_visible(ed_view[3]) - 3
+    if (rows < 1) { rows = 1 }
+    return rows
+}
+
+/*
+ * Keeps the cursor on screen: nudges both scrolls when an edit or a movement puts it outside the
+ * visible window, and never lets either go negative.
+ */
+func ed_clamp_scroll(w: int, h: int) : void {
+    let rows: int = ed_rows_visible(h)
+    if (ed_buf.row < ed_scroll) { ed_scroll = ed_buf.row }
+    if (ed_buf.row >= ed_scroll + rows) { ed_scroll = ed_buf.row - rows + 1 }
+    if (ed_scroll < 0) { ed_scroll = 0 }
+
+    let cols: int = (w - ed_gutter_width() - 10) / ed_cw
+    if (cols < 1) { cols = 1 }
+    if (ed_buf.col < ed_hscroll) { ed_hscroll = ed_buf.col }
+    if (ed_buf.col >= ed_hscroll + cols) { ed_hscroll = ed_buf.col - cols + 1 }
+    if (ed_hscroll < 0) { ed_hscroll = 0 }
+}
+
+/*
+ * Recomputes the block-comment state at the start of every line, left to right, feeding each
+ * line's scanner the state the previous one left. O(the whole file) per edit, which is fine for
+ * the files an editor demo edits, and it means a `/*` typed anywhere re-colours everything below.
+ */
+func ed_rebuild_block() : void {
+    let count: int = ed_buf.count
+    if (count > ed_block.length()) {
+        let grown: array<int> = array_new(count * 2)
+        let gi: int = 0
+        while (gi < ed_block.length()) {
+            grown[gi] = ed_block[gi]
+            gi = gi + 1
+        }
+        ed_block = grown
+    }
+
+    let outState: array<int> = array_new(1)
+    let block: int = 0
+    let bi: int = 0
+    while (bi < count) {
+        ed_block[bi] = block
+        let toks: DynArray<Tok> = syn_line(ed_buf.lines[bi], block, outState)
+        block = outState[0]
+        bi = bi + 1
+    }
+}
+
+// ── Files ────────────────────────────────────────────────────────────────────
+
+func ed_save() : void {
+    writeFile(ed_path, buf_to_text(ed_buf))
+    ed_buf = buf_saved(ed_buf)
+    ed_status = "Saved " + ed_path
+    ed_statusAt = time_millis()
+}
+
+func ed_load(path: string) : void {
+    if (fileExists(path)) {
+        ed_buf = buf_from_text(readFile(path))
+        ed_status = "Loaded " + path
+    } else {
+        ed_buf = ed_sample()
+        ed_status = "New buffer - Ctrl+S saves as " + path
+    }
+    ed_statusAt = time_millis()
+    ed_scroll = 0
+    ed_hscroll = 0
+    ed_blockDirty = true
+}
+
+/*
+ * What a fresh buffer holds: a little of the language, so the highlighting has something to show.
+ * Joined by hand because there is no way to write a newline inside a string literal.
+ */
+func ed_sample() : Buf {
+    let nl: string = buf_nl()
+    let s: string = ""
+    s = s + "// A small program to edit. Try changing it." + nl
+    s = s + "// Keywords, types, strings, numbers and comments all colour as you type." + nl
+    s = s + "" + nl
+    s = s + "struct Point {" + nl
+    s = s + "    x: int," + nl
+    s = s + "    y: int" + nl
+    s = s + "}" + nl
+    s = s + "" + nl
+    s = s + "func distance(a: Point, b: Point) : int {" + nl
+    s = s + "    let dx = a.x - b.x" + nl
+    s = s + "    let dy = a.y - b.y" + nl
+    s = s + "    return dx * dx + dy * dy" + nl
+    s = s + "}" + nl
+    s = s + "" + nl
+    s = s + "global label: string = ""hello""" + nl
+    s = s + "global scale: int = 0x1F" + nl
+    s = s + "" + nl
+    s = s + "/* block comments carry across lines," + nl
+    s = s + "   and everything inside stays grey" + nl
+    s = s + "   until the close appears */" + nl
+    s = s + "" + nl
+    s = s + "func main() {" + nl
+    s = s + "    let origin = Point { x: 0, y: 0 }" + nl
+    s = s + "    let target = Point { x: 3, y: 4 }" + nl
+    s = s + "    if (distance(origin, target) > 0) {" + nl
+    s = s + "        print(string(42))" + nl
+    s = s + "    }" + nl
+    s = s + "}" + nl
+    return buf_from_text(s)
+}
+
+// ── Input ────────────────────────────────────────────────────────────────────
+
+// Housekeeping around every keystroke that changed the document.
+func ed_edited(now: int) : void {
+    ed_caretAt = now
+    ed_blockDirty = true
+}
+
+func ed_moved(now: int) : void {
+    ed_caretAt = now
+}
+
+func ed_expire_status(now: int) : void {
+    if (ed_status != "" && now - ed_statusAt > 2500) {
+        ed_status = ""
+    }
+}
+
+/*
+ * One key transition, real or auto-repeated. Control combinations are commands; everything else
+ * that maps to a character types it, and the editing keys do what their names say.
+ */
+func ed_key(vk: int, shift: bool, ctrl: bool, now: int) : void {
+    if (ctrl) {
+        if (vk == 83) {
+            ed_save()            // S
+        } elif (vk == 90) {
+            ed_buf = buf_undo(ed_buf)
+            ed_edited(now)
+        } elif (vk == 89) {
+            ed_buf = buf_redo(ed_buf)
+            ed_edited(now)
+        }
+        return
+    }
+
+    if (vk == KeyVk.BACKSPACE) {
+        ed_buf = buf_backspace(ed_buf)
+        ed_edited(now)
+        return
+    }
+    if (vk == KeyVk.DELETE) {
+        ed_buf = buf_delete(ed_buf)
+        ed_edited(now)
+        return
+    }
+    if (vk == KeyVk.ENTER) {
+        ed_buf = buf_enter(ed_buf)
+        ed_edited(now)
+        return
+    }
+    if (vk == KeyVk.TAB) {
+        ed_buf = buf_tab(ed_buf)
+        ed_edited(now)
+        return
+    }
+    if (vk == KeyVk.LEFT) {
+        ed_buf = buf_move_left(ed_buf)
+        ed_moved(now)
+        return
+    }
+    if (vk == KeyVk.RIGHT) {
+        ed_buf = buf_move_right(ed_buf)
+        ed_moved(now)
+        return
+    }
+    if (vk == KeyVk.UP) {
+        ed_buf = buf_move_up(ed_buf)
+        ed_moved(now)
+        return
+    }
+    if (vk == KeyVk.DOWN) {
+        ed_buf = buf_move_down(ed_buf)
+        ed_moved(now)
+        return
+    }
+    if (vk == KeyVk.HOME) {
+        ed_buf = buf_move_home(ed_buf)
+        ed_moved(now)
+        return
+    }
+    if (vk == KeyVk.END) {
+        ed_buf = buf_move_end(ed_buf)
+        ed_moved(now)
+        return
+    }
+    if (vk == KeyVk.PRIOR) {
+        ed_buf = buf_move_page(ed_buf, 0 - ed_page_rows())
+        ed_moved(now)
+        return
+    }
+    if (vk == KeyVk.NEXT) {
+        ed_buf = buf_move_page(ed_buf, ed_page_rows())
+        ed_moved(now)
+        return
+    }
+
+    let ch: string = key_to_char(vk, shift)
+    if (ch != "") {
+        ed_buf = buf_insert(ed_buf, ch)
+        ed_edited(now)
+    }
+}
+
+/*
+ * Walks the virtual-key space, turning held-down state into press events with auto-repeat, and
+ * reads the mouse for clicks inside the text area.
+ */
+func ed_input(host: GlHost) : void {
+    let now: int = time_millis()
+    ed_expire_status(now)
+
+    let shiftL: bool = hostgl_key_pressed(KeyVk.SHIFT) || hostgl_key_pressed(KeyVk.LSHIFT)
+    let shift: bool = shiftL || hostgl_key_pressed(KeyVk.RSHIFT)
+    let ctrlL: bool = hostgl_key_pressed(KeyVk.CONTROL) || hostgl_key_pressed(KeyVk.LCONTROL)
+    let ctrl: bool = ctrlL || hostgl_key_pressed(KeyVk.RCONTROL)
+
+    let vk: int = 1
+    while (vk < 255) {
+        let down: bool = hostgl_key_pressed(vk)
+        let was: bool = ed_prevKeys[vk] == 1
+
+        if (down && !was) {
+            ed_key(vk, shift, ctrl, now)
+            ed_repVK = vk
+            ed_repAt = now + ed_repeat_delay()
+        } elif (down && was && vk == ed_repVK && now >= ed_repAt) {
+            ed_key(vk, shift, ctrl, now)
+            ed_repAt = now + ed_repeat_rate()
+        }
+
+        if (down) {
+            ed_prevKeys[vk] = 1
+        } else {
+            ed_prevKeys[vk] = 0
+        }
+        vk = vk + 1
+    }
+
+    // A click places the cursor, mapped back through the rectangle the painter reported last
+    // frame and the same gutter and scroll arithmetic it used to lay the text out.
+    let md: int = 0
+    if (hostgl_mouse_down(host)) { md = 1 }
+    if (md == 1 && ed_mousePrev == 0) {
+        let mx: int = hostgl_mouse_x(host)
+        let my: int = hostgl_mouse_y(host)
+        let vx: int = ed_view[0]
+        let vy: int = ed_view[1]
+        let vw: int = ed_view[2]
+        let vh: int = ed_view[3]
+
+        if (mx >= vx && mx < vx + vw && my >= vy && my < vy + vh) {
+            let row: int = ed_scroll + (my - vy - 4) / ed_lh
+            let col: int = ed_hscroll
+            if (mx >= vx + ed_gutter_width() + 5) {
+                col = ed_hscroll + (mx - vx - ed_gutter_width() - 5) / ed_cw
+            }
+            ed_buf = buf_set_cursor(ed_buf, row, col)
+            ed_caretAt = now
+        }
+    }
+    ed_mousePrev = md
+}
+
+// ── Painting ─────────────────────────────────────────────────────────────────
+
+/*
+ * The colour a token kind draws in: syntax.prl supplies the highlighting colours, and the kinds
+ * it leaves at zero fall back to the theme's own text colours.
+ */
+func ed_token_color(kind: int, theme: int) : int {
+    let c: int = syn_color(kind, theme)
+    if (c != 0) { return c }
+    if (kind == TokKind.PUNCT) { return theme_text_dim(theme) }
+    return theme_text(theme)
+}
+
+/*
+ * Paints the document into the scene: the gutter, the current line, the tokens, the caret.
+ *
+ * Every string goes through `ui_intern` — a TEXT record carries a string-table index, not a
+ * string — and every token becomes its own record so its characters can have their own colour.
+ * The whole text area sits behind a clip push, so a long line scrolls out instead of drawing
+ * across the line numbers.
+ */
+func ed_paint(ops: array<int>, at: int, tag: int, x: int, y: int, w: int, h: int,
+              state: array<int>) : int {
+    ed_view[0] = x
+    ed_view[1] = y
+    ed_view[2] = w
+    ed_view[3] = h
+    ed_clamp_scroll(w, h)
+    if (ed_blockDirty) {
+        ed_rebuild_block()
+        ed_blockDirty = false
+    }
+
+    let theme: int = ed_theme
+    let cw: int = ed_cw
+    let lh: int = ed_lh
+    let gw: int = ed_gutter_width()
+    let rows: int = ed_rows_visible(h)
+    let textX: int = x + gw + 5
+    let top: int = y + 4
+    let cap: int = dl_capacity(ops)
+
+    let next: int = at
+
+    next = dl_emit(ops, next, DlOp.RECT, x, y, w, h, theme_canvas_backdrop(theme), 0)
+    next = dl_emit(ops, next, DlOp.RECT, x, y, gw, h, theme_surface(theme), 0)
+    next = dl_emit(ops, next, DlOp.RECT, x + gw, y, 1, h, theme_border(theme), 0)
+
+    // The row the cursor is on, faintly.
+    if (ed_buf.row >= ed_scroll && ed_buf.row < ed_scroll + rows) {
+        let hiY: int = top + (ed_buf.row - ed_scroll) * lh
+        next = dl_emit(ops, next, DlOp.RECT, x + gw + 1, hiY, w - gw - 1, lh,
+            color_with_alpha(theme_accent(theme), 34), 0)
+    }
+
+    // ── The line numbers ─────────────────────────────────────────────────────
+    //
+    // Emitted before the clip push: they sit in the gutter, and the clip below is the text
+    // area's rectangle, which starts where they end. Drawing them inside it would scissor
+    // every one of them away — which is exactly what the first build did.
+
+    let now: int = time_millis()
+
+    let r: int = ed_scroll
+    while (r < ed_buf.count && r < ed_scroll + rows) {
+        let ly: int = top + (r - ed_scroll) * lh
+
+        let num: string = string(r + 1)
+        let numW: int = num.length() * cw
+        let numColor: int = theme_text_dim(theme)
+        if (r == ed_buf.row) { numColor = theme_accent(theme) }
+        next = dl_emit(ops, next, DlOp.TEXT, x + gw - 8 - numW, ly,
+            ui_intern(ed_ui, num), numColor, EdFont.CODE, 0)
+
+        r = r + 1
+    }
+
+    // ── The text ─────────────────────────────────────────────────────────────
+    //
+    // Everything from here on is clipped to the area right of the gutter, so a long line
+    // scrolls out instead of drawing across the numbers.
+
+    next = dl_emit(ops, next, DlOp.CLIP_PUSH, x + gw + 1, y, w - gw - 1, h, 0, 0)
+
+    // The caret holds steady for a moment after moving, then blinks.
+    let caretOn: bool = (now / 530) % 2 == 0
+    if (now - ed_caretAt < 350) { caretOn = true }
+
+    let outState: array<int> = array_new(1)
+    r = ed_scroll
+    while (r < ed_buf.count && r < ed_scroll + rows) {
+        let ty: int = top + (r - ed_scroll) * lh
+
+        let line: string = ed_buf.lines[r]
+        if (line.length() > 0 && next < cap - 2) {
+            let toks: DynArray<Tok> = syn_line(line, ed_block[r], outState)
+            let t: int = 0
+            while (t < dynarray_length<Tok>(toks) && next < cap - 2) {
+                let tok: Tok = dynarray_get<Tok>(toks, t)
+                if (tok.kind != TokKind.SPACE) {
+                    let slice: string = line.substring(tok.start, tok.start + tok.len)
+                    let tx: int = textX + (tok.start - ed_hscroll) * cw
+                    next = dl_emit(ops, next, DlOp.TEXT, tx, ty,
+                        ui_intern(ed_ui, slice), ed_token_color(tok.kind, theme), EdFont.CODE, 0)
+                }
+                t = t + 1
+            }
+        }
+
+        if (r == ed_buf.row && caretOn) {
+            let cx: int = textX + (ed_buf.col - ed_hscroll) * cw
+            next = dl_emit(ops, next, DlOp.RECT, cx, ty, 2, lh - 2, theme_accent(theme), 0)
+        }
+
+        r = r + 1
+    }
+
+    next = dl_emit(ops, next, DlOp.CLIP_POP, 0, 0, 0, 0, 0, 0)
+    return next
+}
+
+// ── Chrome ───────────────────────────────────────────────────────────────────
+
+func ed_btn(ui: Ui, label: string, action: int, theme: int) : int {
+    return ui_button(ui, label, action: action, bg: theme_hover(theme), fg: theme_text(theme),
+        radius: 6, pad: 8)
+}
+
+// ── The loop ─────────────────────────────────────────────────────────────────
+
+func ed_run() : void {
+    let host: GlHost = hostgl_open("ProLang Editor", 1100, 740,
+        background: theme_background(ed_theme), maxOps: 16384)
+
+    // Font 0 is the chrome, font 1 is the code: a monospace face, because a text editor's
+    // whole geometry is per-character cells.
+    let families: array<string> = array_new(2)
+    let sizes: array<int> = array_new(2)
+    let bolds: array<int> = array_new(2)
+    families[0] = "Segoe UI"
+    sizes[0] = 10
+    bolds[0] = 0
+    families[1] = "Consolas"
+    sizes[1] = 12
+    bolds[1] = 0
+    let fonts: FontSet = hostgl_fonts(host, families, sizes, bolds)
+
+    ed_cw = font_width(fonts, EdFont.CODE, 77)
+    ed_lh = font_line_height(fonts, EdFont.CODE) + 3
+
+    while (hostgl_running(host)) {
+        fps_tick(ed_frames)
+        hostgl_begin(host, ed_ui)
+        ed_input(host)
+
+        let theme: int = ed_theme
+
+        ui_col(ed_ui, pad: 0, gap: 0, bg: theme_background(theme))
+            ui_row(ed_ui, pad: 10, gap: 8, bg: theme_surface(theme))
+                let title: string = "ProLang Editor - " + ed_path
+                if (ed_buf.modified) { title = title + " *" }
+                ui_text(ed_ui, title, fg: theme_text(theme), font: EdFont.UI, pad: 4)
+                ui_spacer(ed_ui, flex: 1)
+                ed_btn(ed_ui, "Save (Ctrl+S)", EdAct.SAVE, theme)
+                ed_btn(ed_ui, "Theme", EdAct.THEME, theme)
+                ed_btn(ed_ui, "Quit", EdAct.QUIT, theme)
+            ui_end(ed_ui)
+
+            ui_box(ed_ui, pad: 0, flex: 1, bg: theme_canvas_backdrop(theme))
+                ui_scene(ed_ui, tag: 1, flex: 1)
+            ui_end(ed_ui)
+
+            ui_row(ed_ui, pad: 6, gap: 16, bg: theme_surface(theme))
+                let where: string = "Ln " + string(ed_buf.row + 1) + ", Col " + string(ed_buf.col + 1) + "   " + string(ed_buf.count) + " lines"
+                if (ed_buf.modified) { where = where + "   modified" }
+                ui_text(ed_ui, where, fg: theme_text_dim(theme), font: EdFont.UI)
+                ui_spacer(ed_ui, flex: 1)
+                if (ed_status != "") {
+                    ui_text(ed_ui, ed_status, fg: theme_accent(theme), font: EdFont.UI)
+                } else {
+                    ui_text(ed_ui, "Ctrl+Z undo   Ctrl+Y redo   Tab indents   PgUp/PgDn scroll",
+                        fg: theme_text_dim(theme), font: EdFont.UI)
+                }
+                ui_text(ed_ui, fps_text(ed_frames), fg: theme_text_dim(theme), font: EdFont.UI)
+            ui_end(ed_ui)
+        ui_end(ed_ui)
+
+        let act: int = hostgl_present_scene(host, ed_ui, fonts, ed_paint, ed_ui.st,
+            theme_background(ed_theme))
+
+        if (act == EdAct.SAVE) {
+            ed_save()
+        } elif (act == EdAct.THEME) {
+            ed_theme = theme_next(ed_theme)
+        } elif (act == EdAct.QUIT) {
+            hostgl_close(host)
+        }
+    }
+
+    hostgl_close(host)
+}

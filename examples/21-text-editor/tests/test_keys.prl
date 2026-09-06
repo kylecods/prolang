@@ -1,0 +1,70 @@
+/*
+ * Text editor tests — keys.prl
+ *
+ * The virtual-key-to-character table, driven the way the editor drives it: a key code and the
+ * shift state, expecting the character a US layout would produce.
+ */
+
+import "testing"
+import "../keys.prl"
+
+func test_keys_run() : void {
+    // ── Letters ──────────────────────────────────────────────────────────────
+    t_eq_str("a is lowercase", key_to_char(KeyVk.A, false), "a")
+    t_eq_str("A is shifted", key_to_char(KeyVk.A, true), "A")
+    t_eq_str("z is lowercase", key_to_char(KeyVk.Z, false), "z")
+    t_eq_str("m is lowercase", key_to_char(KeyVk.M, false), "m")
+
+    // ── Digits ───────────────────────────────────────────────────────────────
+    t_eq_str("1 is itself", key_to_char(49, false), "1")
+    t_eq_str("0 is itself", key_to_char(48, false), "0")
+    t_eq_str("shift+1 is !", key_to_char(49, true), "!")
+    t_eq_str("shift+2 is @", key_to_char(50, true), "@")
+    t_eq_str("shift+9 is (", key_to_char(57, true), "(")
+    t_eq_str("shift+0 is )", key_to_char(48, true), ")")
+
+    // ── Space ────────────────────────────────────────────────────────────────
+    t_eq_str("space is a space", key_to_char(KeyVk.SPACE, false), " ")
+    t_eq_str("shift+space is a space", key_to_char(KeyVk.SPACE, true), " ")
+
+    // ── The OEM punctuation block ────────────────────────────────────────────
+    t_eq_str("semicolon", key_to_char(KeyVk.OEM_1, false), ";")
+    t_eq_str("colon", key_to_char(KeyVk.OEM_1, true), ":")
+    t_eq_str("equals", key_to_char(KeyVk.OEM_PLUS, false), "=")
+    t_eq_str("plus", key_to_char(KeyVk.OEM_PLUS, true), "+")
+    t_eq_str("comma", key_to_char(KeyVk.OEM_COMMA, false), ",")
+    t_eq_str("less than", key_to_char(KeyVk.OEM_COMMA, true), "<")
+    t_eq_str("minus", key_to_char(KeyVk.OEM_MINUS, false), "-")
+    t_eq_str("underscore", key_to_char(KeyVk.OEM_MINUS, true), "_")
+    t_eq_str("period", key_to_char(KeyVk.OEM_PERIOD, false), ".")
+    t_eq_str("greater than", key_to_char(KeyVk.OEM_PERIOD, true), ">")
+    t_eq_str("slash", key_to_char(KeyVk.OEM_2, false), "/")
+    t_eq_str("question mark", key_to_char(KeyVk.OEM_2, true), "?")
+    t_eq_str("backtick", key_to_char(KeyVk.OEM_3, false), "`")
+    t_eq_str("tilde", key_to_char(KeyVk.OEM_3, true), "~")
+    t_eq_str("open bracket", key_to_char(KeyVk.OEM_4, false), "[")
+    t_eq_str("open brace", key_to_char(KeyVk.OEM_4, true), "{")
+    t_eq_str("backslash", key_to_char(KeyVk.OEM_5, false), "\")
+    t_eq_str("pipe", key_to_char(KeyVk.OEM_5, true), "|")
+    t_eq_str("close bracket", key_to_char(KeyVk.OEM_6, false), "]")
+    t_eq_str("close brace", key_to_char(KeyVk.OEM_6, true), "}")
+    t_eq_str("apostrophe", key_to_char(KeyVk.OEM_7, false), "'")
+    t_eq_str("double quote", key_to_char(KeyVk.OEM_7, true), """")
+
+    // ── Keys that type nothing ───────────────────────────────────────────────
+    t_eq_str("left types nothing", key_to_char(KeyVk.LEFT, false), "")
+    t_eq_str("delete types nothing", key_to_char(KeyVk.DELETE, false), "")
+    t_eq_str("enter types nothing", key_to_char(KeyVk.ENTER, false), "")
+    t_eq_str("backspace types nothing", key_to_char(KeyVk.BACKSPACE, false), "")
+    t_eq_str("tab types nothing", key_to_char(KeyVk.TAB, false), "")
+    t_eq_str("F5 types nothing", key_to_char(116, false), "")
+    t_eq_str("shift itself types nothing", key_to_char(KeyVk.SHIFT, false), "")
+
+    // ── Modifiers ────────────────────────────────────────────────────────────
+    t_true("shift is a modifier", key_is_modifier(KeyVk.SHIFT))
+    t_true("right shift is a modifier", key_is_modifier(KeyVk.RSHIFT))
+    t_true("control is a modifier", key_is_modifier(KeyVk.CONTROL))
+    t_true("left control is a modifier", key_is_modifier(KeyVk.LCONTROL))
+    t_false("A is not a modifier", key_is_modifier(KeyVk.A))
+    t_false("space is not a modifier", key_is_modifier(KeyVk.SPACE))
+}

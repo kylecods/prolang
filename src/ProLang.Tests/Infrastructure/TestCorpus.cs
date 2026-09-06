@@ -195,6 +195,27 @@ internal static class TestCorpus
             + "runtime in __UserMain, so its output cannot be asserted. The snapshot captures the "
             + "faulty IL; fixing the bug is expected to change it."),
 
+        // ── Text editor ──────────────────────────────────────────────────────────────────
+        // The three pure modules are exercised by tests/run_tests.prl; the app itself is a
+        // window loop over the OpenGL host and cannot run under a test harness.
+        new("examples/21-text-editor/keys.prl", CorpusKind.CompileOnly,
+            "Library — virtual-key to character map; exercised by tests/run_tests.prl."),
+        new("examples/21-text-editor/buffer.prl", CorpusKind.CompileOnly,
+            "Library — text buffer, cursor and undo; exercised by tests/run_tests.prl."),
+        new("examples/21-text-editor/syntax.prl", CorpusKind.CompileOnly,
+            "Library — prolang tokenizer for highlighting; exercised by tests/run_tests.prl."),
+        new("examples/21-text-editor/editor.prl", CorpusKind.CompileOnly,
+            "OpenGL GUI with an event loop that only ends when the window is closed."),
+        new("examples/21-text-editor/main.prl", CorpusKind.CompileOnly,
+            "Interactive GUI entry point; opens a window that only closes when the user does."),
+        new("examples/21-text-editor/tests/test_keys.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/run_tests.prl."),
+        new("examples/21-text-editor/tests/test_buffer.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/run_tests.prl."),
+        new("examples/21-text-editor/tests/test_syntax.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/run_tests.prl."),
+        new("examples/21-text-editor/tests/run_tests.prl", CorpusKind.Runnable),
+
         // ── Pre-existing failures, tracked so they cannot regress further or vanish ───────
         new("tests/language/parser/test-parser-simple.prl", CorpusKind.Runnable),
         new("tests/language/parser/test-parse-result.prl", CorpusKind.Runnable),

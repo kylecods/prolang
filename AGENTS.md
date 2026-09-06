@@ -129,7 +129,8 @@ prolang/
 │   ├── 17-widgets/                # The widget toolkit: one counter, on Windows Forms, OpenGL, and on PSP
 │   ├── 18-psp-cube/               # Rotating cube rendered on Windows Forms and PSP
 │   ├── 19-opengl-cube/            # Hardware-accelerated OpenGL 3D cube
-│   └── 20-opengl-widgets/         # OpenGL UI widgets with embedded 3D viewport
+│   ├── 20-opengl-widgets/         # OpenGL UI widgets with embedded 3D viewport
+│   └── 21-text-editor/            # Text editor on the OpenGL host, with prolang syntax highlighting
 │
 ├── std/                           # Standard library, shipped beside the compiler
 │   ├── ui/                        # UI toolkit: shapes, themes, icons, layout, WinForms & OpenGL hosts

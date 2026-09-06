@@ -1,0 +1,20 @@
+/*
+ * Text editor — entry point
+ *
+ * Passes the command line straight through: one optional argument is the file to open, and with
+ * none the editor starts on a small sample of the language.
+ *
+ *   dotnet run --project src/ProLang/ProLang.csproj -- \
+ *     examples/21-text-editor/main.prl --target=winexe -o bin/editor.dll
+ *   dotnet bin/editor.dll examples/21-text-editor/buffer.prl
+ */
+
+import "editor.prl"
+
+func main(args: array<string>) {
+    if (args.length() > 0) {
+        ed_path = args[0]
+    }
+    ed_load(ed_path)
+    ed_run()
+}

@@ -1,0 +1,205 @@
+/*
+ * Text editor tests — buffer.prl
+ *
+ * Each edit is driven the way the editor drives it and the result is read back through the
+ * cursor, the lines, and the undo stack. Every group builds its own buffer: edits write through
+ * the shared lines array, so a buffer reused across groups would carry earlier groups' changes.
+ */
+
+import "testing"
+import "dotnet:System"
+import "../buffer.prl"
+
+// Builds a buffer from text joined by newlines, so a test's arrange step reads like the file it
+// describes. The newline is char 10; the language has no escape for it in a literal.
+func buf_of(lines: array<string>, count: int) : Buf {
+    let nl: string = buf_nl()
+    let s: string = ""
+    let i: int = 0
+    while (i < count) {
+        s = s + lines[i] + nl
+        i = i + 1
+    }
+    return buf_from_text(s)
+}
+
+func buf_two(a: string, b: string) : Buf {
+    let lines: array<string> = array_new(2)
+    lines[0] = a
+    lines[1] = b
+    return buf_of(lines, 2)
+}
+
+func test_buffer_run() : void {
+    // ── Parsing and rendering text ───────────────────────────────────────────
+    let b: Buf = buf_two("alpha", "beta")
+    t_eq_int("two lines load", b.count, 2)
+    t_eq_str("first line", b.lines[0], "alpha")
+    t_eq_str("second line", b.lines[1], "beta")
+    t_eq_str("round trip", buf_to_text(b), "alpha" + buf_nl() + "beta" + buf_nl())
+
+    let crlf: string = "one" + buf_nl() + "two" + buf_nl()
+    let loaded: Buf = buf_from_text(crlf)
+    t_eq_int("trailing newline adds no phantom line", loaded.count, 2)
+
+    let win: string = "one" + Char.ConvertFromUtf32(13) + buf_nl() + "two"
+    let fromWin: Buf = buf_from_text(win)
+    t_eq_str("carriage returns are dropped", fromWin.lines[0], "one")
+    t_eq_int("last line kept", fromWin.count, 2)
+
+    let empty: Buf = buf_from_text("")
+    t_eq_int("empty text is one empty line", empty.count, 1)
+    t_eq_str("empty line is empty", empty.lines[0], "")
+
+    // ── Insert ───────────────────────────────────────────────────────────────
+    let ins1: Buf = buf_insert(buf_two("alpha", "beta"), "x")
+    t_eq_str("insert at start", ins1.lines[0], "xalpha")
+    t_eq_int("cursor advances", ins1.col, 1)
+    t_true("insert marks modified", ins1.modified)
+
+    let ins2: Buf = buf_insert(buf_set_cursor(buf_two("alpha", "beta"), 0, 5), "-tail")
+    t_eq_str("insert at end", ins2.lines[0], "alpha-tail")
+    t_eq_int("cursor at the new end", ins2.col, 10)
+
+    let ins3: Buf = buf_insert(buf_set_cursor(buf_two("alpha", "beta"), 1, 2), "-")
+    t_eq_str("insert on the second line", ins3.lines[1], "be-ta")
+    t_eq_str("first line untouched", ins3.lines[0], "alpha")
+
+    // ── Movement ─────────────────────────────────────────────────────────────
+    let m: Buf = buf_set_cursor(buf_two("alpha", "beta"), 99, 99)
+    t_eq_int("cursor clamps to the end", m.row, 1)
+    t_eq_int("column clamps too", m.col, 4)
+
+    let fromEnd: Buf = buf_set_cursor(buf_two("alpha", "beta"), 0, 5)
+    t_eq_int("left inside the line steps back", buf_move_left(fromEnd).col, 4)
+
+    let atStart: Buf = buf_set_cursor(buf_two("alpha", "beta"), 1, 0)
+    t_eq_int("left at line start joins up", buf_move_left(atStart).row, 0)
+    t_eq_int("and lands at its end", buf_move_left(atStart).col, 5)
+
+    let endOfFirst: Buf = buf_set_cursor(buf_two("alpha", "beta"), 0, 5)
+    t_eq_int("right at line end wraps down", buf_move_right(endOfFirst).row, 1)
+    t_eq_int("and starts the line", buf_move_right(endOfFirst).col, 0)
+
+    let down: Buf = buf_move_down(buf_set_cursor(buf_two("alpha", "beta"), 0, 5))
+    t_eq_int("down clamps to the shorter line", down.col, 4)
+    t_eq_int("down remembers the wanted column", down.want, 5)
+    t_eq_int("up returns to the wanted column", buf_move_up(down).col, 5)
+
+    t_eq_int("home is column 0", buf_move_home(buf_set_cursor(buf_two("alpha", "beta"), 1, 3)).col, 0)
+    t_eq_int("end is the line end", buf_move_end(buf_set_cursor(buf_two("alpha", "beta"), 1, 0)).col, 4)
+
+    let paged: Buf = buf_move_page(buf_set_cursor(buf_two("alpha", "beta"), 0, 0), 10)
+    t_eq_int("page down clamps at the last line", paged.row, 1)
+    t_eq_int("page up clamps at the first", buf_move_page(paged, 0 - 10).row, 0)
+
+    // ── Backspace and delete ─────────────────────────────────────────────────
+    let mid: Buf = buf_backspace(buf_set_cursor(buf_two("alpha", "beta"), 0, 1))
+    t_eq_str("backspace removes before the cursor", mid.lines[0], "lpha")
+
+    let lineStart: Buf = buf_backspace(buf_set_cursor(buf_two("alpha", "beta"), 1, 0))
+    t_eq_int("backspace at line start joins up", lineStart.count, 1)
+    t_eq_str("join keeps both halves", lineStart.lines[0], "alphabeta")
+    t_eq_int("cursor sits at the seam", lineStart.col, 5)
+
+    let del: Buf = buf_delete(buf_set_cursor(buf_two("alpha", "beta"), 0, 0))
+    t_eq_str("delete removes at the cursor", del.lines[0], "lpha")
+
+    let lineEnd: Buf = buf_delete(buf_set_cursor(buf_two("alpha", "beta"), 0, 5))
+    t_eq_int("delete at line end pulls the next line up", lineEnd.count, 1)
+    t_eq_str("pull keeps both halves", lineEnd.lines[0], "alphabeta")
+
+    t_eq_str("backspace on an empty document changes nothing",
+        buf_backspace(buf_from_text("")).lines[0], "")
+
+    // ── Enter and auto-indent ────────────────────────────────────────────────
+    let ind: array<string> = array_new(1)
+    ind[0] = "    let x = 1"
+    let split: Buf = buf_enter(buf_set_cursor(buf_of(ind, 1), 0, 11))
+    t_eq_int("enter splits into two lines", split.count, 2)
+    t_eq_str("left half stays", split.lines[0], "    let x =")
+    t_eq_str("right half carries the indent", split.lines[1], "     1")
+    t_eq_int("cursor after the indent", split.col, 4)
+
+    let atEndSplit: Buf = buf_enter(buf_set_cursor(buf_of(ind, 1), 0, 13))
+    t_eq_str("enter at line end still indents", atEndSplit.lines[1], "    ")
+
+    // ── Tab ──────────────────────────────────────────────────────────────────
+    let tabbed: Buf = buf_tab(buf_from_text("x"))
+    t_eq_str("tab inserts four spaces", tabbed.lines[0], "    x")
+
+    // ── Undo and redo ────────────────────────────────────────────────────────
+    let u: Buf = buf_two("ab", "cd")
+    u = buf_set_cursor(u, 0, 2)
+    u = buf_insert(u, "X")
+    t_eq_str("insert lands", u.lines[0], "abX")
+
+    u = buf_undo(u)
+    t_eq_str("undo removes the insert", u.lines[0], "ab")
+    t_eq_int("undo restores the cursor", u.col, 2)
+
+    u = buf_redo(u)
+    t_eq_str("redo replays the insert", u.lines[0], "abX")
+    t_eq_int("redo restores the cursor", u.col, 3)
+
+    // Enter at the end of a line, then undo and redo it.
+    u = buf_enter(u)
+    t_eq_int("enter adds a line", u.count, 3)
+    t_eq_str("the new line is empty", u.lines[1], "")
+
+    u = buf_undo(u)
+    t_eq_int("undo rejoins the split", u.count, 2)
+    t_eq_str("undo restores the whole line", u.lines[0], "abX")
+
+    u = buf_redo(u)
+    t_eq_int("redo splits again", u.count, 3)
+    t_eq_str("redo restores the empty line", u.lines[1], "")
+
+    // A join, undone and redone.
+    u = buf_set_cursor(u, 1, 0)
+    u = buf_backspace(u)
+    t_eq_int("backspace joins", u.count, 2)
+    t_eq_str("join pulls the empty line in", u.lines[0], "abX")
+
+    u = buf_undo(u)
+    t_eq_int("undo un-joins", u.count, 3)
+    t_eq_str("the empty line comes back", u.lines[1], "")
+
+    u = buf_redo(u)
+    t_eq_int("redo joins again", u.count, 2)
+
+    // A new edit after undo forks the timeline: the redo stack is gone.
+    let f: Buf = buf_two("ab", "cd")
+    f = buf_set_cursor(f, 0, 2)
+    f = buf_insert(f, "X")
+    f = buf_undo(f)
+    f = buf_insert(f, "Z")
+    t_eq_int("editing after undo clears the redo stack", f.redoN, 0)
+    t_eq_str("and the text is the fork", f.lines[0], "abZ")
+
+    // Undoing a delete-at-end merge both ways.
+    let d: Buf = buf_delete(buf_set_cursor(buf_two("ab", "cd"), 0, 2))
+    t_eq_int("delete at end merges", d.count, 1)
+    t_eq_str("merge keeps both halves", d.lines[0], "abcd")
+
+    let d2: Buf = buf_undo(d)
+    t_eq_int("undo un-merges", d2.count, 2)
+    t_eq_str("second line comes back", d2.lines[1], "cd")
+
+    let d3: Buf = buf_redo(d2)
+    t_eq_int("redo merges again", d3.count, 1)
+    t_eq_str("text is the merge", d3.lines[0], "abcd")
+
+    // Undoing a backspace-at-start join both ways.
+    let j: Buf = buf_backspace(buf_set_cursor(buf_two("ab", "cd"), 1, 0))
+    t_eq_str("joined", j.lines[0], "abcd")
+    let j2: Buf = buf_undo(j)
+    t_eq_int("undo restores two lines", j2.count, 2)
+    t_eq_str("undo restores the second line", j2.lines[1], "cd")
+    let j3: Buf = buf_redo(j2)
+    t_eq_str("redo joins again", j3.lines[0], "abcd")
+
+    // ── Saving clears the modified flag ──────────────────────────────────────
+    let s: Buf = buf_saved(buf_insert(buf_from_text("x"), "y"))
+    t_false("saved buffer is not modified", s.modified)
+}
