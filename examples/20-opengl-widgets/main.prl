@@ -1,0 +1,319 @@
+/*
+ * ProLang OpenGL Widgets Demo
+ *
+ * Demonstrates the UI widget toolkit running on the built-in OpenGL backend,
+ * featuring an embedded interactive hardware-accelerated 3D scene inside a styled UI.
+ *
+ * Features:
+ *   - Hardware-accelerated UI layout (columns, rows, cards, buttons, text)
+ *   - Embedded 3D OpenGL viewport via ui_gl_scene
+ *   - Real-time frame rate counter (std/ui/fps)
+ *   - Multi-axis manual rotation & auto-spin mode
+ *   - Wireframe mode toggle (gl_polygon_mode)
+ *   - Interactive mouse dragging to rotate 3D geometry
+ *   - Dynamic theme switching
+ */
+
+import "gl"
+import "ui/host_gl"
+import "ui/theme"
+import "ui/fps"
+import "ui/color"
+
+enum Act {
+    NONE,
+    ROT_XP,
+    ROT_XM,
+    ROT_YP,
+    ROT_YM,
+    ROT_ZP,
+    ROT_ZM,
+    SPIN,
+    WIREFRAME,
+    RESET,
+    THEME,
+    QUIT
+}
+
+enum Font {
+    BODY,
+    TITLE
+}
+
+enum SceneS {
+    ANG_X,
+    ANG_Y,
+    ANG_Z,
+    SPINNING,
+    WIREFRAME,
+    PREV_MX,
+    PREV_MY,
+    DRAGGING
+}
+
+global state: array<int> = array_new(8)
+global activeTheme: int = Theme.MIDNIGHT
+
+func draw_cube_scene(tag: int, x: int, y: int, w: int, h: int, st: array<int>) : void {
+    if (w <= 0 || h <= 0) {
+        return
+    }
+
+    // Set up 3D perspective projection for this widget viewport
+    gl_matrix_mode(GL.PROJECTION)
+    gl_load_identity()
+    let wf: float64 = float64(w)
+    let hf: float64 = float64(h)
+    let aspect: float64 = wf / hf
+    gl_perspective(45.0, aspect, 0.1, 100.0)
+
+    // Set up modelview camera matrix
+    gl_matrix_mode(GL.MODELVIEW)
+    gl_load_identity()
+    gl_translatef(0.0f, 0.0f, -4.5f)
+
+    let ax: float32 = float32(st[SceneS.ANG_X])
+    let ay: float32 = float32(st[SceneS.ANG_Y])
+    let az: float32 = float32(st[SceneS.ANG_Z])
+
+    gl_rotatef(ax, 1.0f, 0.0f, 0.0f)
+    gl_rotatef(ay, 0.0f, 1.0f, 0.0f)
+    gl_rotatef(az, 0.0f, 0.0f, 1.0f)
+
+    // Clear depth buffer within the scissored widget area
+    gl_clear(GL.DEPTH_BUFFER_BIT)
+
+    if (st[SceneS.WIREFRAME] == 1) {
+        gl_polygon_mode(GL.FRONT_AND_BACK, GL.LINE)
+        gl_line_width(2.0f)
+    } else {
+        gl_polygon_mode(GL.FRONT_AND_BACK, GL.FILL)
+    }
+
+    gl_begin(GL.QUADS)
+
+    // Front Face - Coral Red
+    gl_color3f(0.95f, 0.28f, 0.28f)
+    gl_vertex3f(-1.0f, -1.0f,  1.0f)
+    gl_vertex3f( 1.0f, -1.0f,  1.0f)
+    gl_vertex3f( 1.0f,  1.0f,  1.0f)
+    gl_vertex3f(-1.0f,  1.0f,  1.0f)
+
+    // Back Face - Emerald Green
+    gl_color3f(0.20f, 0.85f, 0.45f)
+    gl_vertex3f(-1.0f, -1.0f, -1.0f)
+    gl_vertex3f(-1.0f,  1.0f, -1.0f)
+    gl_vertex3f( 1.0f,  1.0f, -1.0f)
+    gl_vertex3f( 1.0f, -1.0f, -1.0f)
+
+    // Top Face - Royal Blue
+    gl_color3f(0.25f, 0.55f, 0.95f)
+    gl_vertex3f(-1.0f,  1.0f, -1.0f)
+    gl_vertex3f(-1.0f,  1.0f,  1.0f)
+    gl_vertex3f( 1.0f,  1.0f,  1.0f)
+    gl_vertex3f( 1.0f,  1.0f, -1.0f)
+
+    // Bottom Face - Gold / Amber
+    gl_color3f(0.95f, 0.80f, 0.20f)
+    gl_vertex3f(-1.0f, -1.0f, -1.0f)
+    gl_vertex3f( 1.0f, -1.0f, -1.0f)
+    gl_vertex3f( 1.0f, -1.0f,  1.0f)
+    gl_vertex3f(-1.0f, -1.0f,  1.0f)
+
+    // Right Face - Magenta
+    gl_color3f(0.85f, 0.25f, 0.85f)
+    gl_vertex3f( 1.0f, -1.0f, -1.0f)
+    gl_vertex3f( 1.0f,  1.0f, -1.0f)
+    gl_vertex3f( 1.0f,  1.0f,  1.0f)
+    gl_vertex3f( 1.0f, -1.0f,  1.0f)
+
+    // Left Face - Cyan
+    gl_color3f(0.18f, 0.85f, 0.88f)
+    gl_vertex3f(-1.0f, -1.0f, -1.0f)
+    gl_vertex3f(-1.0f, -1.0f,  1.0f)
+    gl_vertex3f(-1.0f,  1.0f,  1.0f)
+    gl_vertex3f(-1.0f,  1.0f, -1.0f)
+
+    gl_end()
+
+    if (st[SceneS.WIREFRAME] == 1) {
+        gl_polygon_mode(GL.FRONT_AND_BACK, GL.FILL)
+        gl_line_width(1.0f)
+    }
+}
+
+func main()
+{
+    state[SceneS.ANG_X] = 25
+    state[SceneS.ANG_Y] = 35
+    state[SceneS.ANG_Z] = 0
+    state[SceneS.SPINNING] = 1
+    state[SceneS.WIREFRAME] = 0
+    state[SceneS.PREV_MX] = 0
+    state[SceneS.PREV_MY] = 0
+    state[SceneS.DRAGGING] = 0
+
+    let host: GlHost = hostgl_open("ProLang OpenGL UI Widgets Demo", 720, 520,
+        background: theme_background(activeTheme))
+
+    let families: array<string> = array_new(2)
+    let sizes: array<int> = array_new(2)
+    let bolds: array<int> = array_new(2)
+
+    families[0] = "Segoe UI"
+    sizes[0] = 10
+    bolds[0] = 0
+
+    families[1] = "Segoe UI"
+    sizes[1] = 16
+    bolds[1] = 1
+
+    let fonts: FontSet = hostgl_fonts(host, families, sizes, bolds)
+    let ui: Ui = ui_new(512)
+    let frames: Fps = fps_new()
+
+    while (hostgl_running(host)) {
+        fps_tick(frames)
+
+        if (state[SceneS.SPINNING] == 1) {
+            state[SceneS.ANG_X] = (state[SceneS.ANG_X] + 1) % 360
+            state[SceneS.ANG_Y] = (state[SceneS.ANG_Y] + 2) % 360
+        }
+
+        let theme: int = activeTheme
+
+        hostgl_begin(host, ui)
+
+        // Mouse drag rotation handling
+        let curMx: int = hostgl_mouse_x(host)
+        let curMy: int = hostgl_mouse_y(host)
+        let isMouseDown: bool = hostgl_mouse_down(host)
+
+        if (isMouseDown) {
+            if (state[SceneS.DRAGGING] == 1) {
+                let dx: int = curMx - state[SceneS.PREV_MX]
+                let dy: int = curMy - state[SceneS.PREV_MY]
+                state[SceneS.ANG_Y] = (state[SceneS.ANG_Y] + dx) % 360
+                state[SceneS.ANG_X] = (state[SceneS.ANG_X] + dy) % 360
+            }
+            state[SceneS.PREV_MX] = curMx
+            state[SceneS.PREV_MY] = curMy
+            state[SceneS.DRAGGING] = 1
+        } else {
+            state[SceneS.DRAGGING] = 0
+        }
+
+        // ── Widget Tree Construction ─────────────────────────────────────────
+        ui_col(ui, pad: 16, gap: 12, bg: theme_background(theme))
+
+            // Header Bar
+            ui_row(ui, gap: 8)
+                ui_text(ui, "OpenGL 3D Viewport in UI Widgets", font: Font.TITLE, fg: theme_text(theme))
+                ui_spacer(ui, flex: 1)
+                ui_text(ui, fps_text_detailed(frames), fg: theme_text_dim(theme))
+            ui_end(ui)
+
+            // Main Content Area: 3D Scene + Control Sidebar
+            //
+            // A scene has no content of its own, so its measured height is zero. Inside a row the
+            // cross axis defaults to CENTER, which would collapse the card to nothing — STRETCH is
+            // what makes the card (and its scene) take the row's full height.
+            ui_row(ui, gap: 12, flex: 1, align: UiAlign.STRETCH)
+
+                // Left: 3D Scene Viewport Card
+                ui_box(ui, pad: 4, radius: 8, flex: 1, bg: theme_surface(theme))
+                    ui_gl_scene(ui, tag: 1, flex: 1, radius: 6)
+                ui_end(ui)
+
+                // Right: Control Sidebar Panel
+                ui_box(ui, pad: 12, gap: 8, radius: 8, width: 200, bg: theme_surface(theme))
+                    ui_text(ui, "Rotation", font: Font.TITLE, fg: theme_text(theme))
+
+                    ui_row(ui, gap: 6)
+                        app_btn(ui, "X-", Act.ROT_XM, theme)
+                        app_btn(ui, "X+", Act.ROT_XP, theme)
+                    ui_end(ui)
+
+                    ui_row(ui, gap: 6)
+                        app_btn(ui, "Y-", Act.ROT_YM, theme)
+                        app_btn(ui, "Y+", Act.ROT_YP, theme)
+                    ui_end(ui)
+
+                    ui_row(ui, gap: 6)
+                        app_btn(ui, "Z-", Act.ROT_ZM, theme)
+                        app_btn(ui, "Z+", Act.ROT_ZP, theme)
+                    ui_end(ui)
+
+                    ui_spacer(ui, size: 6, flex: 0)
+
+                    let spinText: string = "Spin: ON"
+                    if (state[SceneS.SPINNING] == 0) {
+                        spinText = "Spin: OFF"
+                    }
+                    app_btn(ui, spinText, Act.SPIN, theme)
+
+                    let wireText: string = "Mode: Solid"
+                    if (state[SceneS.WIREFRAME] == 1) {
+                        wireText = "Mode: Wire"
+                    }
+                    app_btn(ui, wireText, Act.WIREFRAME, theme)
+
+                    app_btn(ui, "Reset Angles", Act.RESET, theme)
+                    app_btn(ui, "Theme: " + theme_name(theme), Act.THEME, theme)
+
+                    ui_spacer(ui, flex: 1)
+                    app_btn(ui, "Quit", Act.QUIT, theme)
+                ui_end(ui)
+
+            ui_end(ui)
+
+            // Status Bar
+            ui_row(ui, gap: 8)
+                ui_text(ui, "Angle: (" + string(state[SceneS.ANG_X]) + ", "
+                                       + string(state[SceneS.ANG_Y]) + ", "
+                                       + string(state[SceneS.ANG_Z]) + ") | Drag to rotate",
+                        fg: theme_text_dim(theme))
+            ui_end(ui)
+
+        ui_end(ui)
+
+        // Present UI widgets & embedded 3D scene in a single atomic flicker-free frame
+        let act: int = hostgl_present_gl(host, ui, fonts, draw_cube_scene, state, theme_background(theme))
+
+        // Action dispatch
+        if (act == Act.ROT_XP) {
+            state[SceneS.ANG_X] = (state[SceneS.ANG_X] + 10) % 360
+        } elif (act == Act.ROT_XM) {
+            state[SceneS.ANG_X] = (state[SceneS.ANG_X] + 350) % 360
+        } elif (act == Act.ROT_YP) {
+            state[SceneS.ANG_Y] = (state[SceneS.ANG_Y] + 10) % 360
+        } elif (act == Act.ROT_YM) {
+            state[SceneS.ANG_Y] = (state[SceneS.ANG_Y] + 350) % 360
+        } elif (act == Act.ROT_ZP) {
+            state[SceneS.ANG_Z] = (state[SceneS.ANG_Z] + 10) % 360
+        } elif (act == Act.ROT_ZM) {
+            state[SceneS.ANG_Z] = (state[SceneS.ANG_Z] + 350) % 360
+        } elif (act == Act.SPIN) {
+            state[SceneS.SPINNING] = 1 - state[SceneS.SPINNING]
+        } elif (act == Act.WIREFRAME) {
+            state[SceneS.WIREFRAME] = 1 - state[SceneS.WIREFRAME]
+        } elif (act == Act.RESET) {
+            state[SceneS.ANG_X] = 25
+            state[SceneS.ANG_Y] = 35
+            state[SceneS.ANG_Z] = 0
+        } elif (act == Act.THEME) {
+            activeTheme = theme_next(theme)
+        } elif (act == Act.QUIT) {
+            hostgl_close(host)
+        }
+    }
+}
+
+func app_btn(ui: Ui, label: string, action: int, theme: int) : int {
+    return ui_button(ui, label,
+        action: action,
+        bg: theme_surface(theme),
+        fg: theme_text(theme),
+        radius: 6,
+        pad: 8)
+}

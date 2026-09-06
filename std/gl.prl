@@ -296,3 +296,21 @@ func gl_get_error() : int {
 func gl_get_string(name: int) : string {
     return GL.GetString(name)
 }
+
+// ── Font & Text Rendering ───────────────────────────────────────────────────
+
+func gl_create_font(family: string, size: int, bold: bool) : int {
+    return GL.BuildFont(family, size, bold)
+}
+
+func gl_measure_font(fontId: int, widths: array<int>, widthsOffset: int, metrics: array<int>, metricsOffset: int) {
+    GL.MeasureFont(fontId, widths, widthsOffset, metrics, metricsOffset)
+}
+
+func gl_draw_text(fontId: int, x: int, y: int, text: string, argb: int) {
+    GL.DrawText(fontId, x, y, text, argb)
+}
+
+func gl_delete_font(fontId: int) {
+    GL.DeleteFont(fontId)
+}

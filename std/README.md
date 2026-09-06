@@ -62,6 +62,7 @@ Windows Forms and on the PSP.
 | `ui/font` | character-width tables, so the layout pass can measure text without asking a window |
 | `ui/fps` | a frame-rate counter, averaged over a window, with the worst frame of each window |
 | `ui/host_winforms` | **imports `winforms`.** Opens a window and submits each frame in one interop call |
+| `ui/host_gl` | **imports `gl`.** Hardware-accelerated OpenGL host for desktop UI widgets |
 | `ui/host_psp` | **imports `psp`.** Executes the same display list through the GU, with a D-pad cursor |
 
 ```prolang

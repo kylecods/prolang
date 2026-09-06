@@ -1,0 +1,111 @@
+/*
+ * The widget toolkit, rendered with hardware-accelerated OpenGL.
+ *
+ * Compare this with counter.prl (Windows Forms) and counter_psp.prl (PlayStation Portable):
+ * the part that says what the interface is — the column, the card, the row of buttons,
+ * the flexible spacer — is character for character the same.
+ *
+ * What differs is the host import (`ui/host_gl` instead of `ui/host_winforms` or `ui/host_psp`),
+ * opening the OpenGL window, and presenting the frame.
+ */
+
+import "ui/host_gl"
+import "ui/theme"
+import "ui/color"
+
+enum Act {
+    NONE,
+    INCREMENT,
+    DECREMENT,
+    RESET,
+    THEME,
+    QUIT
+}
+
+// Fonts, by the index a widget refers to them by.
+enum Font {
+    BODY,
+    TITLE
+}
+
+global count: int = 0
+global activeTheme: int = Theme.MIDNIGHT
+
+func main()
+{
+    let host: GlHost = hostgl_open("ProLang Counter (OpenGL)", 480, 300,
+        background: theme_background(activeTheme))
+
+    let families: array<string> = array_new(2)
+    let sizes: array<int> = array_new(2)
+    let bolds: array<int> = array_new(2)
+
+    families[0] = "Segoe UI"
+    sizes[0] = 10
+    bolds[0] = 0
+
+    families[1] = "Segoe UI"
+    sizes[1] = 22
+    bolds[1] = 1
+
+    let fonts: FontSet = hostgl_fonts(host, families, sizes, bolds)
+    let ui: Ui = ui_new(256)
+
+    while (hostgl_running(host)) {
+        let theme: int = activeTheme
+
+        hostgl_begin(host, ui)
+
+        ui_col(ui, pad: 20, gap: 16, bg: theme_background(theme))
+
+            ui_text(ui, "Counter (OpenGL)", font: Font.TITLE, fg: theme_text(theme))
+
+            // The number, on its own card, filling whatever room is left over.
+            ui_box(ui, pad: 20, radius: 8, flex: 1,
+                   bg: theme_surface(theme), align: UiAlign.CENTER, justify: UiAlign.CENTER)
+                ui_text(ui, "" + count, font: Font.TITLE, fg: theme_accent(theme))
+            ui_end(ui)
+
+            // No height: the row takes it from the tallest button, which takes it from its label
+            // and padding.
+            ui_row(ui, gap: 8)
+                counter_button(ui, "Decrement", Act.DECREMENT, theme)
+                counter_button(ui, "Increment", Act.INCREMENT, theme)
+                counter_button(ui, "Reset", Act.RESET, theme)
+
+                // A flexible spacer pushes everything after it hard against the right edge.
+                ui_spacer(ui, flex: 1)
+
+                counter_button(ui, "Theme", Act.THEME, theme)
+                counter_button(ui, "Quit", Act.QUIT, theme)
+            ui_end(ui)
+
+            ui_text(ui, theme_name(theme) + "   Hardware-Accelerated OpenGL",
+                    fg: theme_text_dim(theme))
+
+        ui_end(ui)
+
+        let act: int = hostgl_present(host, ui, fonts, theme_background(theme))
+
+        if (act == Act.INCREMENT) {
+            count = count + 1
+        } elif (act == Act.DECREMENT) {
+            count = count - 1
+        } elif (act == Act.RESET) {
+            count = 0
+        } elif (act == Act.THEME) {
+            activeTheme = theme_next(theme)
+        } elif (act == Act.QUIT) {
+            hostgl_close(host)
+        }
+    }
+}
+
+func counter_button(ui: Ui, label: string, action: int, theme: int) : int {
+    return ui_button(ui, label,
+        action: action,
+        bg: theme_surface(theme),
+        fg: theme_text(theme),
+        radius: 6,
+        pad: 10)
+}

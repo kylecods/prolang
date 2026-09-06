@@ -1,17 +1,18 @@
 # The widget toolkit
 
-The same counter, twice: once on Windows Forms, once on a PlayStation Portable.
+The same counter, across backends: on Windows Forms, on hardware-accelerated OpenGL, and on a PlayStation Portable.
 
 ```powershell
-.\build.ps1 -Run                                    # the desktop version
+.\build.ps1 -Run                                    # the Windows Forms version
+.\build.ps1 -OpenGL -Run                            # the OpenGL version
 prolang counter_psp.prl --emit-psp                  # then `make -f Makefile.psp` in WSL
 ```
 
 ## What this example is for
 
-Put `counter.prl` beside `counter_psp.prl`. The part that says what the interface *is* — the
+Put `counter.prl` beside `counter_gl.prl` and `counter_psp.prl`. The part that says what the interface *is* — the
 column, the card, the row of buttons, the spacer that pushes the last group to the right — is
-character for character the same. What differs is four lines of setup and the names of two host
+character for character the same. What differs is four lines of setup and the names of the host
 functions.
 
 The two machines could hardly be less alike. One has windows, a pointer, GDI+ and a .NET runtime.

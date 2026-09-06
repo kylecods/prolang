@@ -1,0 +1,620 @@
+/*
+ * ProLang Standard Library — OpenGL UI Host (ui/host_gl)
+ *
+ * ── Architecture ─────────────────────────────────────────────────────────────
+ *
+ * Provides a hardware-accelerated desktop host using ProLang's built-in OpenGL
+ * binding (`gl` / `GLHelper`). It executes the display list produced by the widget
+ * tree (`ui/widget`, `ui/box`, `ui/hit`, `ui/draw`, `ui/font`) via OpenGL.
+ *
+ * ── Display List Execution in OpenGL ─────────────────────────────────────────
+ *
+ * The display list is executed in a pixel-aligned 2D orthographic projection:
+ *   - RECT / RRECT: solid & rounded quads with alpha blending (GL_BLEND)
+ *   - TEXT: texture atlas font rendering (GL_TEXTURE_2D)
+ *   - LINE: lines with configurable line width (GL_LINES)
+ *   - CLIP_PUSH / CLIP_POP: hierarchical nested scissor testing (GL_SCISSOR_TEST)
+ *   - IMAGE: textured quads from OpenGL texture IDs
+ *   - SCENE: custom 2D/3D content via display list painter or direct OpenGL callback
+ */
+
+import "gl"
+import "ui/widget"
+import "ui/box"
+import "ui/hit"
+import "ui/draw"
+import "ui/font"
+import "ui/color"
+
+// Slots in GlHost mutable state array
+enum HostglS {
+    RUNNING,
+    WIN,
+    WIDTH,
+    HEIGHT,
+    MOUSE_X,
+    MOUSE_Y,
+    MOUSE_DOWN,
+    CLIP_DEPTH,
+    FONT_COUNT
+}
+
+func hostgl_state_slots() : int {
+    return 16
+}
+
+/*
+ * An OpenGL window and the frame buffers.
+ *
+ * `ops` is allocated once and reused across frames to prevent allocations in the frame loop.
+ */
+struct GlHost {
+    win: int;
+    ops: array<int>;
+    st: array<int>;
+    clips: array<int>;
+    fontIds: array<int>;
+}
+
+// ── Lifecycle ────────────────────────────────────────────────────────────────
+
+/*
+ * Opens a native OpenGL window, initializes the rendering context, and configures VSync.
+ */
+func hostgl_open(title: string, width: int, height: int, background: int = 0, maxOps: int = 4096) : GlHost {
+    let win: int = gl_create_window(title, width, height)
+    gl_make_current(win)
+    gl_swap_interval(1)
+
+    let ops: array<int> = array_new(maxOps * dl_stride())
+    let st: array<int> = array_new(hostgl_state_slots())
+    let clips: array<int> = array_new(64)       // up to 16 nested clipping levels (4 ints each)
+    let fontIds: array<int> = array_new(16)
+
+    st[HostglS.RUNNING] = 1
+    st[HostglS.WIN] = win
+    st[HostglS.WIDTH] = width
+    st[HostglS.HEIGHT] = height
+    st[HostglS.MOUSE_X] = 0 - 1
+    st[HostglS.MOUSE_Y] = 0 - 1
+    st[HostglS.MOUSE_DOWN] = 0
+    st[HostglS.CLIP_DEPTH] = 0
+    st[HostglS.FONT_COUNT] = 0
+
+    return GlHost { win: win, ops: ops, st: st, clips: clips, fontIds: fontIds }
+}
+
+func hostgl_close(host: GlHost) : void {
+    host.st[HostglS.RUNNING] = 0
+
+    // Clean up font textures
+    let count: int = host.st[HostglS.FONT_COUNT]
+    let i: int = 0
+    while (i < count && i < host.fontIds.length()) {
+        let fId: int = host.fontIds[i]
+        if (fId > 0) {
+            gl_delete_font(fId)
+            host.fontIds[i] = 0
+        }
+        i = i + 1
+    }
+
+    gl_close_window(host.win)
+}
+
+// ── Font Management ──────────────────────────────────────────────────────────
+
+/*
+ * Builds font atlases for multiple fonts and populates their character advance tables.
+ */
+func hostgl_fonts(host: GlHost, families: array<string>, sizes: array<int>, bolds: array<int>) : FontSet {
+    let count: int = families.length()
+    let fonts: FontSet = font_new(count)
+
+    let i: int = 0
+    while (i < count) {
+        let bold: bool = bolds[i] != 0
+        let id: int = gl_create_font(families[i], sizes[i], bold)
+
+        if (i < host.fontIds.length()) {
+            host.fontIds[i] = id
+        }
+
+        gl_measure_font(id, fonts.widths, i * font_glyphs(), fonts.metrics, i * 2)
+        i = i + 1
+    }
+
+    host.st[HostglS.FONT_COUNT] = count
+    return fonts
+}
+
+/*
+ * Builds a font atlas for a single font and populates its advance table.
+ */
+func hostgl_font(host: GlHost, family: string = "Segoe UI", size: int = 10, bold: bool = false) : FontSet {
+    let families: array<string> = array_new(1)
+    let sizes: array<int> = array_new(1)
+    let bolds: array<int> = array_new(1)
+
+    families[0] = family
+    sizes[0] = size
+    if (bold) {
+        bolds[0] = 1
+    } else {
+        bolds[0] = 0
+    }
+
+    return hostgl_fonts(host, families, sizes, bolds)
+}
+
+// ── State Queries ────────────────────────────────────────────────────────────
+
+func hostgl_running(host: GlHost) : bool {
+    return host.st[HostglS.RUNNING] == 1
+}
+
+func hostgl_width(host: GlHost) : int {
+    return host.st[HostglS.WIDTH]
+}
+
+func hostgl_height(host: GlHost) : int {
+    return host.st[HostglS.HEIGHT]
+}
+
+func hostgl_mouse_x(host: GlHost) : int {
+    return host.st[HostglS.MOUSE_X]
+}
+
+func hostgl_mouse_y(host: GlHost) : int {
+    return host.st[HostglS.MOUSE_Y]
+}
+
+func hostgl_mouse_down(host: GlHost) : bool {
+    return host.st[HostglS.MOUSE_DOWN] == 1
+}
+
+func hostgl_key_pressed(keyCode: int) : bool {
+    return gl_key_pressed(keyCode)
+}
+
+// ── Frame Loop & Input ───────────────────────────────────────────────────────
+
+/*
+ * Pumps OS messages, tracks window dimensions, mouse position, and mouse button state.
+ */
+func hostgl_pump(host: GlHost) : void {
+    gl_poll_events()
+
+    if (gl_window_should_close(host.win)) {
+        host.st[HostglS.RUNNING] = 0
+    }
+
+    let w: int = gl_get_window_width(host.win)
+    let h: int = gl_get_window_height(host.win)
+    if (w > 0 && h > 0) {
+        host.st[HostglS.WIDTH] = w
+        host.st[HostglS.HEIGHT] = h
+    }
+
+    host.st[HostglS.MOUSE_X] = gl_mouse_x()
+    host.st[HostglS.MOUSE_Y] = gl_mouse_y()
+
+    if (gl_mouse_down(0)) {
+        host.st[HostglS.MOUSE_DOWN] = 1
+    } else {
+        host.st[HostglS.MOUSE_DOWN] = 0
+    }
+}
+
+/*
+ * Begins a frame: pumps input messages and starts the widget arena.
+ */
+func hostgl_begin(host: GlHost, ui: Ui) : void {
+    hostgl_pump(host)
+
+    ui_begin(ui, host.st[HostglS.MOUSE_X], host.st[HostglS.MOUSE_Y],
+        host.st[HostglS.MOUSE_DOWN] == 1)
+}
+
+// ── 2D OpenGL Primitives ────────────────────────────────────────────────────
+
+func hostgl_clear_frame(background: int) : void {
+    let r: float32 = float32(color_r(background)) / 255.0f
+    let g: float32 = float32(color_g(background)) / 255.0f
+    let b: float32 = float32(color_b(background)) / 255.0f
+    let a: float32 = float32(color_a(background)) / 255.0f
+    if (color_a(background) == 0 && background == 0) {
+        a = 1.0f
+    }
+    gl_clear_color(r, g, b, a)
+    gl_clear(GL.COLOR_BUFFER_BIT | GL.DEPTH_BUFFER_BIT)
+}
+
+func hostgl_setup_2d(width: int, height: int) : void {
+    gl_viewport(0, 0, width, height)
+    gl_matrix_mode(GL.PROJECTION)
+    gl_load_identity()
+    gl_ortho(0.0, float64(width), float64(height), 0.0, -1.0, 1.0)
+    gl_matrix_mode(GL.MODELVIEW)
+    gl_load_identity()
+
+    gl_disable(GL.DEPTH_TEST)
+    gl_enable(GL.BLEND)
+    gl_blend_func(GL.SRC_ALPHA, GL.ONE_MINUS_SRC_ALPHA)
+}
+
+func hostgl_draw_rect(x: int, y: int, w: int, h: int, argb: int) : void {
+    if (color_is_transparent(argb)) {
+        return
+    }
+
+    gl_color4ub(color_r(argb), color_g(argb), color_b(argb), color_a(argb))
+    gl_begin(GL.QUADS)
+    gl_vertex2i(x, y)
+    gl_vertex2i(x + w, y)
+    gl_vertex2i(x + w, y + h)
+    gl_vertex2i(x, y + h)
+    gl_end()
+}
+
+func hostgl_corner(cx: int, cy: int, r: int, sx: int, sy: int) : void {
+    gl_begin(GL.TRIANGLE_FAN)
+    gl_vertex2i(cx, cy)
+    gl_vertex2i(cx + (sx * r), cy)
+    gl_vertex2i(cx + ((sx * r * 92) / 100), cy + ((sy * r * 38) / 100))
+    gl_vertex2i(cx + ((sx * r * 71) / 100), cy + ((sy * r * 71) / 100))
+    gl_vertex2i(cx + ((sx * r * 38) / 100), cy + ((sy * r * 92) / 100))
+    gl_vertex2i(cx, cy + (sy * r))
+    gl_end()
+}
+
+func hostgl_draw_rrect(x: int, y: int, w: int, h: int, argb: int, radius: int) : void {
+    if (color_is_transparent(argb)) {
+        return
+    }
+
+    let r: int = radius
+    if (r * 2 > w) { r = w / 2 }
+    if (r * 2 > h) { r = h / 2 }
+    if (r <= 0) {
+        hostgl_draw_rect(x, y, w, h, argb)
+        return
+    }
+
+    gl_color4ub(color_r(argb), color_g(argb), color_b(argb), color_a(argb))
+
+    gl_begin(GL.QUADS)
+    // Central body
+    gl_vertex2i(x + r, y)
+    gl_vertex2i(x + w - r, y)
+    gl_vertex2i(x + w - r, y + h)
+    gl_vertex2i(x + r, y + h)
+
+    // Left band
+    gl_vertex2i(x, y + r)
+    gl_vertex2i(x + r, y + r)
+    gl_vertex2i(x + r, y + h - r)
+    gl_vertex2i(x, y + h - r)
+
+    // Right band
+    gl_vertex2i(x + w - r, y + r)
+    gl_vertex2i(x + w, y + r)
+    gl_vertex2i(x + w, y + h - r)
+    gl_vertex2i(x + w - r, y + h - r)
+    gl_end()
+
+    // 4 corners
+    hostgl_corner(x + r, y + r, r, -1, -1)
+    hostgl_corner(x + w - r, y + r, r, 1, -1)
+    hostgl_corner(x + w - r, y + h - r, r, 1, 1)
+    hostgl_corner(x + r, y + h - r, r, -1, 1)
+}
+
+func hostgl_draw_line(x1: int, y1: int, x2: int, y2: int, argb: int, width: int) : void {
+    if (color_is_transparent(argb)) {
+        return
+    }
+
+    let w: float32 = 1.0f
+    if (width > 1) {
+        w = float32(width)
+    }
+
+    gl_line_width(w)
+    gl_color4ub(color_r(argb), color_g(argb), color_b(argb), color_a(argb))
+    gl_begin(GL.LINES)
+    gl_vertex2i(x1, y1)
+    gl_vertex2i(x2, y2)
+    gl_end()
+    gl_line_width(1.0f)
+}
+
+func hostgl_draw_image(x: int, y: int, w: int, h: int, textureId: int) : void {
+    if (textureId <= 0) {
+        return
+    }
+
+    gl_enable(GL.TEXTURE_2D)
+    gl_bind_texture(GL.TEXTURE_2D, textureId)
+    gl_color4ub(255, 255, 255, 255)
+    gl_begin(GL.QUADS)
+    gl_tex_coord2f(0.0f, 0.0f)
+    gl_vertex2i(x, y)
+    gl_tex_coord2f(1.0f, 0.0f)
+    gl_vertex2i(x + w, y)
+    gl_tex_coord2f(1.0f, 1.0f)
+    gl_vertex2i(x + w, y + h)
+    gl_tex_coord2f(0.0f, 1.0f)
+    gl_vertex2i(x, y + h)
+    gl_end()
+    gl_bind_texture(GL.TEXTURE_2D, 0)
+    gl_disable(GL.TEXTURE_2D)
+}
+
+func hostgl_clip_push(host: GlHost, x: int, y: int, w: int, h: int) : void {
+    let depth: int = host.st[HostglS.CLIP_DEPTH]
+    let curX: int = x
+    let curY: int = y
+    let curW: int = w
+    let curH: int = h
+
+    if (depth > 0) {
+        let prevBase: int = (depth - 1) * 4
+        let px: int = host.clips[prevBase]
+        let py: int = host.clips[prevBase + 1]
+        let pw: int = host.clips[prevBase + 2]
+        let ph: int = host.clips[prevBase + 3]
+
+        if (curX < px) {
+            curW = curW - (px - curX)
+            curX = px
+        }
+        if (curY < py) {
+            curH = curH - (py - curY)
+            curY = py
+        }
+        if (curX + curW > px + pw) {
+            curW = (px + pw) - curX
+        }
+        if (curY + curH > py + ph) {
+            curH = (py + ph) - curY
+        }
+        if (curW < 0) { curW = 0 }
+        if (curH < 0) { curH = 0 }
+    }
+
+    let base: int = depth * 4
+    if (base + 3 < host.clips.length()) {
+        host.clips[base] = curX
+        host.clips[base + 1] = curY
+        host.clips[base + 2] = curW
+        host.clips[base + 3] = curH
+        host.st[HostglS.CLIP_DEPTH] = depth + 1
+    }
+
+    let winH: int = host.st[HostglS.HEIGHT]
+    gl_enable(GL.SCISSOR_TEST)
+    gl_scissor(curX, winH - (curY + curH), curW, curH)
+}
+
+func hostgl_clip_pop(host: GlHost) : void {
+    let depth: int = host.st[HostglS.CLIP_DEPTH]
+    if (depth <= 0) {
+        return
+    }
+
+    depth = depth - 1
+    host.st[HostglS.CLIP_DEPTH] = depth
+
+    if (depth == 0) {
+        gl_disable(GL.SCISSOR_TEST)
+    } else {
+        let base: int = (depth - 1) * 4
+        let cx: int = host.clips[base]
+        let cy: int = host.clips[base + 1]
+        let cw: int = host.clips[base + 2]
+        let ch: int = host.clips[base + 3]
+        let winH: int = host.st[HostglS.HEIGHT]
+        gl_scissor(cx, winH - (cy + ch), cw, ch)
+    }
+}
+
+// ── Display List Execution ──────────────────────────────────────────────────
+
+/*
+ * Walks the display list buffer and issues OpenGL drawing commands.
+ */
+func hostgl_execute(host: GlHost, ui: Ui, count: int, background: int) : void {
+    let width: int = host.st[HostglS.WIDTH]
+    let height: int = host.st[HostglS.HEIGHT]
+    host.st[HostglS.CLIP_DEPTH] = 0
+
+    hostgl_clear_frame(background)
+    hostgl_setup_2d(width, height)
+
+    let i: int = 0
+    while (i < count) {
+        let op: int = dl_op(host.ops, i)
+
+        if (op == DlOp.RECT) {
+            hostgl_draw_rect(dl_arg(host.ops, i, 0), dl_arg(host.ops, i, 1),
+                dl_arg(host.ops, i, 2), dl_arg(host.ops, i, 3),
+                dl_arg(host.ops, i, 4))
+        } elif (op == DlOp.RRECT) {
+            hostgl_draw_rrect(dl_arg(host.ops, i, 0), dl_arg(host.ops, i, 1),
+                dl_arg(host.ops, i, 2), dl_arg(host.ops, i, 3),
+                dl_arg(host.ops, i, 4), dl_arg(host.ops, i, 5))
+        } elif (op == DlOp.TEXT) {
+            let strIdx: int = dl_arg(host.ops, i, 2)
+            if (strIdx >= 0 && strIdx < ui.st[UiS.STR_COUNT]) {
+                let fIndex: int = dl_arg(host.ops, i, 4)
+                let fontHandle: int = fIndex
+                if (fIndex >= 0 && fIndex < host.fontIds.length() && host.fontIds[fIndex] > 0) {
+                    fontHandle = host.fontIds[fIndex]
+                }
+                gl_draw_text(fontHandle, dl_arg(host.ops, i, 0), dl_arg(host.ops, i, 1),
+                    ui.strs[strIdx], dl_arg(host.ops, i, 3))
+            }
+        } elif (op == DlOp.LINE) {
+            hostgl_draw_line(dl_arg(host.ops, i, 0), dl_arg(host.ops, i, 1),
+                dl_arg(host.ops, i, 2), dl_arg(host.ops, i, 3),
+                dl_arg(host.ops, i, 4), dl_arg(host.ops, i, 5))
+        } elif (op == DlOp.IMAGE) {
+            hostgl_draw_image(dl_arg(host.ops, i, 0), dl_arg(host.ops, i, 1),
+                dl_arg(host.ops, i, 2), dl_arg(host.ops, i, 3),
+                dl_arg(host.ops, i, 4))
+        } elif (op == DlOp.CLIP_PUSH) {
+            hostgl_clip_push(host, dl_arg(host.ops, i, 0), dl_arg(host.ops, i, 1),
+                dl_arg(host.ops, i, 2), dl_arg(host.ops, i, 3))
+        } elif (op == DlOp.CLIP_POP) {
+            hostgl_clip_pop(host)
+        } elif (op == DlOp.END) {
+            i = count
+        }
+
+        i = i + 1
+    }
+
+    if (host.st[HostglS.CLIP_DEPTH] > 0) {
+        gl_disable(GL.SCISSOR_TEST)
+    }
+}
+
+// ── Presentation ────────────────────────────────────────────────────────────
+
+func hostgl_no_gl_scene(tag: int, x: int, y: int, w: int, h: int, state: array<int>) : void {
+}
+
+func hostgl_render_tree_scenes(host: GlHost, ui: Ui, node: int,
+                               gl_paint: func(int, int, int, int, int, array<int>) : void,
+                               state: array<int>) : void {
+    if (node < 0) {
+        return
+    }
+
+    let kind: int = ui_kind(ui, node)
+    if (kind == UiKind.SCENE) {
+        hostgl_render_scene_node(host, ui, node, gl_paint, state)
+    }
+
+    let child: int = ui_first_child(ui, node)
+    while (child >= 0) {
+        hostgl_render_tree_scenes(host, ui, child, gl_paint, state)
+        child = ui_next_sibling(ui, child)
+    }
+}
+
+/*
+ * Lays out the widget tree, resolves pointer interactions, executes the display list,
+ * and swaps OpenGL buffers in a single atomic frame. Returns the fired action integer.
+ */
+func hostgl_present(host: GlHost, ui: Ui, fonts: FontSet, background: int = 0) : int {
+    return hostgl_present_gl(host, ui, fonts, hostgl_no_gl_scene, ui.st, background)
+}
+
+/*
+ * The same as hostgl_present, with a display-list painter function for ui_scene nodes.
+ */
+func hostgl_present_scene(host: GlHost, ui: Ui, fonts: FontSet,
+                         paint: func(array<int>, int, int, int, int, int, int, array<int>) : int,
+                         state: array<int>, background: int = 0) : int {
+    assert(ui_is_balanced(ui), "a container was left open — every ui_col/ui_row/ui_box needs a ui_end")
+
+    let root: int = ui_root(ui)
+    if (root < 0) {
+        return 0
+    }
+
+    box_layout(ui, fonts, root, 0, 0, host.st[HostglS.WIDTH], host.st[HostglS.HEIGHT])
+
+    let fired: int = hit_resolve(ui)
+    let count: int = dl_build_scenes(ui, fonts, root, host.ops, paint, state)
+
+    hostgl_execute(host, ui, count, background)
+    gl_swap_buffers(host.win)
+
+    return fired
+}
+
+/*
+ * Presents the frame with a direct OpenGL 3D/2D rendering callback for ui_scene / ui_gl_scene nodes.
+ *
+ * Both the 2D UI widgets and the 3D OpenGL scene are rendered into the back buffer BEFORE
+ * a single buffer swap, ensuring completely flicker-free presentation.
+ */
+func hostgl_present_gl(host: GlHost, ui: Ui, fonts: FontSet,
+                       gl_paint: func(int, int, int, int, int, array<int>) : void,
+                       state: array<int>, background: int = 0) : int {
+    assert(ui_is_balanced(ui), "a container was left open — every ui_col/ui_row/ui_box needs a ui_end")
+
+    let root: int = ui_root(ui)
+    if (root < 0) {
+        return 0
+    }
+
+    box_layout(ui, fonts, root, 0, 0, host.st[HostglS.WIDTH], host.st[HostglS.HEIGHT])
+
+    let fired: int = hit_resolve(ui)
+    let count: int = dl_build_scenes(ui, fonts, root, host.ops, dl_no_scene, ui.st)
+
+    // 1. Draw 2D widget display list into back buffer
+    hostgl_execute(host, ui, count, background)
+
+    // 2. Render any 3D OpenGL scenes into their viewports on the back buffer
+    hostgl_render_tree_scenes(host, ui, root, gl_paint, state)
+
+    // 3. Swap buffers EXACTLY ONCE per frame!
+    gl_swap_buffers(host.win)
+
+    return fired
+}
+
+/*
+ * Embeds direct OpenGL 3D/2D rendering inside a ui_scene widget.
+ *
+ * Sets up a scissored viewport at (x, y, w, h), enables GL_DEPTH_TEST, and invokes
+ * the custom render function. Automatically restores 2D orthographic projection afterwards.
+ */
+func hostgl_render_scene(host: GlHost, x: int, y: int, w: int, h: int,
+                         render: func(int, int, int, int, int, array<int>) : void,
+                         tag: int, state: array<int>) : void {
+    let winH: int = host.st[HostglS.HEIGHT]
+    gl_viewport(x, winH - (y + h), w, h)
+    gl_enable(GL.SCISSOR_TEST)
+    gl_scissor(x, winH - (y + h), w, h)
+    gl_enable(GL.DEPTH_TEST)
+
+    render(tag, x, y, w, h, state)
+
+    hostgl_setup_2d(host.st[HostglS.WIDTH], host.st[HostglS.HEIGHT])
+    if (host.st[HostglS.CLIP_DEPTH] > 0) {
+        let base: int = (host.st[HostglS.CLIP_DEPTH] - 1) * 4
+        gl_scissor(host.clips[base], winH - (host.clips[base + 1] + host.clips[base + 3]),
+            host.clips[base + 2], host.clips[base + 3])
+    } else {
+        gl_disable(GL.SCISSOR_TEST)
+    }
+}
+
+/*
+ * Renders an OpenGL scene directly into the area allocated to a ui_scene or ui_gl_scene node.
+ */
+func hostgl_render_scene_node(host: GlHost, ui: Ui, node: int,
+                              render: func(int, int, int, int, int, array<int>) : void,
+                              state: array<int>) : void {
+    if (node < 0) {
+        return
+    }
+
+    let x: int = ui_get(ui, node, UiF.X) + ui_get(ui, node, UiF.PAD_L)
+    let y: int = ui_get(ui, node, UiF.Y) + ui_get(ui, node, UiF.PAD_T)
+    let w: int = ui_get(ui, node, UiF.W) - ui_get(ui, node, UiF.PAD_L) - ui_get(ui, node, UiF.PAD_R)
+    let h: int = ui_get(ui, node, UiF.H) - ui_get(ui, node, UiF.PAD_T) - ui_get(ui, node, UiF.PAD_B)
+
+    if (w <= 0 || h <= 0) {
+        return
+    }
+
+    let tag: int = ui_get(ui, node, UiF.SCENE_TAG)
+    hostgl_render_scene(host, x, y, w, h, render, tag, state)
+}

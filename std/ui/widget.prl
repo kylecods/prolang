@@ -505,6 +505,18 @@ func ui_scene(ui: Ui, tag: int = 0, width: int = 0 - 1, height: int = 0 - 1, fle
     return node
 }
 
+/*
+ * An OpenGL scene widget: allocates a viewport area for direct or display-list 3D rendering.
+ *
+ * A scene has no content, so it measures to nothing on its own — give it `flex:` along the main
+ * axis and put it in a container whose `align:` is STRETCH (a column's default) so it takes real
+ * space. Inside a row without STRETCH it collapses to zero height and the backend draws nothing.
+ */
+func ui_gl_scene(ui: Ui, tag: int = 0, width: int = 0 - 1, height: int = 0 - 1, flex: int = 0,
+                 pad: int = 0, bg: int = 0, radius: int = 0, action: int = 0, id: int = 0) : int {
+    return ui_scene(ui, tag, width, height, flex, pad, bg, radius, action, id)
+}
+
 // ── Tree walking ─────────────────────────────────────────────────────────────
 
 func ui_first_child(ui: Ui, node: int) : int {

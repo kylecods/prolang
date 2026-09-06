@@ -145,6 +145,10 @@ public static partial class GL
     [LibraryImport("user32.dll", EntryPoint = "LoadCursorW")]
     private static partial IntPtr LoadCursor(IntPtr hInstance, IntPtr lpCursorName);
 
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool ValidateRect(IntPtr hWnd, IntPtr lpRect);
+
     private static readonly WndProcDelegate _wndProcDelegate = ProcessMessage;
     private static bool _classRegistered;
     private const string WindowClassName = "ProLangGLWindowClass";
@@ -192,6 +196,9 @@ public static partial class GL
                     return IntPtr.Zero;
                 case WM_DESTROY:
                     window.ShouldClose = true;
+                    return IntPtr.Zero;
+                case WM_PAINT:
+                    ValidateRect(hWnd, IntPtr.Zero);
                     return IntPtr.Zero;
                 case WM_ERASEBKGND:
                     return (IntPtr)1; // Suppress background erase to prevent flickering

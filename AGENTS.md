@@ -126,10 +126,13 @@ prolang/
 │   ├── 14-chip-8/                 # CHIP-8 emulator
 │   ├── 15-psp-demo/               # PlayStation Portable target
 │   ├── 16-pixel-editor/           # Pixel editor: 4 modules over the std/ui toolkit
-│   └── 17-widgets/                # The widget toolkit: one counter, on Windows Forms and on PSP
+│   ├── 17-widgets/                # The widget toolkit: one counter, on Windows Forms, OpenGL, and on PSP
+│   ├── 18-psp-cube/               # Rotating cube rendered on Windows Forms and PSP
+│   ├── 19-opengl-cube/            # Hardware-accelerated OpenGL 3D cube
+│   └── 20-opengl-widgets/         # OpenGL UI widgets with embedded 3D viewport
 │
 ├── std/                           # Standard library, shipped beside the compiler
-│   ├── ui/                        # UI toolkit: shapes, themes, icons, layout, WinForms boundary
+│   ├── ui/                        # UI toolkit: shapes, themes, icons, layout, WinForms & OpenGL hosts
 │   └── README.md                  # Module list and the rules for adding one
 │
 ├── tests/std/                     # The standard library's own suite, written in ProLang
