@@ -37,12 +37,15 @@ import "io"
 import "fs"
 import "console"
 import "dotnet:System"
+import "winforms"
 import "ui/host_gl"
 import "ui/widget"
 import "ui/theme"
 import "ui/color"
 import "ui/font"
 import "ui/fps"
+import "ui/document"
+import "ui/icons"
 import "keys.prl"
 import "buffer.prl"
 import "syntax.prl"
@@ -53,12 +56,31 @@ enum EdFont {
     CODE
 }
 
-// What the title-bar buttons do.
+// What the toolbar and the keyboard do.
 enum EdAct {
     NONE,
+    NEW_FILE,
+    OPEN,
     SAVE,
+    SAVE_AS,
+    UNDO,
+    REDO,
+    COPY,
+    CUT,
+    PASTE,
     THEME,
     QUIT
+}
+
+// The tag the document's own scene carries. It has to stay clear of the action values, which
+// are the toolbar buttons' tags — the painter tells them apart by this.
+func ed_scene_tag() : int {
+    return 100
+}
+
+// A tag at or above this is a toolbar icon button, and the painter draws its texture.
+func ed_icon_tag_base() : int {
+    return EdAct.NEW_FILE
 }
 
 func ed_repeat_delay() : int {
@@ -88,6 +110,8 @@ global ed_prevKeys: array<int> = array_new(256)  // last frame's key state, for 
 global ed_repVK: int = 0           // the key currently auto-repeating
 global ed_repAt: int = 0           // when the repeat fires next
 global ed_mousePrev: int = 0
+global ed_mousePrevX: int = 0      // where the last drag frame sampled the pointer
+global ed_mousePrevY: int = 0
 global ed_caretAt: int = 0         // when the cursor last moved; it stops blinking for a moment
 
 global ed_status: string = ""
@@ -95,6 +119,9 @@ global ed_statusAt: int = 0
 
 global ed_block: array<int> = array_new(256)   // block-comment state at the start of each line
 global ed_blockDirty: bool = true
+
+global ed_iconTex: array<int> = array_new(16)  // OpenGL textures for the toolbar glyphs
+global ed_iconTheme: int = 0 - 1               // the theme the icons were drawn in
 
 global ed_frames: Fps = fps_new()
 
@@ -173,13 +200,183 @@ func ed_rebuild_block() : void {
     }
 }
 
-// ── Files ────────────────────────────────────────────────────────────────────
+// ── The toolbar's icons ──────────────────────────────────────────────────────
+
+/*
+ * Draws one toolbar glyph, in the icon set's own unit space.
+ *
+ * Most come straight from ui/icons — new, open, save, undo, redo, theme were already drawn for
+ * the pixel editor. Four do not exist there and are drawn here in the same style: the same 48-unit
+ * grid, the same stroke weight, round corners, one ink for structure and one accent, so the set
+ * still reads as a set. Save As is a save arrow landing in a tray, Copy and Paste are overlapping
+ * sheets and a clipboard, Cut is a pair of scissors.
+ */
+func ed_icon_draw(target: Document, act: int, ink: int, accent: int) : void {
+    if (act == EdAct.NEW_FILE) {
+        icon_draw(target, Icon.NEW, ink, accent)
+        return
+    }
+    if (act == EdAct.OPEN) {
+        icon_draw(target, Icon.OPEN, ink, accent)
+        return
+    }
+    if (act == EdAct.SAVE) {
+        icon_draw(target, Icon.SAVE, ink, accent)
+        return
+    }
+    if (act == EdAct.UNDO) {
+        icon_draw(target, Icon.UNDO, ink, accent)
+        return
+    }
+    if (act == EdAct.REDO) {
+        icon_draw(target, Icon.REDO, ink, accent)
+        return
+    }
+    if (act == EdAct.THEME) {
+        icon_draw(target, Icon.THEME, ink, accent)
+        return
+    }
+
+    if (act == EdAct.SAVE_AS) {
+        // A tray, and an arrow landing in it.
+        icon_stroke(target, 10, 30, 10, 40, 4, ink)
+        icon_stroke(target, 10, 40, 38, 40, 4, ink)
+        icon_stroke(target, 38, 40, 38, 30, 4, ink)
+        icon_stroke(target, 24, 8, 24, 28, 4, accent)
+        icon_stroke(target, 16, 21, 24, 29, 4, accent)
+        icon_stroke(target, 32, 21, 24, 29, 4, accent)
+        return
+    }
+    if (act == EdAct.COPY) {
+        // Two sheets, the front one lifted.
+        icon_rect(target, 10, 8, 28, 26, 4, 4, ink)
+        icon_rect_filled(target, 18, 18, 40, 40, 4, accent)
+        return
+    }
+    if (act == EdAct.CUT) {
+        // Scissors: two blades crossing, two handles.
+        icon_stroke(target, 14, 8, 30, 28, 4, ink)
+        icon_stroke(target, 34, 8, 18, 28, 4, ink)
+        icon_ring(target, 15, 37, 7, 3, accent)
+        icon_ring(target, 33, 37, 7, 3, accent)
+        return
+    }
+    if (act == EdAct.PASTE) {
+        // A clipboard with its clip at the top.
+        icon_rect(target, 10, 8, 38, 42, 4, 4, ink)
+        icon_rect_filled(target, 17, 3, 31, 13, 3, accent)
+        icon_stroke(target, 17, 24, 31, 24, 4, ink)
+        icon_stroke(target, 17, 32, 27, 32, 4, ink)
+        return
+    }
+    if (act == EdAct.QUIT) {
+        // Power: a broken ring and the stroke through its gap.
+        icon_arc(target, 24, 27, 16, 10, 3, ink)
+        icon_stroke(target, 24, 8, 24, 24, 4, accent)
+        return
+    }
+}
+
+// The size the icons are rasterised at, before the GPU scales them into the button.
+func ed_icon_pixel_size() : int {
+    return 48
+}
+
+// How much larger the icon is drawn than it is kept, so the downsampling smooths the edges the
+// way the pixel editor's renderer does for its toolbar.
+func ed_icon_supersample() : int {
+    return 4
+}
+
+/*
+ * Rasterises one glyph and uploads it as an RGBA texture.
+ *
+ * Document pixels are packed ARGB; the upload wants the bytes in memory as R, G, B, A — and an
+ * int's little-endian bytes come out lowest first — so red and blue swap places on the way in,
+ * the same shuffle the PSP backend makes for its GE.
+ */
+func ed_icon_texture(act: int, ink: int, accent: int) : int {
+    let size: int = ed_icon_pixel_size()
+    let factor: int = ed_icon_supersample()
+    let big: Document = doc_new(size * factor, size * factor, 0)
+    ed_icon_draw(big, act, ink, accent)
+    let small: Document = doc_new(size, size, 0)
+    doc_downsample_into(big, small, factor)
+
+    let pixels: array<int> = array_new(size * size)
+    let i: int = 0
+    let y: int = 0
+    while (y < size) {
+        let x: int = 0
+        while (x < size) {
+            let c: int = doc_get(small, x, y)
+            pixels[i] = color_argb(color_a(c), color_b(c), color_g(c), color_r(c))
+            i = i + 1
+            x = x + 1
+        }
+        y = y + 1
+    }
+
+    let tex: int = gl_gen_texture()
+    gl_bind_texture(GL.TEXTURE_2D, tex)
+    gl_tex_parameteri(GL.TEXTURE_2D, GL.TEXTURE_MIN_FILTER, GL.LINEAR)
+    gl_tex_parameteri(GL.TEXTURE_2D, GL.TEXTURE_MAG_FILTER, GL.LINEAR)
+    GL.TexImage2DInts(GL.TEXTURE_2D, 0, GL.RGBA, size, size, 0, GL.RGBA, GL.UNSIGNED_BYTE, pixels)
+    gl_bind_texture(GL.TEXTURE_2D, 0)
+    return tex
+}
+
+// Rasterises the whole set, once per theme — the glyphs are drawn from the theme's own colours.
+func ed_build_icons(theme: int) : void {
+    let i: int = 0
+    while (i < ed_iconTex.length()) {
+        if (ed_iconTex[i] > 0) {
+            gl_delete_texture(ed_iconTex[i])
+            ed_iconTex[i] = 0
+        }
+        i = i + 1
+    }
+
+    let ink: int = theme_text(theme)
+    let accent: int = theme_accent(theme)
+    ed_iconTex[EdAct.NEW_FILE] = ed_icon_texture(EdAct.NEW_FILE, ink, accent)
+    ed_iconTex[EdAct.OPEN] = ed_icon_texture(EdAct.OPEN, ink, accent)
+    ed_iconTex[EdAct.SAVE] = ed_icon_texture(EdAct.SAVE, ink, accent)
+    ed_iconTex[EdAct.SAVE_AS] = ed_icon_texture(EdAct.SAVE_AS, ink, accent)
+    ed_iconTex[EdAct.UNDO] = ed_icon_texture(EdAct.UNDO, ink, accent)
+    ed_iconTex[EdAct.REDO] = ed_icon_texture(EdAct.REDO, ink, accent)
+    ed_iconTex[EdAct.COPY] = ed_icon_texture(EdAct.COPY, ink, accent)
+    ed_iconTex[EdAct.CUT] = ed_icon_texture(EdAct.CUT, ink, accent)
+    ed_iconTex[EdAct.PASTE] = ed_icon_texture(EdAct.PASTE, ink, accent)
+    ed_iconTex[EdAct.THEME] = ed_icon_texture(EdAct.THEME, ink, accent)
+    ed_iconTex[EdAct.QUIT] = ed_icon_texture(EdAct.QUIT, ink, accent)
+    ed_iconTheme = theme
+}
+
+// One toolbar button: a scene, because a scene given an action is clickable, and the painter
+// fills it with the glyph's texture.
+func ed_icon_btn(ui: Ui, act: int, theme: int) : int {
+    return ui_scene(ui, tag: act, action: act, width: 30, height: 30, pad: 4,
+        bg: theme_hover(theme), radius: 6)
+}
+
+// ── Files and the clipboard ──────────────────────────────────────────────────
 
 func ed_save() : void {
     writeFile(ed_path, buf_to_text(ed_buf))
     ed_buf = buf_saved(ed_buf)
     ed_status = "Saved " + ed_path
     ed_statusAt = time_millis()
+}
+
+// Save As: pick a path first, then save to it. Cancelling changes nothing.
+func ed_save_as() : void {
+    let path: string = WinFormsHelper.ShowSaveFileDialog("Save As",
+        "ProLang files (*.prl)|*.prl|Text files (*.txt)|*.txt|All files (*.*)|*.*", ed_path)
+    if (path != "") {
+        ed_path = path
+        ed_save()
+    }
 }
 
 func ed_load(path: string) : void {
@@ -194,6 +391,75 @@ func ed_load(path: string) : void {
     ed_scroll = 0
     ed_hscroll = 0
     ed_blockDirty = true
+}
+
+// Open: a dialog picks the file; an empty answer means the dialog was cancelled.
+func ed_open() : void {
+    let path: string = WinFormsHelper.ShowOpenFileDialog("Open File",
+        "ProLang files (*.prl)|*.prl|Text files (*.txt)|*.txt|All files (*.*)|*.*")
+    if (path != "") {
+        ed_path = path
+        ed_load(path)
+    }
+}
+
+// New: an empty document under the until-saved name.
+func ed_new_file() : void {
+    ed_path = "untitled.prl"
+    ed_buf = buf_new()
+    ed_scroll = 0
+    ed_hscroll = 0
+    ed_blockDirty = true
+    ed_status = "New buffer"
+    ed_statusAt = time_millis()
+}
+
+// ── The clipboard ────────────────────────────────────────────────────────────
+
+func ed_copy() : void {
+    if (buf_has_selection(ed_buf)) {
+        WinFormsHelper.SetClipboardText(buf_selection_text(ed_buf))
+        ed_status = "Copied"
+        ed_statusAt = time_millis()
+    }
+}
+
+// Copy, then take the selection out of the document.
+func ed_cut() : void {
+    if (buf_has_selection(ed_buf)) {
+        WinFormsHelper.SetClipboardText(buf_selection_text(ed_buf))
+        ed_buf = buf_delete_selection(ed_buf)
+        ed_blockDirty = true
+        ed_caretAt = time_millis()
+        ed_status = "Cut"
+        ed_statusAt = time_millis()
+    }
+}
+
+func ed_paste() : void {
+    let text: string = WinFormsHelper.GetClipboardText()
+    if (text != "") {
+        ed_buf = buf_paste(ed_buf, text)
+        ed_blockDirty = true
+        ed_caretAt = time_millis()
+        ed_status = "Pasted"
+        ed_statusAt = time_millis()
+    }
+}
+
+func ed_undo() : void {
+    ed_buf = buf_collapse_selection(buf_undo(ed_buf))
+    ed_blockDirty = true
+}
+
+func ed_redo() : void {
+    ed_buf = buf_collapse_selection(buf_redo(ed_buf))
+    ed_blockDirty = true
+}
+
+func ed_select_all() : void {
+    ed_buf = buf_select_all(ed_buf)
+    ed_caretAt = time_millis()
 }
 
 /*
@@ -236,6 +502,24 @@ func ed_sample() : Buf {
 
 // ── Input ────────────────────────────────────────────────────────────────────
 
+// Whether a window-space point is inside the text area the painter reported last frame.
+func ed_click_inside(mx: int, my: int) : bool {
+    if (mx < ed_view[0] || my < ed_view[1]) { return false }
+    if (mx >= ed_view[0] + ed_view[2] || my >= ed_view[1] + ed_view[3]) { return false }
+    return true
+}
+
+// The document row a click on `my` lands on.
+func ed_click_row(my: int) : int {
+    return ed_scroll + (my - ed_view[1] - 4) / ed_lh
+}
+
+// The document column a click on `mx` lands on; the gutter means "start of the line".
+func ed_click_col(mx: int) : int {
+    if (mx < ed_view[0] + ed_gutter_width() + 5) { return ed_hscroll }
+    return ed_hscroll + (mx - ed_view[0] - ed_gutter_width() - 5) / ed_cw
+}
+
 // Housekeeping around every keystroke that changed the document.
 func ed_edited(now: int) : void {
     ed_caretAt = now
@@ -253,81 +537,122 @@ func ed_expire_status(now: int) : void {
 }
 
 /*
- * One key transition, real or auto-repeated. Control combinations are commands; everything else
- * that maps to a character types it, and the editing keys do what their names say.
+ * One cursor movement, real or auto-repeated.
+ *
+ * With shift held the movement extends the selection — starting one at the cursor if none is
+ * underway — and without it any selection collapses first. The movers are function values,
+ * passed in so the six directions share one body.
+ */
+func ed_move(mover: func(Buf) : Buf, extend: bool, now: int) : void {
+    if (extend) {
+        ed_buf = buf_begin_selection(ed_buf)
+    } else {
+        ed_buf = buf_collapse_selection(ed_buf)
+    }
+    ed_buf = mover(ed_buf)
+    ed_moved(now)
+}
+
+// Page movement takes its distance from the window, so it gets wrappers of its own.
+func ed_page_up(b: Buf) : Buf {
+    return buf_move_page(b, 0 - ed_page_rows())
+}
+
+func ed_page_down(b: Buf) : Buf {
+    return buf_move_page(b, ed_page_rows())
+}
+
+/*
+ * One key transition, real or auto-repeated. Control combinations are commands; with shift held
+ * the editing keys extend the selection; everything else that maps to a character types it —
+ * which replaces the selection, as typing over a highlight should.
  */
 func ed_key(vk: int, shift: bool, ctrl: bool, now: int) : void {
     if (ctrl) {
-        if (vk == 83) {
-            ed_save()            // S
-        } elif (vk == 90) {
-            ed_buf = buf_undo(ed_buf)
-            ed_edited(now)
-        } elif (vk == 89) {
-            ed_buf = buf_redo(ed_buf)
-            ed_edited(now)
+        if (vk == 83) { ed_save() }              // S
+        elif (vk == 89) { ed_redo() }            // Y
+        elif (vk == 90) { ed_undo() }            // Z
+        elif (vk == 65) { ed_select_all() }      // A
+        elif (vk == 67) { ed_copy() }            // C
+        elif (vk == 88) { ed_cut() }             // X
+        elif (vk == 86) { ed_paste() }           // V
+        elif (vk == KeyVk.END) {
+            ed_buf = buf_collapse_selection(ed_buf)
+            ed_buf = buf_set_cursor(ed_buf, ed_buf.count - 1, ed_buf.lines[ed_buf.count - 1].length())
+            ed_moved(now)
+        } elif (vk == KeyVk.HOME) {
+            ed_buf = buf_collapse_selection(ed_buf)
+            ed_buf = buf_set_cursor(ed_buf, 0, 0)
+            ed_moved(now)
         }
         return
     }
 
+    if (vk == KeyVk.LEFT) {
+        ed_move(buf_move_left, shift, now)
+        return
+    }
+    if (vk == KeyVk.RIGHT) {
+        ed_move(buf_move_right, shift, now)
+        return
+    }
+    if (vk == KeyVk.UP) {
+        ed_move(buf_move_up, shift, now)
+        return
+    }
+    if (vk == KeyVk.DOWN) {
+        ed_move(buf_move_down, shift, now)
+        return
+    }
+    if (vk == KeyVk.HOME) {
+        ed_move(buf_move_home, shift, now)
+        return
+    }
+    if (vk == KeyVk.END) {
+        ed_move(buf_move_end, shift, now)
+        return
+    }
+    if (vk == KeyVk.PRIOR) {
+        ed_move(ed_page_up, shift, now)
+        return
+    }
+    if (vk == KeyVk.NEXT) {
+        ed_move(ed_page_down, shift, now)
+        return
+    }
+
     if (vk == KeyVk.BACKSPACE) {
-        ed_buf = buf_backspace(ed_buf)
+        if (buf_has_selection(ed_buf)) {
+            ed_buf = buf_delete_selection(ed_buf)
+        } else {
+            ed_buf = buf_backspace(ed_buf)
+        }
         ed_edited(now)
         return
     }
     if (vk == KeyVk.DELETE) {
-        ed_buf = buf_delete(ed_buf)
+        if (buf_has_selection(ed_buf)) {
+            ed_buf = buf_delete_selection(ed_buf)
+        } else {
+            ed_buf = buf_delete(ed_buf)
+        }
         ed_edited(now)
         return
     }
     if (vk == KeyVk.ENTER) {
+        if (buf_has_selection(ed_buf)) {
+            ed_buf = buf_delete_selection(ed_buf)
+        }
         ed_buf = buf_enter(ed_buf)
         ed_edited(now)
         return
     }
     if (vk == KeyVk.TAB) {
+        if (buf_has_selection(ed_buf)) {
+            ed_buf = buf_delete_selection(ed_buf)
+        }
         ed_buf = buf_tab(ed_buf)
         ed_edited(now)
-        return
-    }
-    if (vk == KeyVk.LEFT) {
-        ed_buf = buf_move_left(ed_buf)
-        ed_moved(now)
-        return
-    }
-    if (vk == KeyVk.RIGHT) {
-        ed_buf = buf_move_right(ed_buf)
-        ed_moved(now)
-        return
-    }
-    if (vk == KeyVk.UP) {
-        ed_buf = buf_move_up(ed_buf)
-        ed_moved(now)
-        return
-    }
-    if (vk == KeyVk.DOWN) {
-        ed_buf = buf_move_down(ed_buf)
-        ed_moved(now)
-        return
-    }
-    if (vk == KeyVk.HOME) {
-        ed_buf = buf_move_home(ed_buf)
-        ed_moved(now)
-        return
-    }
-    if (vk == KeyVk.END) {
-        ed_buf = buf_move_end(ed_buf)
-        ed_moved(now)
-        return
-    }
-    if (vk == KeyVk.PRIOR) {
-        ed_buf = buf_move_page(ed_buf, 0 - ed_page_rows())
-        ed_moved(now)
-        return
-    }
-    if (vk == KeyVk.NEXT) {
-        ed_buf = buf_move_page(ed_buf, ed_page_rows())
-        ed_moved(now)
         return
     }
 
@@ -373,29 +698,34 @@ func ed_input(host: GlHost) : void {
         vk = vk + 1
     }
 
-    // A click places the cursor, mapped back through the rectangle the painter reported last
-    // frame and the same gutter and scroll arithmetic it used to lay the text out.
+    // The mouse places the cursor and drags the selection, mapped back through the rectangle the
+    // painter reported last frame and the same gutter and scroll arithmetic it used to lay the
+    // text out. Shift-click extends the current selection; a plain click starts a new one; a
+    // held button that moves extends it — a drag.
     let md: int = 0
     if (hostgl_mouse_down(host)) { md = 1 }
-    if (md == 1 && ed_mousePrev == 0) {
-        let mx: int = hostgl_mouse_x(host)
-        let my: int = hostgl_mouse_y(host)
-        let vx: int = ed_view[0]
-        let vy: int = ed_view[1]
-        let vw: int = ed_view[2]
-        let vh: int = ed_view[3]
+    let mx: int = hostgl_mouse_x(host)
+    let my: int = hostgl_mouse_y(host)
 
-        if (mx >= vx && mx < vx + vw && my >= vy && my < vy + vh) {
-            let row: int = ed_scroll + (my - vy - 4) / ed_lh
-            let col: int = ed_hscroll
-            if (mx >= vx + ed_gutter_width() + 5) {
-                col = ed_hscroll + (mx - vx - ed_gutter_width() - 5) / ed_cw
-            }
-            ed_buf = buf_set_cursor(ed_buf, row, col)
-            ed_caretAt = now
+    let clicked: bool = ed_click_inside(mx, my)
+    let pressed: bool = md == 1 && ed_mousePrev == 0
+    let dragged: bool = md == 1 && ed_mousePrev == 1 && (mx != ed_mousePrevX || my != ed_mousePrevY)
+
+    if (clicked && (pressed || dragged)) {
+        if (shift) {
+            ed_buf = buf_begin_selection(ed_buf)
+            ed_buf = buf_set_cursor(ed_buf, ed_click_row(my), ed_click_col(mx), true)
+        } elif (pressed) {
+            ed_buf = buf_set_cursor(ed_buf, ed_click_row(my), ed_click_col(mx))
+        } else {
+            ed_buf = buf_begin_selection(ed_buf)
+            ed_buf = buf_set_cursor(ed_buf, ed_click_row(my), ed_click_col(mx), true)
         }
+        ed_caretAt = now
     }
     ed_mousePrev = md
+    ed_mousePrevX = mx
+    ed_mousePrevY = my
 }
 
 // ── Painting ─────────────────────────────────────────────────────────────────
@@ -421,6 +751,16 @@ func ed_token_color(kind: int, theme: int) : int {
  */
 func ed_paint(ops: array<int>, at: int, tag: int, x: int, y: int, w: int, h: int,
               state: array<int>) : int {
+    // A toolbar tag is an icon button: the whole scene is its glyph's texture. Everything else
+    // is the document.
+    if (tag != ed_scene_tag()) {
+        let tex: int = 0
+        if (tag >= ed_icon_tag_base() && tag < ed_iconTex.length()) {
+            tex = ed_iconTex[tag]
+        }
+        return dl_emit(ops, at, DlOp.IMAGE, x, y, w, h, tex, 0)
+    }
+
     ed_view[0] = x
     ed_view[1] = y
     ed_view[2] = w
@@ -482,6 +822,42 @@ func ed_paint(ops: array<int>, at: int, tag: int, x: int, y: int, w: int, h: int
 
     next = dl_emit(ops, next, DlOp.CLIP_PUSH, x + gw + 1, y, w - gw - 1, h, 0, 0)
 
+    // The selection, one band per row it covers — from the anchor's column on the first row,
+    // through the full width of the rows between, to the cursor's column on the last.
+    if (buf_has_selection(ed_buf)) {
+        let ends: array<int> = array_new(4)
+        buf_sel_ordered(ed_buf, ends)
+        let r1: int = ends[0]
+        let c1: int = ends[1]
+        let r2: int = ends[2]
+        let c2: int = ends[3]
+        let selColor: int = color_with_alpha(theme_accent(theme), 80)
+
+        let sr: int = r1
+        while (sr <= r2) {
+            if (sr >= ed_scroll && sr < ed_scroll + rows) {
+                let sy: int = top + (sr - ed_scroll) * lh
+                let sx: int = textX
+                let sw: int = 0
+                if (r1 == r2) {
+                    sx = textX + (c1 - ed_hscroll) * cw
+                    sw = (c2 - c1) * cw
+                } elif (sr == r1) {
+                    sx = textX + (c1 - ed_hscroll) * cw
+                    sw = (ed_buf.lines[sr].length() + 1 - c1) * cw
+                } elif (sr == r2) {
+                    sw = (c2 - ed_hscroll) * cw
+                } else {
+                    sw = (ed_buf.lines[sr].length() + 1) * cw
+                }
+                if (sw > 0) {
+                    next = dl_emit(ops, next, DlOp.RECT, sx, sy, sw, lh, selColor, 0)
+                }
+            }
+            sr = sr + 1
+        }
+    }
+
     // The caret holds steady for a moment after moving, then blinks.
     let caretOn: bool = (now / 530) % 2 == 0
     if (now - ed_caretAt < 350) { caretOn = true }
@@ -521,11 +897,6 @@ func ed_paint(ops: array<int>, at: int, tag: int, x: int, y: int, w: int, h: int
 
 // ── Chrome ───────────────────────────────────────────────────────────────────
 
-func ed_btn(ui: Ui, label: string, action: int, theme: int) : int {
-    return ui_button(ui, label, action: action, bg: theme_hover(theme), fg: theme_text(theme),
-        radius: 6, pad: 8)
-}
-
 // ── The loop ─────────────────────────────────────────────────────────────────
 
 func ed_run() : void {
@@ -547,6 +918,7 @@ func ed_run() : void {
 
     ed_cw = font_width(fonts, EdFont.CODE, 77)
     ed_lh = font_line_height(fonts, EdFont.CODE) + 3
+    ed_build_icons(ed_theme)
 
     while (hostgl_running(host)) {
         fps_tick(ed_frames)
@@ -561,13 +933,28 @@ func ed_run() : void {
                 if (ed_buf.modified) { title = title + " *" }
                 ui_text(ed_ui, title, fg: theme_text(theme), font: EdFont.UI, pad: 4)
                 ui_spacer(ed_ui, flex: 1)
-                ed_btn(ed_ui, "Save (Ctrl+S)", EdAct.SAVE, theme)
-                ed_btn(ed_ui, "Theme", EdAct.THEME, theme)
-                ed_btn(ed_ui, "Quit", EdAct.QUIT, theme)
+                ui_text(ed_ui, theme_name(ed_theme), fg: theme_text_dim(theme), font: EdFont.UI)
+            ui_end(ed_ui)
+
+            ui_row(ed_ui, pad: 4, gap: 4, bg: theme_surface(theme))
+                ed_icon_btn(ed_ui, EdAct.NEW_FILE, theme)
+                ed_icon_btn(ed_ui, EdAct.OPEN, theme)
+                ed_icon_btn(ed_ui, EdAct.SAVE, theme)
+                ed_icon_btn(ed_ui, EdAct.SAVE_AS, theme)
+                ui_spacer(ed_ui, size: 6, flex: 0)
+                ed_icon_btn(ed_ui, EdAct.UNDO, theme)
+                ed_icon_btn(ed_ui, EdAct.REDO, theme)
+                ui_spacer(ed_ui, size: 6, flex: 0)
+                ed_icon_btn(ed_ui, EdAct.COPY, theme)
+                ed_icon_btn(ed_ui, EdAct.CUT, theme)
+                ed_icon_btn(ed_ui, EdAct.PASTE, theme)
+                ui_spacer(ed_ui, flex: 1)
+                ed_icon_btn(ed_ui, EdAct.THEME, theme)
+                ed_icon_btn(ed_ui, EdAct.QUIT, theme)
             ui_end(ed_ui)
 
             ui_box(ed_ui, pad: 0, flex: 1, bg: theme_canvas_backdrop(theme))
-                ui_scene(ed_ui, tag: 1, flex: 1)
+                ui_scene(ed_ui, tag: ed_scene_tag(), flex: 1)
             ui_end(ed_ui)
 
             ui_row(ed_ui, pad: 6, gap: 16, bg: theme_surface(theme))
@@ -578,7 +965,7 @@ func ed_run() : void {
                 if (ed_status != "") {
                     ui_text(ed_ui, ed_status, fg: theme_accent(theme), font: EdFont.UI)
                 } else {
-                    ui_text(ed_ui, "Ctrl+Z undo   Ctrl+Y redo   Tab indents   PgUp/PgDn scroll",
+                    ui_text(ed_ui, "Ctrl+Z undo   Ctrl+Y redo   Ctrl+C/X/V clipboard   Ctrl+A all   Shift+arrows select",
                         fg: theme_text_dim(theme), font: EdFont.UI)
                 }
                 ui_text(ed_ui, fps_text(ed_frames), fg: theme_text_dim(theme), font: EdFont.UI)
@@ -588,10 +975,27 @@ func ed_run() : void {
         let act: int = hostgl_present_scene(host, ed_ui, fonts, ed_paint, ed_ui.st,
             theme_background(ed_theme))
 
-        if (act == EdAct.SAVE) {
+        if (act == EdAct.NEW_FILE) {
+            ed_new_file()
+        } elif (act == EdAct.OPEN) {
+            ed_open()
+        } elif (act == EdAct.SAVE) {
             ed_save()
+        } elif (act == EdAct.SAVE_AS) {
+            ed_save_as()
+        } elif (act == EdAct.UNDO) {
+            ed_undo()
+        } elif (act == EdAct.REDO) {
+            ed_redo()
+        } elif (act == EdAct.COPY) {
+            ed_copy()
+        } elif (act == EdAct.CUT) {
+            ed_cut()
+        } elif (act == EdAct.PASTE) {
+            ed_paste()
         } elif (act == EdAct.THEME) {
             ed_theme = theme_next(ed_theme)
+            ed_build_icons(ed_theme)
         } elif (act == EdAct.QUIT) {
             hostgl_close(host)
         }

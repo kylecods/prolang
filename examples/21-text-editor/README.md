@@ -15,11 +15,22 @@ highlighting for prolang itself.
 Editing: insert and delete, split and join lines, auto-indent on return (the current line's
 leading whitespace carries over), Tab for four spaces, undo and redo (Ctrl+Z / Ctrl+Y), and save
 with Ctrl+S. The cursor moves with the arrows, Home and End, Page Up and Page Down, and a mouse
-click. Both scrolls follow the cursor.
+click; Ctrl+Home and Ctrl+End jump to the ends of the document. Both scrolls follow the cursor.
 
-It opens the file named on the command line, or a small sample of the language when started
-without one. `.\build.ps1 -Run examples/21-text-editor/syntax.prl` edits this editor's own
-highlighter.
+Selection and the clipboard: drag or Shift+arrows to select, Ctrl+A selects everything, and
+Ctrl+C / Ctrl+X / Ctrl+V copy, cut and paste through the Windows clipboard — a paste of many
+lines becomes real lines, and undo takes a whole paste or cut back in one step. Typing over a
+selection replaces it.
+
+Files: the toolbar opens and saves — Open brings in an existing file, Save As picks where a
+buffer lands, and both go through the common dialogs, which the shim drives from the single-
+threaded apartment the compiler marks for a windowed program.
+
+The toolbar carries the common tasks with icons: new, open, save, save as, undo, redo, copy, cut,
+paste — and, at the right, theme and quit. Most glyphs come from the ui toolkit's icon set, drawn
+in unit space from the theme's own colours; the four the set does not have (save as, copy, cut,
+paste) are drawn here in the same style, so the row still reads as one set. Each is rasterised
+oversized and averaged down, then uploaded as a texture the painter puts in its button.
 
 Syntax highlighting runs while you type: the tokenizer in `syntax.prl` classifies keywords, type
 names, calls, strings (including the language's doubled-quote escape), numbers in all four bases
@@ -58,5 +69,5 @@ in the painter touches OpenGL — the same records would render on the WinForms 
 
 ## Not here (yet)
 
-Selection, clipboard, and search. The toolkit has no text model to borrow and this editor is the
-text model — those three are the next things it would have to grow.
+Search, and a confirmation when quitting with unsaved changes. The toolkit has no text model to
+borrow and this editor is the text model — those are the next things it would have to grow.

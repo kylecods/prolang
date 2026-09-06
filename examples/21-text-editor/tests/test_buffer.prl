@@ -202,4 +202,89 @@ func test_buffer_run() : void {
     // ── Saving clears the modified flag ──────────────────────────────────────
     let s: Buf = buf_saved(buf_insert(buf_from_text("x"), "y"))
     t_false("saved buffer is not modified", s.modified)
+
+    // ── Selection ────────────────────────────────────────────────────────────
+    let sel: Buf = buf_two("hello world", "second line")
+    t_false("no selection at rest", buf_has_selection(sel))
+
+    // A selection is the anchor plus the cursor, in either order.
+    let forward: Buf = buf_with_sel(buf_set_cursor(buf_two("hello world", "second line"), 0, 5), 0, 0, true)
+    t_true("forward selection is one", buf_has_selection(forward))
+    t_eq_str("forward selection text", buf_selection_text(forward), "hello")
+
+    let backward: Buf = buf_with_sel(buf_set_cursor(buf_two("hello world", "second line"), 0, 0), 0, 5, true)
+    t_true("backward selection is one", buf_has_selection(backward))
+    t_eq_str("backward selection text", buf_selection_text(backward), "hello")
+
+    // Selecting into the second line spans the newline.
+    let across: Buf = buf_with_sel(buf_set_cursor(buf_two("hello world", "second line"), 1, 3), 0, 6, true)
+    t_eq_str("selection across lines", buf_selection_text(across), "world" + buf_nl() + "sec")
+
+    // Collapse keeps the cursor and drops the anchor.
+    let flat: Buf = buf_collapse_selection(forward)
+    t_false("collapse drops the selection", buf_has_selection(flat))
+    t_eq_int("collapse keeps the cursor", flat.col, 5)
+
+    // begin_selection anchors at the cursor; it does not move it.
+    let begun: Buf = buf_begin_selection(buf_set_cursor(buf_two("ab", "cd"), 1, 1))
+    t_true("begin selects", begun.selActive)
+    t_eq_int("begin anchors at the cursor", begun.selRow, 1)
+
+    // Select all spans the document.
+    let all: Buf = buf_select_all(buf_two("ab", "cd"))
+    t_eq_str("select all takes everything", buf_selection_text(all), "ab" + buf_nl() + "cd")
+
+    // ── Typing over a selection replaces it, in one undo step ────────────────
+    let rep: Buf = buf_insert(buf_with_sel(buf_set_cursor(buf_two("hello world", "second line"), 0, 5), 0, 0, true), "goodbye")
+    t_eq_str("typing replaces the selection", rep.lines[0], "goodbye world")
+    t_eq_int("cursor after the typed text", rep.col, 7)
+    t_false("replacement collapses the selection", buf_has_selection(rep))
+    t_eq_int("one entry for the replacement", rep.undoN, 1)
+    let repZ: Buf = buf_undo(rep)
+    t_eq_str("undo restores the replaced text", repZ.lines[0], "hello world")
+    t_eq_int("undo restores the cursor", repZ.col, 0)
+
+    // ── Deleting a selection ─────────────────────────────────────────────────
+    let del: Buf = buf_delete_selection(buf_with_sel(buf_set_cursor(buf_two("hello world", "x"), 0, 5), 0, 0, true))
+    t_eq_str("delete clears the span", del.lines[0], " world")
+    t_eq_int("cursor at the span start", del.col, 0)
+    let delZ: Buf = buf_undo(del)
+    t_eq_str("undo restores the deleted span", delZ.lines[0], "hello world")
+
+    // A selection spanning the newline rejoins the lines when deleted.
+    let joinDel: Buf = buf_delete_selection(buf_with_sel(buf_set_cursor(buf_two("abc", "def"), 1, 1), 0, 1, true))
+    t_eq_int("deleting across lines rejoins them", joinDel.count, 1)
+    t_eq_str("the seam is spliced", joinDel.lines[0], "aef")
+    let joinZ: Buf = buf_undo(joinDel)
+    t_eq_int("undo restores two lines", joinZ.count, 2)
+    t_eq_str("both lines come back", joinZ.lines[0] + "|" + joinZ.lines[1], "abc|def")
+
+    // ── Paste, with and without a selection ──────────────────────────────────
+    let nl: string = buf_nl()
+    let pasted: Buf = buf_paste(buf_set_cursor(buf_two("ab", "cd"), 0, 2), "X" + nl + "Y")
+    t_eq_int("paste splits into lines", pasted.count, 3)
+    t_eq_str("paste splices the first line", pasted.lines[0], "abX")
+    t_eq_str("paste lands the middle line", pasted.lines[1], "Y")
+    t_eq_str("paste keeps the tail", pasted.lines[2], "cd")
+    t_eq_int("cursor after the paste", pasted.row, 1)
+    let pZ: Buf = buf_undo(pasted)
+    t_eq_int("undo takes the whole paste back", pZ.count, 2)
+    t_eq_str("undo restores the text", pZ.lines[0], "ab")
+
+    let over: Buf = buf_paste(buf_with_sel(buf_set_cursor(buf_two("ab", "cd"), 0, 2), 0, 0, true), "Z")
+    t_eq_str("paste over a selection replaces it", over.lines[0], "Z")
+    t_eq_int("replacing paste undoes once", over.undoN, 1)
+    let oZ: Buf = buf_undo(over)
+    t_eq_str("undo restores the selection", oZ.lines[0], "ab")
+
+    // Paste with carriage returns, as a Windows clipboard holds.
+    let pasteWin: Buf = buf_paste(buf_set_cursor(buf_from_text("ab"), 0, 2), "x" + Char.ConvertFromUtf32(13) + nl + "y")
+    t_eq_str("carriage returns are dropped", pasteWin.lines[1], "y")
+
+    // ── Select all then delete empties the document ──────────────────────────
+    let wiped: Buf = buf_delete_selection(buf_select_all(buf_two("ab", "cd")))
+    t_eq_int("select all and delete empties", wiped.count, 1)
+    t_eq_str("the one line is empty", wiped.lines[0], "")
+    let wZ: Buf = buf_undo(wiped)
+    t_eq_str("undo brings the document back", wZ.lines[0] + "|" + wZ.lines[1], "ab|cd")
 }
