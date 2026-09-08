@@ -19,6 +19,8 @@ so an application's own modules and the library's never collide.
 | `util` | integer helpers the ~25-function builtin library does not have: `util_abs`, `util_clamp`, `util_floor_div`, `util_pad_left`, `util_parse_int` |
 | `intstack` | an explicit stack of ints, for algorithms that cannot recurse |
 | `dynarray` | a growable array, generic |
+| `strbuf` | a string builder: chunks merged pairwise on render, O(n log n) where repeated `+` is O(n²) |
+| `hashmap` | an open-addressing map from strings to values, generic; FNV-1a hashing, tombstone removal |
 | `testing` | the test harness: a `TestRun` tally threaded through checks, failed by the `assert` builtin |
 | `winforms` | the Windows Forms shim, a C# assembly rather than prolang |
 | `gl` | OpenGL 3D graphics bindings and native windowing via `GLHelper` |

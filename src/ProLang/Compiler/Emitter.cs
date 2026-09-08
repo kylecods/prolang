@@ -1335,6 +1335,11 @@ namespace ProLang.Compiler
                 CoerceForStringConcat(scope, node.Right.Type);
             }
 
+            // Comparisons are signed unless the operands are unsigned. Clt/Cgt read the stack
+            // slots as int32/int64, so comparing uint32 0xFFFFFFFF with Cgt saw -1 and reported
+            // every high value as below zero.
+            var unsigned = IsUnsignedInteger(node.Left.Type);
+
             if (node.Op.Kind == BoundBinaryOperatorKind.Addition)
             {
                 if (node.Op.Type == TypeSymbol.String)
@@ -1354,9 +1359,13 @@ namespace ProLang.Compiler
             {
                 scope.IL.Emit(OpCodes.Mul);
             }
+            // Unsigned operands compare, divide and remainder unsigned: Div on 0xFFFFFFFF would
+            // give 0, Div.un the right 2^32-1. The C backend gets this for free from uint32_t.
             else if (node.Op.Kind == BoundBinaryOperatorKind.Division)
             {
-                scope.IL.Emit(OpCodes.Div);
+                // Unsigned types divide unsigned: Div on 0xFFFFFFFF would give 0, Div.un the
+                // right 2^32-1. The C backend gets this for free from uint32_t.
+                scope.IL.Emit(IsUnsignedInteger(node.Left.Type) ? OpCodes.Div_Un : OpCodes.Div);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.LogicalAnd)
             {
@@ -1404,27 +1413,27 @@ namespace ProLang.Compiler
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.LessThan)
             {
-                scope.IL.Emit(OpCodes.Clt);
+                scope.IL.Emit(unsigned ? OpCodes.Clt_Un : OpCodes.Clt);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.LessEqual)
             {
-                scope.IL.Emit(OpCodes.Cgt);
+                scope.IL.Emit(unsigned ? OpCodes.Cgt_Un : OpCodes.Cgt);
                 scope.IL.Emit(OpCodes.Ldc_I4_0);
                 scope.IL.Emit(OpCodes.Ceq);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.GreaterThan)
             {
-                scope.IL.Emit(OpCodes.Cgt);
+                scope.IL.Emit(unsigned ? OpCodes.Cgt_Un : OpCodes.Cgt);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.GreaterEqual)
             {
-                scope.IL.Emit(OpCodes.Clt);
+                scope.IL.Emit(unsigned ? OpCodes.Clt_Un : OpCodes.Clt);
                 scope.IL.Emit(OpCodes.Ldc_I4_0);
                 scope.IL.Emit(OpCodes.Ceq);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.Modulo)
             {
-                scope.IL.Emit(OpCodes.Rem);
+                scope.IL.Emit(IsUnsignedInteger(node.Left.Type) ? OpCodes.Rem_Un : OpCodes.Rem);
             }
             else if (node.Op.Kind == BoundBinaryOperatorKind.BitwiseAnd)
             {
@@ -1451,6 +1460,10 @@ namespace ProLang.Compiler
                 throw new Exception($"Unexpected binary operator {node.Op.Kind}");
             }
         }
+
+        private static bool IsUnsignedInteger(TypeSymbol type) =>
+            type == TypeSymbol.UInt8 || type == TypeSymbol.UInt16 ||
+            type == TypeSymbol.UInt32 || type == TypeSymbol.UInt64;
 
         private void EmitUnaryExpression(MethodBodyScope scope, BoundUnaryExpression node)
         {

@@ -1,0 +1,703 @@
+/*
+ * The self-hosted compiler — lexer (lexer.prl)
+ *
+ * A ProLang port of src/ProLang/Parse/Lexer.cs. One deliberate restructure: the reference lexer
+ * yields whitespace and comment tokens and lets the parser skip them, which a token-object list
+ * makes easy. Here the stream is flat arrays, so trivia is dropped as it is scanned — the token
+ * buffer only holds what the parser consumes, with its 1-based line and column recorded.
+ *
+ * The dialect details that tests pin down, all carried over exactly:
+ * - hex 0x, binary 0b and octal 0o integer literals, which must fit in 32 bits;
+ * - float literals with an optional f / f32 / f64 suffix;
+ * - strings with no escape sequences at all — a doubled "" is a literal quote;
+ * - `//` line comments and `/* ... *&#47; block comments.
+ *
+ * prolang's && does not short-circuit, so every lookahead test that reads a character checks the
+ * bounds test in a separate branch first — the same discipline syn_scan_ident in the text editor
+ * documents.
+ */
+
+import "strbuf"
+import "token.prl"
+import "diag.prl"
+
+// The source being lexed; lex_all sets it. Declared in token.prl, which slices it.
+global lx_pos: int = 0
+global lx_start: int = 0
+
+// ── character helpers ────────────────────────────────────────────────────────
+
+// The character code at `pos + off`, or 0 past the end — the lexer's '\0' sentinel.
+func lx_peek(off: int) : int {
+    let index: int = lx_pos + off
+    if (index >= tok_source.length()) {
+        return 0
+    }
+    return tok_source.charCode(index)
+}
+
+func lx_current() : int {
+    return lx_peek(0)
+}
+
+func lx_advance() : void {
+    lx_pos = lx_pos + 1
+}
+
+func lx_is_digit(c: int) : bool {
+    return c >= 48 && c <= 57
+}
+
+func lx_is_ident_start(c: int) : bool {
+    if (c >= 65 && c <= 90) { return true }
+    if (c >= 97 && c <= 122) { return true }
+    return c == 95
+}
+
+func lx_is_ident_part(c: int) : bool {
+    if (lx_is_ident_start(c)) { return true }
+    return lx_is_digit(c)
+}
+
+// ── token emission ───────────────────────────────────────────────────────────
+
+// Line and column of an offset: computed by counting newlines. Tokens are emitted in order, so
+// the counters only ever move forward.
+global lx_line: int = 1
+global lx_line_start: int = 0
+
+func lx_track_newlines(from: int, upto: int) : void {
+    let i: int = from
+    while (i < upto) {
+        if (tok_source.charCode(i) == 10) {
+            lx_line = lx_line + 1
+            lx_line_start = i + 1
+        }
+        i = i + 1
+    }
+}
+
+func lx_col_at(pos: int) : int {
+    return pos - lx_line_start + 1
+}
+
+// Appends a token spanning lx_start..lx_pos with the given kind.
+func lx_emit(kind: int) : void {
+    t_kind[t_count] = kind
+    t_start[t_count] = lx_start
+    t_len[t_count] = lx_pos - lx_start
+    t_line[t_count] = lx_line
+    t_col[t_count] = lx_col_at(lx_start)
+    t_int[t_count] = 0
+    t_num[t_count] = 0.0
+    t_str[t_count] = ""
+    t_count = t_count + 1
+}
+
+func lx_emit_int(kind: int, value: int) : void {
+    lx_emit(kind)
+    t_int[t_count - 1] = value
+}
+
+func lx_emit_num(kind: int, value: float64) : void {
+    lx_emit(kind)
+    t_num[t_count - 1] = value
+}
+
+func lx_emit_str(kind: int, value: string) : void {
+    lx_emit(kind)
+    t_str[t_count - 1] = value
+}
+
+// ── keywords ─────────────────────────────────────────────────────────────────
+
+// The keyword table, exactly as SyntaxFacts.cs lists it.
+func lx_keyword_kind(word: string) : int {
+    if (word == "let") { return TokK.KW_LET }
+    if (word == "true") { return TokK.KW_TRUE }
+    if (word == "false") { return TokK.KW_FALSE }
+    if (word == "null") { return TokK.KW_NULL }
+    if (word == "while") { return TokK.KW_WHILE }
+    if (word == "for") { return TokK.KW_FOR }
+    if (word == "script") { return TokK.KW_SCRIPT }
+    if (word == "if") { return TokK.KW_IF }
+    if (word == "elif") { return TokK.KW_ELIF }
+    if (word == "else") { return TokK.KW_ELSE }
+    if (word == "to") { return TokK.KW_TO }
+    if (word == "func") { return TokK.KW_FUNC }
+    if (word == "break") { return TokK.KW_BREAK }
+    if (word == "continue") { return TokK.KW_CONTINUE }
+    if (word == "return") { return TokK.KW_RETURN }
+    if (word == "import") { return TokK.KW_IMPORT }
+    if (word == "struct") { return TokK.KW_STRUCT }
+    if (word == "as") { return TokK.KW_AS }
+    if (word == "enum") { return TokK.KW_ENUM }
+    if (word == "global") { return TokK.KW_GLOBAL }
+    return TokK.IDENT
+}
+
+// ── the scanner ──────────────────────────────────────────────────────────────
+
+/*
+ * Lexes `text` into the token buffer, resetting all lexer state first.
+ * Whitespace and comments produce no tokens.
+ */
+func lex_all(text: string) : void {
+    tok_source = text
+    lx_pos = 0
+    lx_start = 0
+    lx_line = 1
+    lx_line_start = 0
+    t_count = 0
+
+    while (lx_pos < tok_source.length()) {
+        lx_start = lx_pos
+        lx_read_token()
+    }
+
+    lx_start = lx_pos
+    lx_emit(TokK.EOF)
+}
+
+func lx_read_token() : void {
+    let c: int = lx_current()
+
+    if (c == 0) {
+        return
+    }
+
+    if (lx_is_digit(c)) {
+        lx_read_number()
+        return
+    }
+
+    if (lx_is_ident_start(c)) {
+        lx_read_ident()
+        return
+    }
+
+    if (c == 32 || c == 9 || c == 10 || c == 13) {
+        // space, tab, newline, carriage return
+        lx_read_whitespace()
+        return
+    }
+
+    if (c == 34) {
+        // '"'
+        lx_read_string()
+        return
+    }
+
+    lx_read_punctuation(c)
+}
+
+func lx_read_whitespace() : void {
+    let from: int = lx_pos
+    while (lx_current() == 32 || lx_current() == 9 || lx_current() == 10 || lx_current() == 13) {
+        lx_advance()
+    }
+    lx_track_newlines(from, lx_pos)
+}
+
+func lx_read_ident() : void {
+    while (lx_is_ident_part(lx_current())) {
+        lx_advance()
+    }
+    let word: string = tok_source.substring(lx_start, lx_pos)
+    let kind: int = lx_keyword_kind(word)
+    if (kind == TokK.IDENT) {
+        lx_emit_str(TokK.IDENT, word)
+    } else {
+        lx_emit(kind)
+    }
+}
+
+/*
+ * Line and block comments. Both produce no token; the block form reports an unterminated
+ * comment at its start when the input ends first.
+ */
+func lx_maybe_comment() : bool {
+    // Called with '/' consumed; decides between comment forms and operators.
+    if (lx_current() == 47) {
+        // '//': to end of line, not counting the newline itself
+        while (lx_current() != 10 && lx_current() != 0) {
+            lx_advance()
+        }
+        return true
+    }
+    if (lx_current() == 42) {
+        // '/*': to the matching '*/'
+        lx_advance()
+        while (true) {
+            let c: int = lx_current()
+            if (c == 0) {
+                diag_report(lx_line, lx_col_at(lx_start),
+                    "unterminated block comment")
+                return true
+            }
+            if (c == 42 && lx_peek(1) == 47) {
+                let from: int = lx_start
+                lx_advance()
+                lx_advance()
+                lx_track_newlines(from, lx_pos)
+                return true
+            }
+            lx_advance()
+        }
+    }
+    return false
+}
+
+/*
+ * Numbers: decimal, 0x/0b/0o integers, and floats with optional f / f32 / f64 suffix.
+ * A literal that does not fit in 32 bits is reported and read anyway, with value 0.
+ */
+func lx_read_number() : void {
+    let line: int = lx_line
+    let col: int = lx_col_at(lx_start)
+
+    if (lx_current() == 48 && lx_is_radix_prefix(lx_peek(1))) {
+        lx_read_radix_number(line, col)
+        return
+    }
+
+    // Find where the digit run ends before deciding int or float: a float's whole part may
+    // exceed 32 bits and still be a perfectly good float64, so it must not go through the
+    // int accumulator.
+    let digitsEnd: int = lx_pos
+    while (lx_is_digit(lx_current())) {
+        lx_advance()
+    }
+    let digitsText: string = tok_source.substring(digitsEnd, lx_pos)
+
+    // A float needs '.' followed by a digit — a bare '.' is member access.
+    if (lx_current() == 46 && lx_is_digit(lx_peek(1))) {
+        lx_read_float(line, col, digitsText)
+        return
+    }
+
+    // 'f' suffix on a bare integer is not a float — the reference lexer's int.TryParse
+    // rejects "5f" outright.
+    if (lx_is_ident_start(lx_current())) {
+        while (lx_is_ident_part(lx_current())) {
+            lx_advance()
+        }
+        diag_report(line, col, "invalid number '" + tok_source.substring(digitsEnd, lx_pos) + "'")
+        lx_emit_int(TokK.INT, 0)
+        return
+    }
+
+    let value: int = 0
+    let overflow: bool = false
+    let i: int = 0
+    while (i < digitsText.length()) {
+        let digit: int = digitsText.charCode(i) - 48
+        // The limit is hoisted rather than written `value > (max - digit) / 10`: a `>` whose
+        // next token is `(` sits in the parser's generic-call lookahead window after the `<`
+        // two lines up, and the whole comparison then misparses as `i<...>(...)`.
+        let limit: int = (2147483647 - digit) / 10
+        if (value > limit) {
+            overflow = true
+        }
+        value = value * 10 + digit
+        i = i + 1
+    }
+
+    if (overflow) {
+        diag_report(line, col, "invalid number '" + digitsText + "': does not fit in int")
+        lx_emit_int(TokK.INT, 0)
+        return
+    }
+
+    lx_emit_int(TokK.INT, value)
+}
+
+func lx_is_radix_prefix(c: int) : bool {
+    let lower: int = c
+    if (lower >= 65 && lower <= 90) {
+        lower = lower + 32
+    }
+    return lower == 120 || lower == 98 || lower == 111
+}
+
+func lx_read_radix_number(line: int, col: int) : void {
+    let lower: int = lx_peek(1)
+    if (lower >= 65 && lower <= 90) {
+        lower = lower + 32
+    }
+
+    let radix: int = 16
+    if (lower == 98) {
+        radix = 2
+    }
+    if (lower == 111) {
+        radix = 8
+    }
+
+    lx_advance()
+    lx_advance()
+
+    let value: int = 0
+    let overflow: bool = false
+    while (lx_is_radix_digit(lx_current(), radix)) {
+        let digit: int = lx_digit_value(lx_current())
+        let limit: int = (2147483647 - digit) / radix
+        if (value > limit) {
+            overflow = true
+        }
+        value = value * radix + digit
+        lx_advance()
+    }
+
+    if (overflow) {
+        diag_report(line, col, "invalid number '" + tok_source.substring(lx_start, lx_pos) + "': does not fit in int")
+        lx_emit_int(TokK.INT, 0)
+        return
+    }
+
+    lx_emit_int(TokK.INT, value)
+}
+
+func lx_is_radix_digit(c: int, radix: int) : bool {
+    if (radix == 16) {
+        if (lx_is_digit(c)) { return true }
+        let lower: int = c
+        if (lower >= 65 && lower <= 90) {
+            lower = lower + 32
+        }
+        return lower >= 97 && lower <= 102
+    }
+    if (radix == 8) {
+        return c >= 48 && c <= 55
+    }
+    return c == 48 || c == 49
+}
+
+func lx_digit_value(c: int) : int {
+    if (lx_is_digit(c)) {
+        return c - 48
+    }
+    let lower: int = c
+    if (lower >= 65 && lower <= 90) {
+        lower = lower + 32
+    }
+    return lower - 97 + 10
+}
+
+func lx_read_float(line: int, col: int, wholeText: string) : void {
+    // The whole part, accumulated as float64 so wide literals still parse.
+    let whole: float64 = 0.0
+    let wi: int = 0
+    while (wi < wholeText.length()) {
+        whole = whole * 10.0 + wholeText.charCode(wi) - 48
+        wi = wi + 1
+    }
+
+    lx_advance()
+
+    let fraction: float64 = 0.0
+    let scale: float64 = 1.0
+    while (lx_is_digit(lx_current())) {
+        fraction = fraction * 10.0 + lx_current() - 48
+        scale = scale * 10.0
+        lx_advance()
+    }
+
+    let value: float64 = whole + fraction / scale
+
+    // Optional suffix: f or f32 → float32, f64 → float64.
+    let kind: int = TokK.FLOAT64
+    let c: int = lx_current()
+    let lower: int = c
+    if (lower >= 65 && lower <= 90) {
+        lower = lower + 32
+    }
+    if (lower == 102) {
+        lx_advance()
+        kind = TokK.FLOAT32
+        if (lx_current() == 51 && lx_peek(1) == 50) {
+            // "32"
+            lx_advance()
+            lx_advance()
+        } else if (lx_current() == 54 && lx_peek(1) == 52) {
+            // "64"
+            kind = TokK.FLOAT64
+            lx_advance()
+            lx_advance()
+        }
+    }
+
+    lx_emit_num(kind, value)
+}
+
+/*
+ * Strings: no escape sequences — a doubled "" is a literal quote. Terminated by a closing
+ * quote; end of line or end of file is an unterminated-string error.
+ */
+func lx_read_string() : void {
+    let line: int = lx_line
+    let col: int = lx_col_at(lx_start)
+
+    lx_advance()
+
+    let sb: StrBuf = strbuf_new(16)
+
+    while (true) {
+        let c: int = lx_current()
+
+        if (c == 0 || c == 10 || c == 13) {
+            diag_report(line, col, "unterminated string literal")
+            break
+        }
+
+        if (c == 34) {
+            if (lx_peek(1) == 34) {
+                // Doubled quote: one literal '"' in the value. (ProLang strings have no
+                // escapes, so a quote in source is written "" between the delimiters.)
+                sb = strbuf_append(sb, """")
+                lx_advance()
+                lx_advance()
+                continue
+            }
+            lx_advance()
+            break
+        }
+
+        sb = strbuf_append(sb, tok_source.substring(lx_pos, lx_pos + 1))
+        lx_advance()
+    }
+
+    lx_emit_str(TokK.STRING, strbuf_to_string(sb))
+}
+
+/*
+ * Punctuation and operators. `c` is the current character's code. Block comments are
+ * recognised from the '/' case; they emit nothing, so the token is read again from scratch.
+ */
+func lx_read_punctuation(c: int) : void {
+    // '/' may start a line comment, a block comment, or an operator.
+    if (c == 47) {
+        lx_advance()
+        if (lx_maybe_comment()) {
+            return
+        }
+        if (lx_current() == 61) {
+            lx_advance()
+            lx_emit(TokK.SLASH_EQ)
+            return
+        }
+        if (lx_current() == 62) {
+            // '/>': html end tag
+            lx_advance()
+            lx_emit(TokK.OPEN_ANGLE_SLASH)
+            return
+        }
+        lx_emit(TokK.SLASH)
+        return
+    }
+
+    if (c == 43) {
+        // '+'
+        lx_advance()
+        if (lx_current() == 61) {
+            lx_advance()
+            lx_emit(TokK.PLUS_EQ)
+        } else {
+            lx_emit(TokK.PLUS)
+        }
+        return
+    }
+
+    if (c == 45) {
+        // '-'
+        lx_advance()
+        if (lx_current() == 61) {
+            lx_advance()
+            lx_emit(TokK.MINUS_EQ)
+        } else {
+            lx_emit(TokK.MINUS)
+        }
+        return
+    }
+
+    if (c == 42) {
+        // '*'
+        lx_advance()
+        if (lx_current() == 61) {
+            lx_advance()
+            lx_emit(TokK.STAR_EQ)
+        } else {
+            lx_emit(TokK.STAR)
+        }
+        return
+    }
+
+    if (c == 37) {
+        lx_advance()
+        lx_emit(TokK.PERCENT)
+        return
+    }
+
+    if (c == 60) {
+        // '<'
+        let look: int = lx_peek(1)
+        if (look == 47) {
+            lx_advance()
+            lx_advance()
+            lx_emit(TokK.OPEN_ANGLE_SLASH)
+            return
+        }
+        if (look == 61) {
+            lx_advance()
+            lx_advance()
+            lx_emit(TokK.LT_EQ)
+            return
+        }
+        if (look == 60) {
+            lx_advance()
+            lx_advance()
+            lx_emit(TokK.LT_LT)
+            return
+        }
+        lx_advance()
+        lx_emit(TokK.LT)
+        return
+    }
+
+    if (c == 62) {
+        // '>'
+        lx_advance()
+        if (lx_current() == 61) {
+            lx_advance()
+            lx_emit(TokK.GT_EQ)
+            return
+        }
+        if (lx_current() == 62) {
+            lx_advance()
+            lx_emit(TokK.GT_GT)
+            return
+        }
+        lx_emit(TokK.GT)
+        return
+    }
+
+    if (c == 61) {
+        // '='
+        lx_advance()
+        if (lx_current() == 61) {
+            lx_advance()
+            lx_emit(TokK.EQ_EQ)
+        } else {
+            lx_emit(TokK.EQ)
+        }
+        return
+    }
+
+    if (c == 40) {
+        lx_advance()
+        lx_emit(TokK.LPAREN)
+        return
+    }
+    if (c == 41) {
+        lx_advance()
+        lx_emit(TokK.RPAREN)
+        return
+    }
+    if (c == 38) {
+        // '&'
+        lx_advance()
+        if (lx_current() == 38) {
+            lx_advance()
+            lx_emit(TokK.AMP_AMP)
+        } else {
+            lx_emit(TokK.AMP)
+        }
+        return
+    }
+    if (c == 124) {
+        // '|'
+        lx_advance()
+        if (lx_current() == 124) {
+            lx_advance()
+            lx_emit(TokK.PIPE_PIPE)
+        } else {
+            lx_emit(TokK.PIPE)
+        }
+        return
+    }
+    if (c == 33) {
+        // '!'
+        lx_advance()
+        if (lx_current() == 61) {
+            lx_advance()
+            lx_emit(TokK.BANG_EQ)
+        } else {
+            lx_emit(TokK.BANG)
+        }
+        return
+    }
+    if (c == 36) {
+        // '$'
+        lx_advance()
+        if (lx_current() == 123) {
+            lx_advance()
+            lx_emit(TokK.DOLLAR_CURLY)
+        } else {
+            lx_emit(TokK.DOLLAR)
+        }
+        return
+    }
+    if (c == 123) {
+        lx_advance()
+        lx_emit(TokK.LBRACE)
+        return
+    }
+    if (c == 125) {
+        lx_advance()
+        lx_emit(TokK.RBRACE)
+        return
+    }
+    if (c == 91) {
+        lx_advance()
+        lx_emit(TokK.LBRACKET)
+        return
+    }
+    if (c == 93) {
+        lx_advance()
+        lx_emit(TokK.RBRACKET)
+        return
+    }
+    if (c == 126) {
+        lx_advance()
+        lx_emit(TokK.TILDE)
+        return
+    }
+    if (c == 94) {
+        lx_advance()
+        lx_emit(TokK.HAT)
+        return
+    }
+    if (c == 46) {
+        lx_advance()
+        lx_emit(TokK.DOT)
+        return
+    }
+    if (c == 44) {
+        lx_advance()
+        lx_emit(TokK.COMMA)
+        return
+    }
+    if (c == 58) {
+        lx_advance()
+        lx_emit(TokK.COLON)
+        return
+    }
+    if (c == 59) {
+        lx_advance()
+        lx_emit(TokK.SEMI)
+        return
+    }
+
+    diag_report(lx_line, lx_col_at(lx_pos), "bad character input: '" + tok_source.substring(lx_pos, lx_pos + 1) + "'")
+    lx_advance()
+}

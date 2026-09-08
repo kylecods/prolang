@@ -1,0 +1,174 @@
+/*
+ * The self-hosted compiler — syntax tree arena (ast.prl)
+ *
+ * The reference compiler's AST is 54 one-node-per-file C# classes. ProLang has neither classes
+ * nor recursive structs, and the established idiom — used by all of std/ui — is an arena: flat
+ * parallel arrays indexed by node number, where a child is an int and 0 means "absent" (node 0
+ * is reserved as the null node).
+ *
+ * Node payloads are grouped in four int slots (a, b, c, d), one primary token reference, one
+ * optional string, and one optional float. Variable-length child lists — arguments, block
+ * statements, type arguments — live in one flattened kid array with a per-node start and count.
+ * Which slot means what is documented on each node kind's parser function.
+ *
+ * The arrays are module globals with fixed capacity, the pattern examples/21-text-editor uses
+ * for its editor state: mutation writes through the array references, so none of prolang's
+ * value-type struct copying applies.
+ */
+
+import "token.prl"
+
+enum NodK {
+    // top
+    FILE,
+
+    // declarations
+    IMPORT,         // str = path
+    FUNC,           // str = name, tok = name, b = type params list, c = params list,
+                    // d = return type | 0, kids = body statements
+    STRUCT,         // str = name, b = type params list, kids = fields
+    FIELD,          // str = name, d = type
+    ENUM,           // str = name, kids = members
+    ENUM_MEMBER,    // str = name, a = value expression | 0
+    GLOBAL_VAR,     // str = name, a = initializer, d = type | 0
+
+    // types
+    TYPE_NAME,      // str = name
+    TYPE_GENERIC,   // str = name, kids = argument types
+    TYPE_ARRAY,     // a = element type
+    TYPE_FUNC,      // kids = parameter types, d = return type | 0
+
+    // statements
+    BLOCK,          // kids = statements
+    LET,            // str = name, a = initializer, d = type | 0
+    EXPR_STMT,      // a = expression
+    IF,             // a = condition, b = then statement, c = elif chain | 0, d = else | 0
+    WHILE,          // a = condition, b = body statement
+    FOR,            // str = loop variable, a = lower, b = upper, d = body statement
+    RETURN,         // a = expression | 0
+    BREAK,
+    CONTINUE,
+
+    // expressions
+    INT_LIT,        // a = value
+    FLOAT_LIT,      // num = value; tok distinguishes float32 from float64 by kind
+    STR_LIT,        // str = value
+    BOOL_LIT,       // a = 1 or 0
+    NULL_LIT,
+    NAME,           // str = name
+    UNARY,          // tok = operator, a = operand
+    BINARY,         // tok = operator, a = left, b = right
+    ASSIGN,         // tok = operator, a = target, b = value
+    CAST,           // tok = as, a = expression, d = target type
+    CALL,           // str = name, b = type args list | 0, kids = arguments
+    METHOD_CALL,    // a = receiver, str = method name, kids = arguments
+    FIELD_ACCESS,   // a = receiver, str = field name
+    INDEX,          // a = receiver, b = index expression
+    ARRAY_LIT,      // kids = elements
+    MAP_LIT,        // kids = entries
+    MAP_ENTRY,      // a = key, b = value
+    STRUCT_LIT,     // str = type name, b = type args list | 0, kids = field initializers
+    FIELD_INIT,     // str = field name, a = value
+    PAREN,          // a = inner expression
+    NAMED_ARG,      // str = name, a = value
+    PARAM,          // str = name, d = type, a = default value | 0
+    LIST            // kids = whatever the enclosing node stores in its list slot
+}
+
+// Node capacity. A 3,000-line source builds on the order of 15,000 nodes.
+global n_kind: array<int> = array_new(131072)
+global n_a: array<int> = array_new(131072)
+global n_b: array<int> = array_new(131072)
+global n_c: array<int> = array_new(131072)
+global n_d: array<int> = array_new(131072)
+global n_tok: array<int> = array_new(131072)
+global n_str: array<string> = array_new(131072)
+global n_num: array<float64> = array_new(131072)
+global n_kid_head: array<int> = array_new(131072)
+global n_kid_count: array<int> = array_new(131072)
+global n_kid_tail: array<int> = array_new(131072)
+global n_next: array<int> = array_new(131072)
+global n_count: int = 0
+
+/*
+ * Kid lists are singly linked through the kid's own record: a parent remembers its first and
+ * last kid, every kid remembers its next sibling. A contiguous per-node segment cannot work
+ * here, because a parent's kids are appended after its descendants have already appended
+ * theirs — the file node allocates first but is filled in last.
+ */
+
+func ast_reset() : void {
+    n_count = 1          // node 0 is the reserved null node
+}
+
+// Allocates a node with no payload beyond its kind.
+func ast_new(kind: int, tok: int) : int {
+    n_kind[n_count] = kind
+    n_a[n_count] = 0
+    n_b[n_count] = 0
+    n_c[n_count] = 0
+    n_d[n_count] = 0
+    n_tok[n_count] = tok
+    n_str[n_count] = ""
+    n_num[n_count] = 0.0
+    n_kid_head[n_count] = 0
+    n_kid_tail[n_count] = 0
+    n_kid_count[n_count] = 0
+    n_next[n_count] = 0
+    n_count = n_count + 1
+    return n_count - 1
+}
+
+func ast_set_str(id: int, s: string) : void {
+    n_str[id] = s
+}
+
+func ast_set_num(id: int, v: float64) : void {
+    n_num[id] = v
+}
+
+// Appends `kid` as the last child of `id`.
+func ast_add_kid(id: int, kid: int) : void {
+    let tail: int = n_kid_tail[id]
+    if (tail == 0) {
+        n_kid_head[id] = kid
+    } else {
+        n_next[tail] = kid
+    }
+    n_kid_tail[id] = kid
+    n_kid_count[id] = n_kid_count[id] + 1
+}
+
+// The first child of `id`, or 0 when there is none.
+func ast_kid_head(id: int) : int {
+    return n_kid_head[id]
+}
+
+// The sibling following `kid`, or 0 after the last.
+func ast_kid_next(kid: int) : int {
+    return n_next[kid]
+}
+
+// The i'th child of `id`. O(i); only used where random access is genuinely needed.
+func ast_kid(id: int, i: int) : int {
+    let k: int = n_kid_head[id]
+    let n: int = i
+    while (n > 0 && k != 0) {
+        k = n_next[k]
+        n = n - 1
+    }
+    return k
+}
+
+func ast_kid_count(id: int) : int {
+    return n_kid_count[id]
+}
+
+// The token's line/column pair, for diagnostics that point at a node.
+func ast_line(id: int) : int {
+    return t_line[n_tok[id]]
+}
+
+func ast_col(id: int) : int {
+    return t_col[n_tok[id]]
+}

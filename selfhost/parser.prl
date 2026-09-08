@@ -1,0 +1,902 @@
+/*
+ * The self-hosted compiler — parser (parser.prl)
+ *
+ * A ProLang port of src/ProLang/Parse/Parser.cs, minus the html declaration forms, which are a
+ * web-tooling experiment the self-hosted compiler has no use for. Grammar, precedence and
+ * recovery behaviour match the reference otherwise:
+ *
+ * - assignment is right-associative and sits above the binary operators;
+ * - `as T` binds tighter than any binary operator and stacks;
+ * - elif chains flatten to a list while parsing, then rebuild right-nested;
+ * - `else if` is sugar for an else block holding a single if;
+ * - `Ident {` or `Ident<...> {` opens a struct literal, decided with a generic-end lookahead;
+ * - an identifier followed by `:` in argument position is a named argument;
+ * - a statement that consumes no token ends its enclosing block's loop with a skip, so a
+ *   parse never hangs.
+ */
+
+import "token.prl"
+import "diag.prl"
+import "ast.prl"
+
+// Token cursor. The token buffer itself is the lexer's.
+global p_i: int = 0
+
+func p_current_kind() : int {
+    return t_kind[p_i]
+}
+
+func p_peek_kind(off: int) : int {
+    let index: int = p_i + off
+    if (index >= t_count) {
+        return TokK.EOF
+    }
+    return t_kind[index]
+}
+
+func p_next() : int {
+    let tok: int = p_i
+    if (p_i < t_count - 1) {
+        p_i = p_i + 1
+    }
+    return tok
+}
+
+/*
+ * Matches a token kind: consumes and returns the token on success. On mismatch, reports the
+ * same diagnostic the reference parser's Match would and does not advance — the caller's
+ * progress guard decides how to recover.
+ */
+func p_match(kind: int) : int {
+    if (p_current_kind() == kind) {
+        return p_next()
+    }
+    diag_report(t_line[p_i], t_col[p_i],
+        "expected " + t_kind_name[kind] + " but found " + t_kind_name[p_current_kind()])
+    return p_i
+}
+
+// ── declarations ─────────────────────────────────────────────────────────────
+
+// Parses a whole file: declarations until EOF. kids = the declarations.
+func parse_program() : int {
+    let file: int = ast_new(NodK.FILE, 0)
+    while (p_current_kind() != TokK.EOF) {
+        let before: int = p_i
+        let decl: int = p_declaration()
+        ast_add_kid(file, decl)
+        if (p_i == before) {
+            p_next()
+        }
+    }
+    return file
+}
+
+func p_declaration() : int {
+    let kind: int = p_current_kind()
+
+    if (kind == TokK.KW_IMPORT) {
+        return p_import_decl()
+    }
+    if (kind == TokK.KW_FUNC) {
+        return p_func_decl()
+    }
+    if (kind == TokK.KW_STRUCT) {
+        return p_struct_decl()
+    }
+    if (kind == TokK.KW_ENUM) {
+        return p_enum_decl()
+    }
+    if (kind == TokK.KW_GLOBAL) {
+        return p_global_var_decl()
+    }
+
+    // A bare statement at file scope, wrapped as the reference parser does.
+    let stmt: int = p_statement()
+    return stmt
+}
+
+func p_import_decl() : int {
+    p_match(TokK.KW_IMPORT)
+    let path: int = p_match(TokK.STRING)
+    let node: int = ast_new(NodK.IMPORT, path)
+    ast_set_str(node, t_str[path])
+    return node
+}
+
+func p_func_decl() : int {
+    p_match(TokK.KW_FUNC)
+    let name: int = p_match(TokK.IDENT)
+
+    let node: int = ast_new(NodK.FUNC, name)
+    ast_set_str(node, t_str[name])
+
+    if (p_current_kind() == TokK.LT) {
+        p_next()
+        let typeParams: int = ast_new(NodK.LIST, 0)
+        while (p_current_kind() != TokK.GT && p_current_kind() != TokK.EOF) {
+            let tp: int = p_match(TokK.IDENT)
+            let tpNode: int = ast_new(NodK.TYPE_NAME, tp)
+            ast_set_str(tpNode, t_str[tp])
+            ast_add_kid(typeParams, tpNode)
+            if (p_current_kind() == TokK.COMMA) {
+                p_next()
+            } else {
+                break
+            }
+        }
+        p_match(TokK.GT)
+        n_b[node] = typeParams
+    }
+
+    p_match(TokK.LPAREN)
+    let params: int = ast_new(NodK.LIST, 0)
+    while (p_current_kind() != TokK.RPAREN && p_current_kind() != TokK.EOF) {
+        let param: int = p_parameter()
+        ast_add_kid(params, param)
+        if (p_current_kind() == TokK.COMMA) {
+            p_next()
+        } else {
+            break
+        }
+    }
+    p_match(TokK.RPAREN)
+    n_c[node] = params
+
+    if (p_current_kind() == TokK.COLON) {
+        n_d[node] = p_type_clause()
+    }
+
+    let body: int = p_block_statement()
+    let kid: int = ast_kid_head(body)
+    while (kid != 0) {
+        ast_add_kid(node, kid)
+        kid = ast_kid_next(kid)
+    }
+
+    return node
+}
+
+// One parameter: name: type [= default]. kids unused; d = type, a = default | 0.
+func p_parameter() : int {
+    let name: int = p_match(TokK.IDENT)
+    let node: int = ast_new(NodK.PARAM, name)
+    ast_set_str(node, t_str[name])
+    n_d[node] = p_type_clause()
+    if (p_current_kind() == TokK.EQ) {
+        p_next()
+        n_a[node] = p_expression()
+    }
+    return node
+}
+
+func p_struct_decl() : int {
+    p_match(TokK.KW_STRUCT)
+    let name: int = p_match(TokK.IDENT)
+
+    let node: int = ast_new(NodK.STRUCT, name)
+    ast_set_str(node, t_str[name])
+
+    if (p_current_kind() == TokK.LT) {
+        p_next()
+        let typeParams: int = ast_new(NodK.LIST, 0)
+        while (p_current_kind() != TokK.GT && p_current_kind() != TokK.EOF) {
+            let tp: int = p_match(TokK.IDENT)
+            let tpNode: int = ast_new(NodK.TYPE_NAME, tp)
+            ast_set_str(tpNode, t_str[tp])
+            ast_add_kid(typeParams, tpNode)
+            if (p_current_kind() == TokK.COMMA) {
+                p_next()
+            } else {
+                break
+            }
+        }
+        p_match(TokK.GT)
+        n_b[node] = typeParams
+    }
+
+    p_match(TokK.LBRACE)
+
+    while (p_current_kind() != TokK.RBRACE && p_current_kind() != TokK.EOF) {
+        let before: int = p_i
+        let field: int = p_match(TokK.IDENT)
+        let fieldNode: int = ast_new(NodK.FIELD, field)
+        ast_set_str(fieldNode, t_str[field])
+        n_d[fieldNode] = p_type_clause()
+        if (p_current_kind() == TokK.SEMI || p_current_kind() == TokK.COMMA) {
+            p_next()
+        }
+        ast_add_kid(node, fieldNode)
+        if (p_i == before) {
+            p_next()
+        }
+    }
+
+    p_match(TokK.RBRACE)
+    return node
+}
+
+func p_enum_decl() : int {
+    p_match(TokK.KW_ENUM)
+    let name: int = p_match(TokK.IDENT)
+
+    let node: int = ast_new(NodK.ENUM, name)
+    ast_set_str(node, t_str[name])
+
+    p_match(TokK.LBRACE)
+
+    while (p_current_kind() != TokK.RBRACE && p_current_kind() != TokK.EOF) {
+        let before: int = p_i
+        let member: int = p_match(TokK.IDENT)
+        let memberNode: int = ast_new(NodK.ENUM_MEMBER, member)
+        ast_set_str(memberNode, t_str[member])
+
+        if (p_current_kind() == TokK.EQ) {
+            p_next()
+            n_a[memberNode] = p_expression()
+        }
+
+        if (p_current_kind() == TokK.COMMA || p_current_kind() == TokK.SEMI) {
+            p_next()
+        }
+
+        ast_add_kid(node, memberNode)
+        if (p_i == before) {
+            p_next()
+        }
+    }
+
+    p_match(TokK.RBRACE)
+    return node
+}
+
+func p_global_var_decl() : int {
+    p_match(TokK.KW_GLOBAL)
+    let name: int = p_match(TokK.IDENT)
+
+    let node: int = ast_new(NodK.GLOBAL_VAR, name)
+    ast_set_str(node, t_str[name])
+
+    if (p_current_kind() == TokK.COLON) {
+        n_d[node] = p_type_clause()
+    }
+
+    p_match(TokK.EQ)
+    n_a[node] = p_expression()
+    return node
+}
+
+// ── types ────────────────────────────────────────────────────────────────────
+
+func p_type_clause() : int {
+    p_match(TokK.COLON)
+    return p_type_syntax()
+}
+
+func p_type_syntax() : int {
+    let base: int = p_type_base()
+    while (p_current_kind() == TokK.LBRACKET) {
+        p_next()
+        p_match(TokK.RBRACKET)
+        let arr: int = ast_new(NodK.TYPE_ARRAY, 0)
+        n_a[arr] = base
+        base = arr
+    }
+    return base
+}
+
+func p_type_base() : int {
+    if (p_current_kind() == TokK.KW_FUNC) {
+        return p_func_type()
+    }
+
+    let name: int = p_match(TokK.IDENT)
+
+    if (p_current_kind() == TokK.LT) {
+        let node: int = ast_new(NodK.TYPE_GENERIC, name)
+        ast_set_str(node, t_str[name])
+        p_next()
+        while (p_current_kind() != TokK.GT && p_current_kind() != TokK.EOF) {
+            ast_add_kid(node, p_type_syntax())
+            if (p_current_kind() == TokK.COMMA) {
+                p_next()
+            } else {
+                break
+            }
+        }
+        p_match(TokK.GT)
+        return node
+    }
+
+    let node: int = ast_new(NodK.TYPE_NAME, name)
+    ast_set_str(node, t_str[name])
+    return node
+}
+
+// func(T, U) : R — the return clause is optional and means void. kids = parameter types.
+func p_func_type() : int {
+    let kw: int = p_match(TokK.KW_FUNC)
+    let node: int = ast_new(NodK.TYPE_FUNC, kw)
+    p_match(TokK.LPAREN)
+    while (p_current_kind() != TokK.RPAREN && p_current_kind() != TokK.EOF) {
+        ast_add_kid(node, p_type_syntax())
+        if (p_current_kind() == TokK.COMMA) {
+            p_next()
+        } else {
+            break
+        }
+    }
+    p_match(TokK.RPAREN)
+    if (p_current_kind() == TokK.COLON) {
+        n_d[node] = p_type_clause()
+    }
+    return node
+}
+
+// ── statements ───────────────────────────────────────────────────────────────
+
+func p_statement() : int {
+    let kind: int = p_current_kind()
+
+    if (kind == TokK.KW_LET) {
+        return p_let_statement()
+    }
+    if (kind == TokK.LBRACE) {
+        return p_block_statement()
+    }
+    if (kind == TokK.KW_IF) {
+        return p_if_statement()
+    }
+    if (kind == TokK.KW_WHILE) {
+        return p_while_statement()
+    }
+    if (kind == TokK.KW_FOR) {
+        return p_for_statement()
+    }
+    if (kind == TokK.KW_CONTINUE) {
+        let kw: int = p_next()
+        return ast_new(NodK.CONTINUE, kw)
+    }
+    if (kind == TokK.KW_BREAK) {
+        let kw: int = p_next()
+        return ast_new(NodK.BREAK, kw)
+    }
+    if (kind == TokK.KW_RETURN) {
+        return p_return_statement()
+    }
+
+    let expr: int = p_expression()
+    let node: int = ast_new(NodK.EXPR_STMT, n_tok[expr])
+    n_a[node] = expr
+    return node
+}
+
+func p_block_statement() : int {
+    let open: int = p_match(TokK.LBRACE)
+    let node: int = ast_new(NodK.BLOCK, open)
+
+    while (p_current_kind() != TokK.RBRACE && p_current_kind() != TokK.EOF) {
+        let before: int = p_i
+        let stmt: int = p_statement()
+        ast_add_kid(node, stmt)
+        if (p_i == before) {
+            p_next()
+        }
+    }
+
+    p_match(TokK.RBRACE)
+    return node
+}
+
+func p_let_statement() : int {
+    let kw: int = p_match(TokK.KW_LET)
+    let name: int = p_match(TokK.IDENT)
+
+    let node: int = ast_new(NodK.LET, name)
+    ast_set_str(node, t_str[name])
+
+    if (p_current_kind() == TokK.COLON) {
+        n_d[node] = p_type_clause()
+    }
+
+    p_match(TokK.EQ)
+    n_a[node] = p_expression()
+    return node
+}
+
+func p_if_statement() : int {
+    p_match(TokK.KW_IF)
+    p_match(TokK.LPAREN)
+    let cond: int = p_expression()
+    p_match(TokK.RPAREN)
+    let then: int = p_statement()
+
+    let node: int = ast_new(NodK.IF, n_tok[cond])
+    n_a[node] = cond
+    n_b[node] = then
+
+    // Collect the elif chain, then rebuild it right-nested: the outer node's c slot holds the
+    // next elif as its own IF node sharing this condition shape.
+    let elifConds: array<int> = array_new(64)
+    let elifBodies: array<int> = array_new(64)
+    let elifCount: int = 0
+    while (p_current_kind() == TokK.KW_ELIF) {
+        p_next()
+        p_match(TokK.LPAREN)
+        elifConds[elifCount] = p_expression()
+        p_match(TokK.RPAREN)
+        elifBodies[elifCount] = p_statement()
+        elifCount = elifCount + 1
+    }
+
+    let elseBody: int = 0
+    if (p_current_kind() == TokK.KW_ELSE) {
+        p_next()
+        if (p_current_kind() == TokK.KW_IF) {
+            // `else if` sugar: the else body is an if statement.
+            elseBody = p_if_statement()
+        } else {
+            elseBody = p_statement()
+        }
+    }
+
+    // Build from the innermost elif outward; the last elif's else is the real else.
+    let chain: int = elseBody
+    let j: int = elifCount - 1
+    while (j >= 0) {
+        let link: int = ast_new(NodK.IF, n_tok[elifConds[j]])
+        n_a[link] = elifConds[j]
+        n_b[link] = elifBodies[j]
+        n_d[link] = chain
+        chain = link
+        j = j - 1
+    }
+
+    n_c[node] = chain
+    return node
+}
+
+func p_while_statement() : int {
+    p_match(TokK.KW_WHILE)
+    p_match(TokK.LPAREN)
+    let cond: int = p_expression()
+    p_match(TokK.RPAREN)
+    let body: int = p_statement()
+
+    let node: int = ast_new(NodK.WHILE, n_tok[cond])
+    n_a[node] = cond
+    n_b[node] = body
+    return node
+}
+
+func p_for_statement() : int {
+    p_match(TokK.KW_FOR)
+    p_match(TokK.LPAREN)
+
+    // for(let i: int = 0 to 10) or for(i = 0 to 10); the type is parsed and discarded,
+    // exactly as the reference parser does.
+    if (p_current_kind() == TokK.KW_LET) {
+        p_next()
+    }
+    let name: int = p_match(TokK.IDENT)
+    if (p_current_kind() == TokK.COLON) {
+        p_type_clause()
+    }
+    p_match(TokK.EQ)
+
+    let lower: int = p_expression()
+    p_match(TokK.KW_TO)
+    let upper: int = p_expression()
+    p_match(TokK.RPAREN)
+    let body: int = p_statement()
+
+    let node: int = ast_new(NodK.FOR, name)
+    ast_set_str(node, t_str[name])
+    n_a[node] = lower
+    n_b[node] = upper
+    n_d[node] = body
+    return node
+}
+
+func p_return_statement() : int {
+    let kw: int = p_match(TokK.KW_RETURN)
+
+    let node: int = ast_new(NodK.RETURN, kw)
+
+    // The expression must start on the return keyword's own line; a return whose next token
+    // is on a later line returns nothing, so a bare return needs no separator.
+    let exprLine: int = t_line[p_i]
+    if (p_current_kind() != TokK.EOF && exprLine == t_line[kw]) {
+        n_a[node] = p_expression()
+    }
+
+    return node
+}
+
+// ── expressions ──────────────────────────────────────────────────────────────
+
+func p_expression() : int {
+    return p_assignment()
+}
+
+func p_unary_precedence(kind: int) : int {
+    if (kind == TokK.PLUS) { return 6 }
+    if (kind == TokK.MINUS) { return 6 }
+    if (kind == TokK.BANG) { return 6 }
+    return 0
+}
+
+func p_binary_precedence(kind: int) : int {
+    if (kind == TokK.STAR) { return 9 }
+    if (kind == TokK.SLASH) { return 9 }
+    if (kind == TokK.PERCENT) { return 9 }
+    if (kind == TokK.PLUS) { return 8 }
+    if (kind == TokK.MINUS) { return 8 }
+    if (kind == TokK.LT_LT) { return 7 }
+    if (kind == TokK.GT_GT) { return 7 }
+    if (kind == TokK.LT) { return 6 }
+    if (kind == TokK.LT_EQ) { return 6 }
+    if (kind == TokK.GT) { return 6 }
+    if (kind == TokK.GT_EQ) { return 6 }
+    if (kind == TokK.BANG_EQ) { return 6 }
+    if (kind == TokK.EQ_EQ) { return 6 }
+    if (kind == TokK.AMP) { return 5 }
+    if (kind == TokK.HAT) { return 4 }
+    if (kind == TokK.PIPE) { return 3 }
+    if (kind == TokK.AMP_AMP) { return 2 }
+    if (kind == TokK.PIPE_PIPE) { return 1 }
+    return 0
+}
+
+func p_binary_expression(parentPrecedence: int) : int {
+    let left: int = 0
+
+    let unaryPrecedence: int = p_unary_precedence(p_current_kind())
+    if (unaryPrecedence != 0 && unaryPrecedence >= parentPrecedence) {
+        let op: int = p_next()
+        let operand: int = p_binary_expression(unaryPrecedence)
+        left = ast_new(NodK.UNARY, op)
+        n_a[left] = operand
+    } else {
+        left = p_primary()
+    }
+
+    while (true) {
+        // `as T` stacks and binds tighter than any binary operator.
+        if (p_current_kind() == TokK.KW_AS) {
+            let kw: int = p_next()
+            let targetType: int = p_type_syntax()
+            let cast: int = ast_new(NodK.CAST, kw)
+            n_a[cast] = left
+            n_d[cast] = targetType
+            left = cast
+            continue
+        }
+
+        let precedence: int = p_binary_precedence(p_current_kind())
+        if (precedence == 0 || precedence <= parentPrecedence) {
+            break
+        }
+        let op: int = p_next()
+        let right: int = p_binary_expression(precedence)
+        let binary: int = ast_new(NodK.BINARY, op)
+        n_a[binary] = left
+        n_b[binary] = right
+        left = binary
+    }
+
+    return left
+}
+
+func p_assignment() : int {
+    let left: int = p_binary_expression(0)
+
+    let kind: int = p_current_kind()
+    if (kind == TokK.EQ || kind == TokK.PLUS_EQ || kind == TokK.MINUS_EQ
+        || kind == TokK.STAR_EQ || kind == TokK.SLASH_EQ) {
+        let op: int = p_next()
+        let right: int = p_assignment()
+        let node: int = ast_new(NodK.ASSIGN, op)
+        n_a[node] = left
+        n_b[node] = right
+        return node
+    }
+
+    return left
+}
+
+func p_primary() : int {
+    let kind: int = p_current_kind()
+
+    if (kind == TokK.KW_TRUE || kind == TokK.KW_FALSE) {
+        let kw: int = p_next()
+        let node: int = ast_new(NodK.BOOL_LIT, kw)
+        if (kind == TokK.KW_TRUE) {
+            n_a[node] = 1
+        }
+        return node
+    }
+
+    if (kind == TokK.KW_NULL) {
+        let kw: int = p_next()
+        return ast_new(NodK.NULL_LIT, kw)
+    }
+
+    if (kind == TokK.LPAREN) {
+        p_next()
+        let inner: int = p_expression()
+        p_match(TokK.RPAREN)
+        let node: int = ast_new(NodK.PAREN, n_tok[inner])
+        n_a[node] = inner
+        return node
+    }
+
+    if (kind == TokK.INT) {
+        let tok: int = p_next()
+        let node: int = ast_new(NodK.INT_LIT, tok)
+        n_a[node] = t_int[tok]
+        return node
+    }
+
+    if (kind == TokK.FLOAT32 || kind == TokK.FLOAT64) {
+        let tok: int = p_next()
+        let node: int = ast_new(NodK.FLOAT_LIT, tok)
+        ast_set_num(node, t_num[tok])
+        return node
+    }
+
+    if (kind == TokK.STRING) {
+        let tok: int = p_next()
+        let node: int = ast_new(NodK.STR_LIT, tok)
+        ast_set_str(node, t_str[tok])
+        return node
+    }
+
+    if (kind == TokK.LBRACKET) {
+        return p_array_literal()
+    }
+
+    if (kind == TokK.LBRACE) {
+        return p_map_literal()
+    }
+
+    if (kind == TokK.IDENT) {
+        let look: int = p_peek_kind(1)
+        if (look == TokK.LBRACE) {
+            return p_struct_literal()
+        }
+        if (look == TokK.LT && p_generic_end_ahead(TokK.LBRACE)) {
+            return p_struct_literal()
+        }
+        return p_postfix()
+    }
+
+    return p_postfix()
+}
+
+func p_array_literal() : int {
+    let open: int = p_match(TokK.LBRACKET)
+    let node: int = ast_new(NodK.ARRAY_LIT, open)
+
+    while (p_current_kind() != TokK.RBRACKET && p_current_kind() != TokK.EOF) {
+        ast_add_kid(node, p_expression())
+        if (p_current_kind() == TokK.COMMA) {
+            p_next()
+        } else {
+            break
+        }
+    }
+
+    p_match(TokK.RBRACKET)
+    return node
+}
+
+func p_map_literal() : int {
+    let open: int = p_match(TokK.LBRACE)
+    let node: int = ast_new(NodK.MAP_LIT, open)
+
+    while (p_current_kind() != TokK.RBRACE && p_current_kind() != TokK.EOF) {
+        let key: int = p_expression()
+        p_match(TokK.COLON)
+        let value: int = p_expression()
+
+        let entry: int = ast_new(NodK.MAP_ENTRY, n_tok[key])
+        n_a[entry] = key
+        n_b[entry] = value
+        ast_add_kid(node, entry)
+
+        if (p_current_kind() == TokK.COMMA) {
+            p_next()
+        } else {
+            break
+        }
+    }
+
+    p_match(TokK.RBRACE)
+    return node
+}
+
+func p_struct_literal() : int {
+    let name: int = p_match(TokK.IDENT)
+
+    let node: int = ast_new(NodK.STRUCT_LIT, name)
+    ast_set_str(node, t_str[name])
+
+    if (p_current_kind() == TokK.LT) {
+        let typeArgs: int = ast_new(NodK.LIST, 0)
+        p_next()
+        while (p_current_kind() != TokK.GT && p_current_kind() != TokK.EOF) {
+            ast_add_kid(typeArgs, p_type_syntax())
+            if (p_current_kind() == TokK.COMMA) {
+                p_next()
+            } else {
+                break
+            }
+        }
+        p_match(TokK.GT)
+        n_b[node] = typeArgs
+    }
+
+    p_match(TokK.LBRACE)
+
+    while (p_current_kind() != TokK.RBRACE && p_current_kind() != TokK.EOF) {
+        let field: int = p_match(TokK.IDENT)
+        p_match(TokK.COLON)
+        let value: int = p_expression()
+
+        let init: int = ast_new(NodK.FIELD_INIT, field)
+        ast_set_str(init, t_str[field])
+        n_a[init] = value
+        ast_add_kid(node, init)
+
+        if (p_current_kind() == TokK.COMMA) {
+            p_next()
+        } else {
+            break
+        }
+    }
+
+    p_match(TokK.RBRACE)
+    return node
+}
+
+func p_postfix() : int {
+    let expr: int = p_name_or_call()
+
+    while (true) {
+        if (p_current_kind() == TokK.LBRACKET) {
+            p_next()
+            let index: int = p_expression()
+            p_match(TokK.RBRACKET)
+            let node: int = ast_new(NodK.INDEX, n_tok[expr])
+            n_a[node] = expr
+            n_b[node] = index
+            expr = node
+            continue
+        }
+
+        if (p_current_kind() == TokK.DOT && p_peek_kind(1) == TokK.IDENT) {
+            p_next()
+            let member: int = p_match(TokK.IDENT)
+
+            if (p_current_kind() == TokK.LPAREN) {
+                p_next()
+                let node: int = ast_new(NodK.METHOD_CALL, member)
+                ast_set_str(node, t_str[member])
+                n_a[node] = expr
+                p_arguments(node)
+                p_match(TokK.RPAREN)
+                expr = node
+            } else {
+                let node: int = ast_new(NodK.FIELD_ACCESS, member)
+                ast_set_str(node, t_str[member])
+                n_a[node] = expr
+                expr = node
+            }
+            continue
+        }
+
+        break
+    }
+
+    return expr
+}
+
+func p_name_or_call() : int {
+    if (p_current_kind() == TokK.IDENT && p_peek_kind(1) == TokK.LPAREN) {
+        return p_call()
+    }
+
+    if (p_current_kind() == TokK.IDENT && p_peek_kind(1) == TokK.LT
+        && p_generic_end_ahead(TokK.LPAREN)) {
+        return p_call()
+    }
+
+    let name: int = p_match(TokK.IDENT)
+    let node: int = ast_new(NodK.NAME, name)
+    ast_set_str(node, t_str[name])
+    return node
+}
+
+/*
+ * True when, after the current identifier and the '<' that follows it, a balanced '>' closes
+ * and is followed by `followedBy`. This is what tells `a < b` from `map<string, int>()` and
+ * `Point<int> {` — the same lookahead the reference parser runs.
+ */
+func p_generic_end_ahead(followedBy: int) : bool {
+    let mut_i: int = 2
+    let depth: int = 1
+    while (true) {
+        let kind: int = p_peek_kind(mut_i)
+        if (kind == TokK.EOF) {
+            return false
+        }
+        if (kind == TokK.LT) {
+            depth = depth + 1
+        } else if (kind == TokK.GT) {
+            depth = depth - 1
+            if (depth == 0) {
+                return p_peek_kind(mut_i + 1) == followedBy
+            }
+        }
+        mut_i = mut_i + 1
+        if (mut_i > 32) {
+            return false
+        }
+    }
+}
+
+func p_call() : int {
+    let name: int = p_match(TokK.IDENT)
+
+    let node: int = ast_new(NodK.CALL, name)
+    ast_set_str(node, t_str[name])
+
+    if (p_current_kind() == TokK.LT) {
+        let typeArgs: int = ast_new(NodK.LIST, 0)
+        p_next()
+        while (p_current_kind() != TokK.GT && p_current_kind() != TokK.EOF) {
+            ast_add_kid(typeArgs, p_type_syntax())
+            if (p_current_kind() == TokK.COMMA) {
+                p_next()
+            } else {
+                break
+            }
+        }
+        p_match(TokK.GT)
+        n_b[node] = typeArgs
+    }
+
+    p_match(TokK.LPAREN)
+    p_arguments(node)
+    p_match(TokK.RPAREN)
+    return node
+}
+
+// Arguments until ')'. kids = argument expressions (NAMED_ARG nodes where named).
+func p_arguments(call: int) : void {
+    while (p_current_kind() != TokK.RPAREN && p_current_kind() != TokK.EOF) {
+        let arg: int = p_argument()
+        ast_add_kid(call, arg)
+        if (p_current_kind() == TokK.COMMA) {
+            p_next()
+        } else {
+            break
+        }
+    }
+}
+
+func p_argument() : int {
+    if (p_current_kind() == TokK.IDENT && p_peek_kind(1) == TokK.COLON) {
+        let name: int = p_match(TokK.IDENT)
+        p_next()
+        let value: int = p_expression()
+
+        let node: int = ast_new(NodK.NAMED_ARG, name)
+        ast_set_str(node, t_str[name])
+        n_a[node] = value
+        return node
+    }
+
+    return p_expression()
+}

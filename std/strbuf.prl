@@ -1,0 +1,116 @@
+/*
+ * A string builder
+ *
+ * prolang strings are immutable and `+` copies both sides, so building a big string one
+ * character or one fragment at a time is quadratic. This is the fix, written purely in prolang so
+ * it works identically on the .NET and C backends: text accumulates as a list of chunks, and
+ * `strbuf_to_string` merges them pairwise — 1,024 fragments cost ten merging rounds, not a
+ * million concatenations.
+ *
+ * There is no `append_char`. prolang has no way to make a one-character string from a character
+ * code — `charAt`/`substring` slice existing text and `"" + value` formats a number — so a
+ * character can only enter a buffer as part of a string. Anything appending one character at a
+ * time should buffer the run itself and append it whole.
+ *
+ * A StrBuf is a value, like every struct: mutators return a new one and the caller reassigns.
+ * The chunk list is a reference, so writes through it are visible, but the length would not be.
+ *
+ * The generic functions here all name their type argument explicitly. Inference works from a
+ * local variable's declared type, but not from a struct field or a struct literal, and StrBuf
+ * stores a DynArray<string>.
+ */
+
+import "dynarray"
+
+struct StrBuf {
+    chunks: DynArray<string>,
+    length: int
+}
+
+// An empty buffer. `cap` is the chunk-list capacity hint; 16 is a good default.
+func strbuf_new(cap: int) : StrBuf {
+    return StrBuf { chunks: dynarray_new<string>(cap), length: 0 }
+}
+
+// Appends `text` as one chunk. O(1) — no copying happens until to_string.
+func strbuf_append(sb: StrBuf, text: string) : StrBuf {
+    return StrBuf { chunks: dynarray_push<string>(sb.chunks, text),
+                    length: sb.length + text.length() }
+}
+
+// Appends the decimal representation of `value`, as `"" + value` renders it.
+func strbuf_append_int(sb: StrBuf, value: int) : StrBuf {
+    return strbuf_append(sb, "" + value)
+}
+
+/*
+ * Appends `value` as lowercase hexadecimal, no prefix.
+ *
+ * Written over uint32 rather than int so a negative value renders as its two's-complement
+ * 32-bit pattern, which is what a dump of machine-level data wants.
+ */
+func strbuf_append_hex(sb: StrBuf, value: int) : StrBuf {
+    let digits: string = "0123456789abcdef"
+    let zero: uint32 = 0
+    let sixteen: uint32 = 16
+
+    let v: uint32 = uint32(value)
+    if (v == zero) {
+        return strbuf_append(sb, "0")
+    }
+
+    // Each digit is looked up as a slice of the alphabet at the digit's own index — the one
+    // way this library turns a number into text without a general charcode-to-string builtin.
+    let out: string = ""
+    while (v > zero) {
+        let d: int = v % sixteen
+        out = digits.substring(d, d + 1) + out
+        v = v / sixteen
+    }
+    return strbuf_append(sb, out)
+}
+
+/*
+ * Renders the buffer as one string.
+ *
+ * The chunks are merged pairwise: each round concatenates neighbours, halving the list, so the
+ * total work is O(n log n) in the characters rather than the O(n²) of appending one at a time.
+ */
+func strbuf_to_string(sb: StrBuf) : string {
+    let count: int = dynarray_length<string>(sb.chunks)
+    if (count == 0) {
+        return ""
+    }
+    if (count == 1) {
+        return dynarray_get<string>(sb.chunks, 0)
+    }
+
+    let merged: DynArray<string> = dynarray_new<string>(count)
+    let i = 0
+    while (i < count) {
+        if (i + 1 < count) {
+            merged = dynarray_push<string>(merged,
+                        dynarray_get<string>(sb.chunks, i) + dynarray_get<string>(sb.chunks, i + 1))
+        } else {
+            merged = dynarray_push<string>(merged, dynarray_get<string>(sb.chunks, i))
+        }
+        i = i + 2
+    }
+
+    return strbuf_to_string(StrBuf { chunks: merged, length: sb.length })
+}
+
+// The number of characters the buffer will render to.
+func strbuf_length(sb: StrBuf) : int {
+    return sb.length
+}
+
+// True when nothing has been appended.
+func strbuf_is_empty(sb: StrBuf) : bool {
+    return sb.length == 0
+}
+
+// Empties the buffer, keeping its chunk-list capacity.
+func strbuf_clear(sb: StrBuf) : StrBuf {
+    return StrBuf { chunks: dynarray_new<string>(dynarray_length<string>(sb.chunks)), length: 0 }
+}

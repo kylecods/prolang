@@ -133,6 +133,10 @@ internal static class TestCorpus
             "Library — test cases; run by tests/std/run_tests.prl."),
         new("tests/std/test_intstack.prl", CorpusKind.CompileOnly,
             "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_strbuf.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
+        new("tests/std/test_hashmap.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/std/run_tests.prl."),
         new("tests/std/test_color.prl", CorpusKind.CompileOnly,
             "Library — test cases; run by tests/std/run_tests.prl."),
         new("tests/std/test_document.prl", CorpusKind.CompileOnly,
@@ -215,6 +219,28 @@ internal static class TestCorpus
         new("examples/21-text-editor/tests/test_syntax.prl", CorpusKind.CompileOnly,
             "Library — test cases; run by tests/run_tests.prl."),
         new("examples/21-text-editor/tests/run_tests.prl", CorpusKind.Runnable),
+
+        // ── Self-hosted compiler frontend ────────────────────────────────────────────────
+        // A prolang-written lexer and parser under selfhost/, Phase 1 of self-hosting. Each
+        // module compiles standalone (its imports pull the rest in); run_tests.prl runs the
+        // frontend's own assertion suite.
+        new("selfhost/main.prl", CorpusKind.Runnable,
+            "Driver — invoked with no arguments by the test runner, where it prints usage and exits."),
+        new("selfhost/token.prl", CorpusKind.CompileOnly,
+            "Library — token kinds and buffer; compiled with selfhost/main.prl."),
+        new("selfhost/diag.prl", CorpusKind.CompileOnly,
+            "Library — diagnostics buffer; compiled with selfhost/main.prl."),
+        new("selfhost/lexer.prl", CorpusKind.CompileOnly,
+            "Library — the prolang-written lexer; compiled with selfhost/main.prl."),
+        new("selfhost/ast.prl", CorpusKind.CompileOnly,
+            "Library — syntax tree arena; compiled with selfhost/main.prl."),
+        new("selfhost/parser.prl", CorpusKind.CompileOnly,
+            "Library — the prolang-written parser; compiled with selfhost/main.prl."),
+        new("selfhost/tests/test_lexer.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by selfhost/tests/run_tests.prl."),
+        new("selfhost/tests/test_parser.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by selfhost/tests/run_tests.prl."),
+        new("selfhost/tests/run_tests.prl", CorpusKind.Runnable),
 
         // ── Pre-existing failures, tracked so they cannot regress further or vanish ───────
         new("tests/language/parser/test-parser-simple.prl", CorpusKind.Runnable),

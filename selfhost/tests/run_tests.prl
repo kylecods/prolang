@@ -1,0 +1,34 @@
+/*
+ * Self-hosted compiler frontend test suite
+ *
+ * Run it with:
+ *
+ *   dotnet run --project src/ProLang/ProLang.csproj -- selfhost/tests/run_tests.prl -o bin/selfhost-tests.dll
+ *   dotnet bin/selfhost-tests.dll
+ *
+ * Classified Runnable in src/ProLang.Tests/Infrastructure/TestCorpus.cs, like
+ * tests/std/run_tests.prl: dotnet test compiles it, runs it, and asserts on its output.
+ */
+
+import "io"
+import "testing"
+import "test_lexer.prl"
+import "test_parser.prl"
+
+func main()
+{
+    print("selfhost frontend test suite")
+    print("")
+
+    t_reset()
+
+    t_begin_module()
+    test_lexer_run()
+    t_end_module("lexer")
+
+    t_begin_module()
+    test_parser_run()
+    t_end_module("parser")
+
+    t_report()
+}

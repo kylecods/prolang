@@ -1,0 +1,191 @@
+/*
+ * A hash map from strings to values, generic in its value type
+ *
+ * Symbol tables are the compiler's most-used data structure and prolang's `map<K, V>` is barely
+ * exercised, so this is written out here: open addressing with linear probing over parallel flat
+ * arrays — the same layout every arena in this library uses.
+ *
+ * The hash is FNV-1a over the UTF-16 code units of the key, computed in uint32 so it wraps the
+ * way a hash should. Capacity is always a power of two, so the index is a mask rather than a
+ * modulo. Removal leaves a tombstone; probing stops only at a never-used slot, so a removed key
+ * never breaks an existing probe chain.
+ *
+ * Growth rehashes the live entries into a table of twice the capacity once the table is three
+ * quarters occupied, counting tombstones toward the load so a churn of inserts and removes
+ * cannot grind probing to a walk across a nearly-full table.
+ *
+ * A HashMap is a value, like every struct: mutators return a new one and the caller reassigns.
+ * The slot arrays are references, so writes through them are visible, but the sizes would not be.
+ */
+
+import "dynarray"
+
+// Slot states. Kept in their own array so the key array can default to "" everywhere.
+global hmap_empty: int = 0
+global hmap_used: int = 1
+global hmap_tombstone: int = 2
+
+struct HashMap<V> {
+    keys: array<string>,
+    values: array<V>,
+    state: array<int>,
+    size: int,          // live entries
+    capacity: int,      // always a power of two
+    fill: int           // slots holding a live entry or a tombstone
+}
+
+// An empty map. `cap` is rounded up to a power of two; 16 is a good default.
+func hmap_new<V>(cap: int) : HashMap<V> {
+    let c = 4
+    while (c < cap) {
+        c = c * 2
+    }
+    return HashMap<V> {
+        keys: array_new(c),
+        values: array_new(c),
+        state: array_new(c),
+        size: 0,
+        capacity: c,
+        fill: 0
+    }
+}
+
+// FNV-1a over the key's UTF-16 code units.
+func hmap_hash(key: string) : int {
+    // The standard 32-bit offset basis, 0x811C9DC5, does not lex: hex literals go through
+    // Convert.ToInt32 and 2166136261 is past int.MaxValue. The two pieces are summed in uint32.
+    let basis: uint32 = uint32(0x7FFFFFFF) + 0x11C9DC5
+    let h: uint32 = basis
+    let multiplier: uint32 = 16777619
+    let n = key.length()
+    let i = 0
+    while (i < n) {
+        h = h ^ uint32(key.charCode(i))
+        h = h * multiplier
+        i = i + 1
+    }
+    return int(h)
+}
+
+// The number of live entries.
+func hmap_count<V>(h: HashMap<V>) : int {
+    return h.size
+}
+
+// True when `key` is present.
+func hmap_contains<V>(h: HashMap<V>, key: string) : bool {
+    return hmap_find_slot<V>(h, key) >= 0
+}
+
+/*
+ * The value stored for `key`, or `fallback` if it is absent.
+ *
+ * prolang has no way to signal "not found" from a function returning a generic V, so the caller
+ * supplies the answer it wants for a miss — the same convention util_parse_int uses.
+ */
+func hmap_get<V>(h: HashMap<V>, key: string, fallback: V) : V {
+    let slot = hmap_find_slot<V>(h, key)
+    if (slot < 0) {
+        return fallback
+    }
+    return h.values[slot]
+}
+
+/*
+ * Stores `value` for `key`, replacing any previous value, and returns the updated map.
+ *
+ * May rehash, so every call site must reassign: `m = hmap_set(m, k, v)`.
+ */
+func hmap_set<V>(h: HashMap<V>, key: string, value: V) : HashMap<V> {
+    let m = h
+    if ((m.fill + 1) * 4 > m.capacity * 3) {
+        m = hmap_grow<V>(m)
+    }
+
+    let mask = m.capacity - 1
+    let slot = hmap_hash(key) & mask
+
+    // Walk to the first reusable slot, remembering the first tombstone — inserting there is
+    // cheaper than walking further, and cannot break the probe chains behind it.
+    let firstFree = 0 - 1
+    while (m.state[slot] != hmap_empty) {
+        if (m.state[slot] == hmap_used) {
+            if (m.keys[slot] == key) {
+                m.values[slot] = value
+                return m
+            }
+        } else if (firstFree < 0) {
+            firstFree = slot
+        }
+        slot = (slot + 1) & mask
+    }
+
+    if (firstFree >= 0) {
+        slot = firstFree
+    } else {
+        m.fill = m.fill + 1
+    }
+
+    m.keys[slot] = key
+    m.values[slot] = value
+    m.state[slot] = hmap_used
+    m.size = m.size + 1
+    return m
+}
+
+/*
+ * Removes `key`, leaving a tombstone, and returns the updated map. Removing an absent key
+ * returns the map unchanged rather than failing — prolang has no exceptions to throw.
+ */
+func hmap_remove<V>(h: HashMap<V>, key: string) : HashMap<V> {
+    let slot = hmap_find_slot<V>(h, key)
+    if (slot < 0) {
+        return h
+    }
+    h.state[slot] = hmap_tombstone
+    h.keys[slot] = ""
+    return HashMap<V> { keys: h.keys, values: h.values, state: h.state,
+                        size: h.size - 1, capacity: h.capacity, fill: h.fill }
+}
+
+// Every live key, in slot order. Callers wanting a sorted list sort it themselves.
+func hmap_keys<V>(h: HashMap<V>) : DynArray<string> {
+    let out: DynArray<string> = dynarray_new<string>(h.size)
+    let i = 0
+    while (i < h.capacity) {
+        if (h.state[i] == hmap_used) {
+            out = dynarray_push<string>(out, h.keys[i])
+        }
+        i = i + 1
+    }
+    return out
+}
+
+/*
+ * The slot holding `key`, or -1. Probing stops at the first never-used slot: tombstones keep
+ * the walk alive exactly so that a chain interrupted by a removal still finds its tail.
+ */
+func hmap_find_slot<V>(h: HashMap<V>, key: string) : int {
+    let mask = h.capacity - 1
+    let slot = hmap_hash(key) & mask
+    while (h.state[slot] != hmap_empty) {
+        if (h.state[slot] == hmap_used && h.keys[slot] == key) {
+            return slot
+        }
+        slot = (slot + 1) & mask
+    }
+    return 0 - 1
+}
+
+// Doubles the capacity and rehashes the live entries; tombstones are dropped by the trip.
+func hmap_grow<V>(h: HashMap<V>) : HashMap<V> {
+    let m = hmap_new<V>(h.capacity * 2)
+    let i = 0
+    while (i < h.capacity) {
+        if (h.state[i] == hmap_used) {
+            m = hmap_set<V>(m, h.keys[i], h.values[i])
+        }
+        i = i + 1
+    }
+    return m
+}

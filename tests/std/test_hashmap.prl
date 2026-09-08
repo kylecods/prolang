@@ -1,0 +1,131 @@
+/*
+ * Standard library tests — hashmap.prl
+ */
+
+import "testing"
+import "hashmap"
+import "dynarray"
+
+// True when `k` is one of "key0".."key4".
+func t_key_is_one_of(k: string) : bool {
+    let n = 0
+    while (n < 5) {
+        if (k == "key" + n) {
+            return true
+        }
+        n = n + 1
+    }
+    return false
+}
+
+func test_hashmap_run() : void {
+    // Insert and read back
+    let m: HashMap<int> = hmap_new<int>(8)
+    t_eq_int("new map is empty", hmap_count<int>(m), 0)
+    t_false("new map contains nothing", hmap_contains<int>(m, "alpha"))
+    t_eq_int("get on empty map is the fallback", hmap_get<int>(m, "alpha", 0 - 1), 0 - 1)
+
+    m = hmap_set<int>(m, "alpha", 1)
+    m = hmap_set<int>(m, "beta", 2)
+    m = hmap_set<int>(m, "gamma", 3)
+
+    t_eq_int("count after three sets", hmap_count<int>(m), 3)
+    t_true("contains the first key", hmap_contains<int>(m, "alpha"))
+    t_true("contains the last key", hmap_contains<int>(m, "gamma"))
+    t_false("does not contain an absent key", hmap_contains<int>(m, "delta"))
+    t_eq_int("reads back the first value", hmap_get<int>(m, "alpha", 0 - 1), 1)
+    t_eq_int("reads back the last value", hmap_get<int>(m, "gamma", 0 - 1), 3)
+
+    // Overwriting a key replaces the value and does not grow the map
+    m = hmap_set<int>(m, "alpha", 100)
+    t_eq_int("overwrite keeps the count", hmap_count<int>(m), 3)
+    t_eq_int("overwrite replaces the value", hmap_get<int>(m, "alpha", 0 - 1), 100)
+
+    // Keys that collide under FNV-1a and probe into each other
+    let c: HashMap<int> = hmap_new<int>(4)
+    let n = 0
+    while (n < 10) {
+        c = hmap_set<int>(c, "k" + n, n * n)
+        n = n + 1
+    }
+    t_eq_int("ten keys all present", hmap_count<int>(c), 10)
+    n = 0
+    let allFound: bool = true
+    while (n < 10) {
+        if (hmap_get<int>(c, "k" + n, 0 - 1) != n * n) {
+            allFound = false
+        }
+        n = n + 1
+    }
+    t_true("every value survives rehashing", allFound)
+
+    // Removal
+    let r: HashMap<int> = hmap_new<int>(8)
+    r = hmap_set<int>(r, "gone", 1)
+    r = hmap_set<int>(r, "kept", 2)
+    r = hmap_remove<int>(r, "gone")
+    t_eq_int("remove decrements the count", hmap_count<int>(r), 1)
+    t_false("removed key is absent", hmap_contains<int>(r, "gone"))
+    t_eq_int("removed key reads the fallback", hmap_get<int>(r, "gone", 0 - 1), 0 - 1)
+    t_eq_int("sibling key survives a removal", hmap_get<int>(r, "kept", 0 - 1), 2)
+
+    // Removing an absent key is a no-op, not a failure
+    let before: int = hmap_count<int>(r)
+    r = hmap_remove<int>(r, "never-there")
+    t_eq_int("removing an absent key changes nothing", hmap_count<int>(r), before)
+
+    // A tombstone must not break the probe chain behind it: insert a colliding run, remove the
+    // first key, and the rest must still be findable.
+    let t: HashMap<int> = hmap_new<int>(4)
+    let j = 0
+    while (j < 5) {
+        t = hmap_set<int>(t, "key" + j, j)
+        j = j + 1
+    }
+    t = hmap_remove<int>(t, "key0")
+    t_eq_int("head of chain removed", hmap_count<int>(t), 4)
+    j = 1
+    let chainOk: bool = true
+    while (j < 5) {
+        if (hmap_get<int>(t, "key" + j, 0 - 1) != j) {
+            chainOk = false
+        }
+        j = j + 1
+    }
+    t_true("probe chain survives a tombstone", chainOk)
+
+    // Reinserting into a tombstoned slot works
+    t = hmap_set<int>(t, "key0", 99)
+    t_eq_int("reinsert after remove", hmap_get<int>(t, "key0", 0 - 1), 99)
+    t_eq_int("reinsert restores the count", hmap_count<int>(t), 5)
+
+    // keys() lists every live key
+    let keys: DynArray<string> = hmap_keys<int>(t)
+    t_eq_int("keys count matches", dynarray_length<string>(keys), 5)
+    let seenAll: bool = true
+    j = 0
+    while (j < dynarray_length<string>(keys)) {
+        let k: string = dynarray_get<string>(keys, j)
+        if (!t_key_is_one_of(k)) {
+            seenAll = false
+        }
+        j = j + 1
+    }
+    t_true("keys lists every live key", seenAll)
+
+    // Generic over the value type: strings
+    let s: HashMap<string> = hmap_new<string>(8)
+    s = hmap_set<string>(s, "hello", "world")
+    t_eq_str("string values read back", hmap_get<string>(s, "hello", "missing"), "world")
+
+    // Generic over the value type: bools
+    let b: HashMap<bool> = hmap_new<bool>(8)
+    b = hmap_set<bool>(b, "yes", true)
+    t_eq_bool("bool values read back", hmap_get<bool>(b, "yes", false), true)
+
+    // Value semantics: the returned map is the one that changed
+    let original: HashMap<int> = hmap_new<int>(8)
+    let updated: HashMap<int> = hmap_set<int>(original, "k", 1)
+    t_eq_int("original count is unchanged", hmap_count<int>(original), 0)
+    t_eq_int("returned count is updated", hmap_count<int>(updated), 1)
+}

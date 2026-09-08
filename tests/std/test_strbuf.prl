@@ -1,0 +1,67 @@
+/*
+ * Standard library tests — strbuf.prl
+ */
+
+import "testing"
+import "strbuf"
+
+func test_strbuf_run() : void {
+    // Appending text and integers
+    let sb: StrBuf = strbuf_new(8)
+    t_true("new buffer is empty", strbuf_is_empty(sb))
+    t_eq_int("new buffer length", strbuf_length(sb), 0)
+    t_eq_str("empty buffer renders to nothing", strbuf_to_string(sb), "")
+
+    sb = strbuf_append(sb, "hello")
+    sb = strbuf_append(sb, ", ")
+    sb = strbuf_append_int(sb, 42)
+    t_eq_str("appends join in order", strbuf_to_string(sb), "hello, 42")
+    t_eq_int("length counts every character", strbuf_length(sb), 9)
+    t_false("not empty after appends", strbuf_is_empty(sb))
+
+    // Negative numbers, through the builtin int-to-text conversion
+    let neg: StrBuf = strbuf_new(4)
+    neg = strbuf_append_int(neg, 0 - 7)
+    t_eq_str("negative int renders with a sign", strbuf_to_string(neg), "-7")
+
+    // Zero-width and empty chunk edge cases
+    let empty: StrBuf = strbuf_new(4)
+    empty = strbuf_append(empty, "")
+    t_eq_int("empty append adds no length", strbuf_length(empty), 0)
+    t_eq_str("empty append renders to nothing", strbuf_to_string(empty), "")
+
+    // Hex rendering
+    t_eq_str("hex of zero", strbuf_to_string(strbuf_append_hex(strbuf_new(4), 0)), "0")
+    t_eq_str("hex of 255", strbuf_to_string(strbuf_append_hex(strbuf_new(4), 255)), "ff")
+    t_eq_str("hex of 305419896", strbuf_to_string(strbuf_append_hex(strbuf_new(4), 305419896)), "12345678")
+    // A negative value renders as its two's-complement 32-bit pattern.
+    t_eq_str("hex of -1", strbuf_to_string(strbuf_append_hex(strbuf_new(4), 0 - 1)), "ffffffff")
+
+    // Value semantics: mutators return a new buffer, the original binding is unchanged.
+    let original: StrBuf = strbuf_new(4)
+    let appended: StrBuf = strbuf_append(original, "x")
+    t_eq_int("original length is unchanged", strbuf_length(original), 0)
+    t_eq_int("returned length is updated", strbuf_length(appended), 1)
+
+    // Many chunks — the pairwise merge must stitch every one of them, in order.
+    let many: StrBuf = strbuf_new(8)
+    let n = 0
+    while (n < 100) {
+        many = strbuf_append(many, "ab")
+        n = n + 1
+    }
+    t_eq_int("hundred chunks of length", strbuf_length(many), 200)
+    t_eq_str("hundred chunks render whole", strbuf_to_string(many).substring(0, 6), "ababab")
+    t_eq_int("hundred chunks render to full length", strbuf_to_string(many).length(), 200)
+
+    // Clear resets but keeps the buffer usable.
+    let cleared: StrBuf = strbuf_clear(many)
+    t_true("clear empties the buffer", strbuf_is_empty(cleared))
+    cleared = strbuf_append(cleared, "again")
+    t_eq_str("cleared buffer still works", strbuf_to_string(cleared), "again")
+
+    // A single chunk returns itself; two chunks concatenate once.
+    let one: StrBuf = strbuf_new(4)
+    one = strbuf_append(one, "solo")
+    t_eq_str("single chunk", strbuf_to_string(one), "solo")
+}

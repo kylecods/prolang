@@ -1,0 +1,41 @@
+/*
+ * The self-hosted compiler — diagnostics (diag.prl)
+ *
+ * A port of DiagnosticBag's accumulate-never-throw shape, which fits ProLang exactly: there are
+ * no exceptions to throw, and a compiler's diagnostics are its product. Errors collect as flat
+ * parallel arrays and are printed by the driver; compilation proceeds past them, matching the
+ * reference parser's recovery behaviour.
+ */
+
+import "io"
+
+global d_line: array<int> = array_new(4096)
+global d_col: array<int> = array_new(4096)
+global d_msg: array<string> = array_new(4096)
+global d_count: int = 0
+
+// Records a diagnostic at a 1-based line and column. Capacity is fixed; a file that overflows
+// 4,096 diagnostics has bigger problems, and dropping the tail loses nothing that matters.
+func diag_report(line: int, col: int, msg: string) : void {
+    if (d_count >= 4096) {
+        return
+    }
+    d_line[d_count] = line
+    d_col[d_count] = col
+    d_msg[d_count] = msg
+    d_count = d_count + 1
+}
+
+// True when anything was reported.
+func diag_any() : bool {
+    return d_count > 0
+}
+
+// Prints every diagnostic, one per line, in source order.
+func diag_print_all() : void {
+    let i = 0
+    while (i < d_count) {
+        print("" + d_line[i] + ":" + d_col[i] + ": " + d_msg[i])
+        i = i + 1
+    }
+}

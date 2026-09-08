@@ -1,0 +1,175 @@
+/*
+ * The self-hosted compiler — tokens (token.prl)
+ *
+ * A ProLang-written port of src/ProLang/Parse/Lexer.cs's token model. ProLang has no classes and
+ * no recursive structs, so the token stream is not a list of token objects: the whole file is
+ * lexed up front into flat parallel arrays indexed by token number — the same arena layout
+ * std/ui uses for widgets. Whitespace and comments are dropped as they are scanned.
+ *
+ * Where the C# lexer has one NumberToken carrying a typed value, this has three kinds — int,
+ * float32, float64 — so the value's width survives in the kind. String values keep their decoded
+ * text (the "" doubling collapsed) in t_str.
+ */
+
+enum TokK {
+    EOF,        // end of file
+    BAD,        // a character the lexer does not know
+    IDENT,
+    INT,
+    FLOAT32,
+    FLOAT64,
+    STRING,
+
+    // punctuation and operators
+    PLUS,
+    PLUS_EQ,
+    MINUS,
+    MINUS_EQ,
+    SLASH,
+    SLASH_EQ,
+    STAR,
+    STAR_EQ,
+    PERCENT,
+    LT,
+    LT_EQ,
+    LT_LT,
+    GT,
+    GT_EQ,
+    GT_GT,
+    EQ,
+    EQ_EQ,
+    BANG,
+    BANG_EQ,
+    AMP,
+    AMP_AMP,
+    PIPE,
+    PIPE_PIPE,
+    HAT,
+    TILDE,
+    LPAREN,
+    RPAREN,
+    LBRACE,
+    RBRACE,
+    LBRACKET,
+    RBRACKET,
+    DOT,
+    COMMA,
+    COLON,
+    SEMI,
+    DOLLAR,
+    DOLLAR_CURLY,
+    OPEN_ANGLE_SLASH,
+
+    // keywords
+    KW_LET,
+    KW_TRUE,
+    KW_FALSE,
+    KW_NULL,
+    KW_WHILE,
+    KW_FOR,
+    KW_IF,
+    KW_ELIF,
+    KW_ELSE,
+    KW_TO,
+    KW_FUNC,
+    KW_BREAK,
+    KW_CONTINUE,
+    KW_RETURN,
+    KW_IMPORT,
+    KW_STRUCT,
+    KW_AS,
+    KW_ENUM,
+    KW_GLOBAL,
+    KW_SCRIPT
+}
+
+// Token capacity. A 3,000-line source is roughly 30,000 tokens; this leaves headroom.
+global t_kind: array<int> = array_new(262144)
+global t_start: array<int> = array_new(262144)
+global t_len: array<int> = array_new(262144)
+global t_line: array<int> = array_new(262144)
+global t_col: array<int> = array_new(262144)
+global t_int: array<int> = array_new(262144)
+global t_num: array<float64> = array_new(262144)
+global t_str: array<string> = array_new(262144)
+global t_count: int = 0
+
+// The name of each token kind, indexed by TokK. One flat array keeps the dump code a lookup
+// rather than a 60-branch if chain.
+global t_kind_name: array<string> = array_new(80)
+
+func tok_init_names() : void {
+    t_kind_name[TokK.EOF] = "Eof"
+    t_kind_name[TokK.BAD] = "Bad"
+    t_kind_name[TokK.IDENT] = "Identifier"
+    t_kind_name[TokK.INT] = "Int"
+    t_kind_name[TokK.FLOAT32] = "Float32"
+    t_kind_name[TokK.FLOAT64] = "Float64"
+    t_kind_name[TokK.STRING] = "String"
+    t_kind_name[TokK.PLUS] = "Plus"
+    t_kind_name[TokK.PLUS_EQ] = "PlusEquals"
+    t_kind_name[TokK.MINUS] = "Minus"
+    t_kind_name[TokK.MINUS_EQ] = "MinusEquals"
+    t_kind_name[TokK.SLASH] = "Slash"
+    t_kind_name[TokK.SLASH_EQ] = "SlashEquals"
+    t_kind_name[TokK.STAR] = "Star"
+    t_kind_name[TokK.STAR_EQ] = "StarEquals"
+    t_kind_name[TokK.PERCENT] = "Percentage"
+    t_kind_name[TokK.LT] = "LessThan"
+    t_kind_name[TokK.LT_EQ] = "LessThanEquals"
+    t_kind_name[TokK.LT_LT] = "LessThanLessThan"
+    t_kind_name[TokK.GT] = "GreaterThan"
+    t_kind_name[TokK.GT_EQ] = "GreaterThanEquals"
+    t_kind_name[TokK.GT_GT] = "GreaterThanGreaterThan"
+    t_kind_name[TokK.EQ] = "Equals"
+    t_kind_name[TokK.EQ_EQ] = "EqualsEquals"
+    t_kind_name[TokK.BANG] = "Bang"
+    t_kind_name[TokK.BANG_EQ] = "BangEquals"
+    t_kind_name[TokK.AMP] = "Ampersand"
+    t_kind_name[TokK.AMP_AMP] = "AmpersandAmpersand"
+    t_kind_name[TokK.PIPE] = "Pipe"
+    t_kind_name[TokK.PIPE_PIPE] = "PipePipe"
+    t_kind_name[TokK.HAT] = "Hat"
+    t_kind_name[TokK.TILDE] = "Tilde"
+    t_kind_name[TokK.LPAREN] = "LeftParenthesis"
+    t_kind_name[TokK.RPAREN] = "RightParenthesis"
+    t_kind_name[TokK.LBRACE] = "LeftCurly"
+    t_kind_name[TokK.RBRACE] = "RightCurly"
+    t_kind_name[TokK.LBRACKET] = "LeftBracket"
+    t_kind_name[TokK.RBRACKET] = "RightBracket"
+    t_kind_name[TokK.DOT] = "Dot"
+    t_kind_name[TokK.COMMA] = "Comma"
+    t_kind_name[TokK.COLON] = "Colon"
+    t_kind_name[TokK.SEMI] = "SemiColon"
+    t_kind_name[TokK.DOLLAR] = "Dollar"
+    t_kind_name[TokK.DOLLAR_CURLY] = "DollarCurly"
+    t_kind_name[TokK.OPEN_ANGLE_SLASH] = "OpenAngleForwardSlash"
+    t_kind_name[TokK.KW_LET] = "Let"
+    t_kind_name[TokK.KW_TRUE] = "True"
+    t_kind_name[TokK.KW_FALSE] = "False"
+    t_kind_name[TokK.KW_NULL] = "Null"
+    t_kind_name[TokK.KW_WHILE] = "While"
+    t_kind_name[TokK.KW_FOR] = "For"
+    t_kind_name[TokK.KW_IF] = "If"
+    t_kind_name[TokK.KW_ELIF] = "ElIf"
+    t_kind_name[TokK.KW_ELSE] = "Else"
+    t_kind_name[TokK.KW_TO] = "To"
+    t_kind_name[TokK.KW_FUNC] = "Function"
+    t_kind_name[TokK.KW_BREAK] = "Break"
+    t_kind_name[TokK.KW_CONTINUE] = "Continue"
+    t_kind_name[TokK.KW_RETURN] = "Return"
+    t_kind_name[TokK.KW_IMPORT] = "Import"
+    t_kind_name[TokK.KW_STRUCT] = "Struct"
+    t_kind_name[TokK.KW_AS] = "As"
+    t_kind_name[TokK.KW_ENUM] = "Enum"
+    t_kind_name[TokK.KW_GLOBAL] = "Global"
+    t_kind_name[TokK.KW_SCRIPT] = "Script"
+}
+
+// The source being lexed, set by lex_all. tok_text slices it.
+global tok_source: string = ""
+
+// The source text of token `i`.
+func tok_text(i: int) : string {
+    return tok_source.substring(t_start[i], t_start[i] + t_len[i])
+}

@@ -86,9 +86,19 @@ internal sealed class Binder
             binder.BindEnumDeclaration(enumDecl);
         }
 
+        // Structs bind in two phases. Declaring every struct symbol before any fields are bound
+        // is what lets one struct's field name another struct's type — including one imported
+        // from a file the binder reaches later, and including a generic instantiation such as
+        // `chunks: DynArray<string>` inside StrBuf. Field binding happens in a second pass, in
+        // declaration order, with every name already resolvable.
         foreach (var structDecl in structDeclarations)
         {
-            binder.BindStructDeclaration(structDecl);
+            binder.PreDeclareStruct(structDecl);
+        }
+
+        foreach (var structDecl in structDeclarations)
+        {
+            binder.BindStructFields(structDecl);
         }
 
         foreach (var function in functionDeclarations)
@@ -636,7 +646,12 @@ internal sealed class Binder
         };
     }
 
-    private void BindStructDeclaration(StructDeclarationSyntax syntax)
+    /*
+     * Phase one of struct binding: creates the symbol, declares its name, and records the
+     * definition. Fields are deliberately not looked at — phase two needs every struct name in
+     * scope before any field type is resolved.
+     */
+    private void PreDeclareStruct(StructDeclarationSyntax syntax)
     {
         var name = syntax.Identifier.Text;
 
@@ -644,22 +659,58 @@ internal sealed class Binder
         foreach (var paramSyntax in syntax.TypeParameters)
         {
             var paramName = paramSyntax.Text;
-            var typeParam = new TypeParameterSymbol(paramName, typeParameters.Count);
-            typeParameters.Add(typeParam);
+            typeParameters.Add(new TypeParameterSymbol(paramName, typeParameters.Count));
         }
 
-        var savedScope = _scope;
-        if (typeParameters.Count > 0)
+        var structSymbol = new StructSymbol(name, typeParameters.ToImmutable(), ImmutableArray<StructField>.Empty)
         {
-            _scope = new BoundScope(_scope);
-            foreach (var typeParam in typeParameters)
-            {
-                _scope.TryDeclareTypeSymbol(typeParam);
-            }
+            Documentation = DocumentationFor(syntax),
+        };
+
+        _recorder?.RecordSymbol(syntax.Identifier.Location, structSymbol, OccurrenceKind.Definition);
+
+        if (_structTypes == null)
+        {
+            _structTypes = ImmutableArray.CreateBuilder<StructSymbol>();
+        }
+
+        if (!_scope.TryDeclareType(structSymbol))
+        {
+            _diagnostics.ReportSymbolAlreadyDeclared(syntax.Identifier.Location, name);
+        }
+        else
+        {
+            _structTypes.Add(structSymbol);
+        }
+    }
+
+    /*
+     * Phase two of struct binding: the fields. The struct's own type parameters are re-declared
+     * in a child scope so a field can name them, and a template that was instantiated while its
+     * fields were unbound has those deferred instantiations completed here.
+     */
+    private void BindStructFields(StructDeclarationSyntax syntax)
+    {
+        var name = syntax.Identifier.Text;
+
+        if (!_scope.TryLookupType(name, out var structSymbol) || structSymbol == null)
+        {
+            // PreDeclareStruct already reported the duplicate declaration.
+            return;
         }
 
         var fields = ImmutableArray.CreateBuilder<StructField>();
         var seenFieldNames = new HashSet<string>();
+
+        var savedScope = _scope;
+        if (structSymbol.TypeParameters.Length > 0)
+        {
+            _scope = new BoundScope(_scope);
+            foreach (var typeParam in structSymbol.TypeParameters)
+            {
+                _scope.TryDeclareTypeSymbol(typeParam);
+            }
+        }
 
         foreach (var fieldSyntax in syntax.Fields)
         {
@@ -681,26 +732,7 @@ internal sealed class Binder
 
         _scope = savedScope;
 
-        var structSymbol = new StructSymbol(name, typeParameters.ToImmutable(), fields.ToImmutable())
-        {
-            Documentation = DocumentationFor(syntax),
-        };
-
-        _recorder?.RecordSymbol(syntax.Identifier.Location, structSymbol, OccurrenceKind.Definition);
-
-        if (_structTypes == null)
-        {
-            _structTypes = ImmutableArray.CreateBuilder<StructSymbol>();
-        }
-
-        if (!_scope.TryDeclareType(structSymbol))
-        {
-            _diagnostics.ReportSymbolAlreadyDeclared(syntax.Identifier.Location, name);
-        }
-        else
-        {
-            _structTypes.Add(structSymbol);
-        }
+        structSymbol.SetFields(fields.ToImmutable());
     }
 
     private void BindEnumDeclaration(EnumDeclarationSyntax syntax)
@@ -1902,10 +1934,16 @@ internal sealed class Binder
 
             function = function.InstantiateGeneric(typeArgs);
             // Reuse cached symbol if already instantiated (ensures reference equality for emitter)
-            if (_sharedInstantiations != null && _sharedInstantiations.TryGetValue(function.Name, out var cached) && cached.Symbol != null)
+            if (_sharedInstantiations != null
+                && _sharedInstantiations.TryGetValue(function.Name, out var cached)
+                && cached.Symbol != null)
+            {
                 function = cached.Symbol;
+            }
             else
+            {
                 EnsureInstantiated(function);
+            }
         }
 
         // Instantiation substitutes types but preserves arity and order, so the ordered list built
@@ -2100,8 +2138,12 @@ internal sealed class Binder
         var generic = concrete.OriginalGeneric;
         if (generic?.Declaration == null) return;
 
-        // Reserve the slot to prevent re-entrant binding of the same instantiation
-        _sharedInstantiations[concrete.Name] = default;
+        // Reserve the slot to prevent re-entrant binding of the same instantiation. The symbol
+        // goes in now, not just a placeholder: a body that re-enters this same instantiation —
+        // hmap_set<V> calling hmap_grow<V>, which calls hmap_set<V> again — must record a call
+        // to *this* symbol, or the emitter gets a BoundCallExpression naming a function that was
+        // never declared and never emitted.
+        _sharedInstantiations[concrete.Name] = (concrete, null);
 
         var typeBindings = generic.TypeParameters
             .Zip(concrete.TypeArguments)

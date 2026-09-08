@@ -21,6 +21,8 @@ import "io"
 import "testing"
 import "test_util.prl"
 import "test_intstack.prl"
+import "test_strbuf.prl"
+import "test_hashmap.prl"
 import "test_color.prl"
 import "test_document.prl"
 import "test_raster.prl"
@@ -54,6 +56,14 @@ func main()
     t_begin_module()
     test_intstack_run()
     t_end_module("intstack")
+
+    t_begin_module()
+    test_strbuf_run()
+    t_end_module("strbuf")
+
+    t_begin_module()
+    test_hashmap_run()
+    t_end_module("hashmap")
 
     t_begin_module()
     test_color_run()

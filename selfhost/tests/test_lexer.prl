@@ -1,0 +1,104 @@
+/*
+ * Self-hosted compiler tests — the lexer (test_lexer.prl)
+ *
+ * Each case lexes a snippet with the same code the compiler uses and asserts on the flat token
+ * buffer. Snippets are plain strings, so any quote inside them is written doubled — `""""` is a
+ * one-character string holding a single quote, and the snippets below are built by concatenating
+ * that around the text under test.
+ *
+ * Line and column tracking has no unit test here — prolang strings cannot contain a newline, so
+ * no snippet can span lines. It is covered by the --tokens dump of multi-line files instead,
+ * where every token's line:column is visible in the output.
+ */
+
+import "testing"
+import "../token.prl"
+import "../diag.prl"
+import "../lexer.prl"
+
+// A one-character string holding a double quote.
+global tl_quote: string = """"
+
+// True when the token buffer is exactly the given sequence of kinds.
+func tl_kinds_match(kinds: array<int>, count: int) : bool {
+    if (t_count != count) {
+        return false
+    }
+    let i = 0
+    while (i < count) {
+        if (t_kind[i] != kinds[i]) {
+            return false
+        }
+        i = i + 1
+    }
+    return true
+}
+
+func test_lexer_run() : void {
+    // The shape of a small statement: keyword, identifier, operator, int, EOF.
+    lex_all("let answer = 42")
+    let expected: array<int> = array_new(8)
+    expected[0] = TokK.KW_LET
+    expected[1] = TokK.IDENT
+    expected[2] = TokK.EQ
+    expected[3] = TokK.INT
+    expected[4] = TokK.EOF
+    t_true("let answer = 42 lexes", tl_kinds_match(expected, 5))
+    t_eq_int("int value is captured", t_int[3], 42)
+
+    // Comments and whitespace produce no tokens.
+    lex_all("a /* block */ b")
+    let two: array<int> = array_new(4)
+    two[0] = TokK.IDENT
+    two[1] = TokK.IDENT
+    two[2] = TokK.EOF
+    t_true("block comments produce no tokens", tl_kinds_match(two, 3))
+
+    lex_all("// everything to the end of the line")
+    let eofOnly: array<int> = array_new(4)
+    eofOnly[0] = TokK.EOF
+    t_true("line comments produce no tokens", tl_kinds_match(eofOnly, 1))
+
+    // Hex, binary and octal literals.
+    lex_all("0x2A 0b1010 0o17")
+    t_eq_int("hex 0x2A is 42", t_int[0], 42)
+    t_eq_int("binary 0b1010 is 10", t_int[1], 10)
+    t_eq_int("octal 0o17 is 15", t_int[2], 15)
+
+    // Float literals and their suffixes.
+    lex_all("1.5 0.5f 2.25f64 3.0f32")
+    t_eq_int("bare decimal is float64", t_kind[0], TokK.FLOAT64)
+    t_eq_int("f suffix is float32", t_kind[1], TokK.FLOAT32)
+    t_eq_int("f64 suffix is float64", t_kind[2], TokK.FLOAT64)
+    t_eq_int("f32 suffix is float32", t_kind[3], TokK.FLOAT32)
+    t_eq_bool("float value 1.5", t_num[0] > 1.49 && t_num[0] < 1.51, true)
+
+    // Strings: no escapes; a doubled quote in source is one literal quote in the value.
+    lex_all(tl_quote + "hi" + tl_quote)
+    t_eq_str("plain string value", t_str[0], "hi")
+    lex_all(tl_quote + "a" + tl_quote + tl_quote + "b" + tl_quote)
+    t_eq_str("doubled quote is one literal quote", t_str[0], "a""b")
+
+    // Every operator the grammar knows lexes to its own kind.
+    lex_all("+ += - -= / /= * *= % < <= << > >= >> == != && || & | ! ~ ^")
+    t_eq_int("operator sequence token count", t_count, 25)
+    t_eq_int("plus-equals kind", t_kind[1], TokK.PLUS_EQ)
+    t_eq_int("shift-left kind", t_kind[11], TokK.LT_LT)
+    t_eq_int("and-and kind", t_kind[17], TokK.AMP_AMP)
+    t_eq_int("eof follows the operators", t_kind[24], TokK.EOF)
+
+    // A character the language does not know reports and moves on.
+    d_count = 0
+    lex_all("a ? b")
+    t_eq_int("bad character is reported", d_count, 1)
+    t_eq_int("lexing continues past it", t_count, 3)
+
+    d_count = 0
+    lex_all("99999999999")
+    t_eq_int("int overflow is reported", d_count, 1)
+    t_eq_int("overflowing value is zeroed", t_int[0], 0)
+
+    d_count = 0
+    lex_all("x")
+    t_eq_int("clean file has no diagnostics", d_count, 0)
+}

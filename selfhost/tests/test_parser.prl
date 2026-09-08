@@ -1,0 +1,120 @@
+/*
+ * Self-hosted compiler tests — the parser (test_parser.prl)
+ *
+ * Parses snippets and asserts on the arena. The important cases are the ones that shaped the
+ * grammar: precedence, the generic-call lookahead that distinguishes `a < b` from `f<int>(1)`,
+ * struct literals against blocks, elif chains, and named arguments.
+ */
+
+import "testing"
+import "../token.prl"
+import "../diag.prl"
+import "../lexer.prl"
+import "../ast.prl"
+import "../parser.prl"
+
+// Parses a snippet and returns the file node, with diagnostics reset first. The token cursor
+// resets too: it is global parser state left at the previous snippet's EOF.
+func tp_parse(source: string) : int {
+    lex_all(source)
+    p_i = 0
+    ast_reset()
+    d_count = 0
+    return parse_program()
+}
+
+// The first statement of the first function in a parsed snippet — the node most snippets
+// actually assert on, since statements live inside a function body.
+func tp_first_stmt(file: int) : int {
+    let fn: int = ast_kid(file, 0)
+    return ast_kid(fn, 0)
+}
+
+// A one-character string holding a double quote.
+global tp_quote: string = """"
+
+func test_parser_run() : void {
+    // Precedence: `1 + 2 * 3` is a Plus whose right side is the Star.
+    let file: int = tp_parse("func f() : int { return 1 + 2 * 3 }")
+    let ret: int = tp_first_stmt(file)
+    t_eq_int("return statement kind", n_kind[ret], NodK.RETURN)
+    let plus: int = n_a[ret]
+    t_eq_int("root operator is addition", n_kind[plus], NodK.BINARY)
+    t_eq_str("addition binds looser than multiplication", tok_text(n_tok[plus]), "+")
+    t_eq_int("right operand is the multiplication", n_kind[n_b[plus]], NodK.BINARY)
+    t_eq_str("multiplication sign", tok_text(n_tok[n_b[plus]]), "*")
+
+    // Associativity: subtraction groups left, so the root's left side is another subtraction.
+    file = tp_parse("func f() : int { return 8 - 4 - 1 }")
+    let top: int = n_a[tp_first_stmt(file)]
+    t_eq_str("left-assoc root is subtraction", tok_text(n_tok[top]), "-")
+    t_eq_int("left-assoc left is subtraction", n_kind[n_a[top]], NodK.BINARY)
+
+    // `a < b` must stay a comparison even when the wider window contains a `>` followed by
+    // `(` — the pattern that makes the generic lookahead lie.
+    file = tp_parse("func f(b: bool) : bool { return a < b }")
+    let cmp: int = n_a[tp_first_stmt(file)]
+    t_eq_int("less-than stays a comparison", n_kind[cmp], NodK.BINARY)
+    t_eq_str("comparison operator", tok_text(n_tok[cmp]), "<")
+
+    // A generic call parses with its type argument list.
+    file = tp_parse("func f() : int { return g<int>(1) }")
+    let call: int = n_a[tp_first_stmt(file)]
+    t_eq_int("generic call kind", n_kind[call], NodK.CALL)
+    t_eq_str("generic call name", n_str[call], "g")
+    t_true("type argument list present", n_b[call] != 0)
+    let typeArg: int = ast_kid(n_b[call], 0)
+    t_eq_str("type argument", n_str[typeArg], "int")
+
+    // Struct literal with two fields.
+    file = tp_parse("func f() : int { let p = Point { x: 1, y: 2 } }")
+    let lit: int = n_a[tp_first_stmt(file)]
+    t_eq_int("struct literal kind", n_kind[lit], NodK.STRUCT_LIT)
+    t_eq_str("struct literal type", n_str[lit], "Point")
+    t_eq_int("struct literal field count", ast_kid_count(lit), 2)
+    let init: int = ast_kid(lit, 1)
+    t_eq_str("second field name", n_str[init], "y")
+
+    // Named and positional arguments in one call.
+    file = tp_parse("func f() : int { box(" + tp_quote + "t" + tp_quote + ", pad: 4) }")
+    let boxCall: int = n_a[tp_first_stmt(file)]
+    t_eq_int("two arguments", ast_kid_count(boxCall), 2)
+    let named: int = ast_kid(boxCall, 1)
+    t_eq_int("second argument is named", n_kind[named], NodK.NAMED_ARG)
+    t_eq_str("named argument name", n_str[named], "pad")
+
+    // Elif chains build right-nested: the outer if's c slot holds the next if.
+    file = tp_parse("func f() : int { if (a) { } elif (b) { } else { } }")
+    let outerIf: int = tp_first_stmt(file)
+    t_eq_int("if statement kind", n_kind[outerIf], NodK.IF)
+    let innerIf: int = n_c[outerIf]
+    t_eq_int("elif becomes a nested if", n_kind[innerIf], NodK.IF)
+    t_true("else body present on the innermost if", n_d[innerIf] != 0)
+    t_eq_int("outer if has no else of its own", n_d[outerIf], 0)
+
+    // The for statement accepts `let` before the loop variable.
+    file = tp_parse("func f() : int { for (let i = 0 to 3) { } }")
+    let forStmt: int = tp_first_stmt(file)
+    t_eq_int("for statement kind", n_kind[forStmt], NodK.FOR)
+    t_eq_str("loop variable", n_str[forStmt], "i")
+
+    // A struct with type parameters parses.
+    file = tp_parse("struct Pair<T, U> { first: T, second: U }")
+    let pair: int = ast_kid(file, 0)
+    t_eq_int("generic struct kind", n_kind[pair], NodK.STRUCT)
+    t_eq_str("generic struct name", n_str[pair], "Pair")
+    t_eq_int("two type parameters", ast_kid_count(n_b[pair]), 2)
+    t_eq_int("two fields", ast_kid_count(pair), 2)
+
+    // Global declarations with and without a type.
+    file = tp_parse("global counter: int = 0")
+    let g: int = ast_kid(file, 0)
+    t_eq_int("global declaration kind", n_kind[g], NodK.GLOBAL_VAR)
+    t_eq_str("global name", n_str[g], "counter")
+    t_true("global type present", n_d[g] != 0)
+
+    // A syntax error reports and recovers rather than hanging.
+    file = tp_parse("func f( { }")
+    t_true("error is reported", d_count > 0)
+    t_eq_int("parse reaches eof", t_kind[p_i], TokK.EOF)
+}
