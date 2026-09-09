@@ -208,8 +208,7 @@ func app_run() : void
 
     let history: History = hist_reset(hist_new(doc.width, doc.height, app_undo_slots()), doc)
     let stroke: Stroke = stroke_new(Tool.PENCIL, palette_colour(0), 1)
-    let view: View = view_centre(view_new(view_fit_zoom(doc.width, doc.height, canvasW, canvasH)),
-                                 doc.width, doc.height, canvasW, canvasH)
+    let view: View = View->new(View->fit_zoom(doc.width, doc.height, canvasW, canvasH))->centre(doc.width, doc.height, canvasW, canvasH)
 
     let image: int = WinFormsHelper.CreateBitmap(doc.width, doc.height)
     let stripImage: int = WinFormsHelper.CreateBitmap(stripW, stripH)
@@ -277,7 +276,7 @@ func app_run() : void
                 app_place_controls(scale, form, topBar, leftBar, canvas, swatch, strip, status,
                                    buttons, dividers, ev[0], ev[1], canvasW, canvasH, stripW, stripH)
 
-                view = view_centre(view, doc.width, doc.height, canvasW, canvasH)
+                view = view->centre(doc.width, doc.height, canvasW, canvasH)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             }
         } elif (kind == Ev.MOUSE_DOWN) {
@@ -290,8 +289,8 @@ func app_run() : void
                     WinFormsHelper.SetBackColor(swatch, stroke.colour)
                 }
             } else {
-                let x: int = view_to_image_x(view, ev[0])
-                let y: int = view_to_image_y(view, ev[1])
+                let x: int = view->to_image_x(ev[0])
+                let y: int = view->to_image_y(ev[1])
 
                 // Right-clicking erases, which is what every editor does and saves a trip to
                 // the toolbar for the commonest correction.
@@ -327,8 +326,8 @@ func app_run() : void
             }
         } elif (kind == Ev.MOUSE_MOVE) {
             if (ev[7] != strip) {
-                cursorX = view_to_image_x(view, ev[0])
-                cursorY = view_to_image_y(view, ev[1])
+                cursorX = view->to_image_x(ev[0])
+                cursorY = view->to_image_y(ev[1])
 
                 if (stroke.active) {
                     stroke = tool_drag(stroke, doc, preview, touched, cursorX, cursorY)
@@ -337,8 +336,8 @@ func app_run() : void
             }
         } elif (kind == Ev.MOUSE_UP) {
             if (stroke.active) {
-                let x: int = view_to_image_x(view, ev[0])
-                let y: int = view_to_image_y(view, ev[1])
+                let x: int = view->to_image_x(ev[0])
+                let y: int = view->to_image_y(ev[1])
 
                 stroke = tool_release(stroke, doc, preview, touched, x, y)
 
@@ -359,8 +358,8 @@ func app_run() : void
             cursorX = 0 - 1
             cursorY = 0 - 1
         } elif (kind == Ev.WHEEL) {
-            view = view_zoom_to(view, app_wheel_zoom(view, ev[4]), ev[0], ev[1])
-            view = view_clamp_pan(view, doc.width, doc.height, canvasW, canvasH)
+            view = view->zoom_to(app_wheel_zoom(view, ev[4]), ev[0], ev[1])
+            view = view->clamp_pan(doc.width, doc.height, canvasW, canvasH)
             render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
         } elif (kind == Ev.KEY_DOWN) {
             let tool: int = app_tool_for_key(ev[3])
@@ -390,10 +389,10 @@ func app_run() : void
                 dirty = true
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (ev[3] == Key.PLUS) {
-                view = view_zoom_in(view, canvasW / 2, canvasH / 2)
+                view = view->zoom_in(canvasW / 2, canvasH / 2)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (ev[3] == Key.MINUS) {
-                view = view_zoom_out(view, canvasW / 2, canvasH / 2)
+                view = view->zoom_out(canvasW / 2, canvasH / 2)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             }
         } elif (kind == Ev.COMMAND) {
@@ -425,14 +424,13 @@ func app_run() : void
                 dirty = true
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.ZOOM_IN) {
-                view = view_zoom_in(view, canvasW / 2, canvasH / 2)
+                view = view->zoom_in(canvasW / 2, canvasH / 2)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.ZOOM_OUT) {
-                view = view_zoom_out(view, canvasW / 2, canvasH / 2)
+                view = view->zoom_out(canvasW / 2, canvasH / 2)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.ZOOM_FIT) {
-                view = view_centre(view_new(view_fit_zoom(doc.width, doc.height, canvasW, canvasH)),
-                                   doc.width, doc.height, canvasW, canvasH)
+                view = View->new(View->fit_zoom(doc.width, doc.height, canvasW, canvasH))->centre(doc.width, doc.height, canvasW, canvasH)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.SIZE_UP) {
                 stroke = stroke_with_size(stroke, stroke.size + 1)
@@ -468,8 +466,7 @@ func app_run() : void
                     image = WinFormsHelper.CreateBitmap(doc.width, doc.height)
                     WinFormsHelper.CanvasSetBitmap(canvas, image)
 
-                    view = view_centre(view_new(view_fit_zoom(doc.width, doc.height, canvasW, canvasH)),
-                                       doc.width, doc.height, canvasW, canvasH)
+                    view = View->new(View->fit_zoom(doc.width, doc.height, canvasW, canvasH))->centre(doc.width, doc.height, canvasW, canvasH)
                     render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
                 }
             }

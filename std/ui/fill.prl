@@ -40,16 +40,16 @@ func fill_flood(doc: Document, x: int, y: int, newColour: int) : int {
     let width: int = doc.width
     let height: int = doc.height
 
-    let stack: IntStack = intstack_new(doc_pixel_count(doc))
+    let stack: IntStack = IntStack->new(doc_pixel_count(doc))
 
     doc.pixels[(y * width) + x] = newColour
-    stack = intstack_push(stack, (y * width) + x)
+    stack = stack->push((y * width) + x)
 
     let changed: int = 0
 
-    while (!intstack_is_empty(stack)) {
-        let index: int = intstack_peek(stack)
-        stack = intstack_pop(stack)
+    while (!stack->is_empty()) {
+        let index: int = stack->peek()
+        stack = stack->pop()
         changed = changed + 1
 
         let px: int = index % width
@@ -82,7 +82,7 @@ func fill_visit(doc: Document, stack: IntStack, x: int, y: int, target: int, new
     }
 
     doc.pixels[index] = newColour
-    return intstack_push(stack, index)
+    return stack->push(index)
 }
 
 /*

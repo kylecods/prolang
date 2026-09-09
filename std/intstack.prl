@@ -4,13 +4,13 @@
  * The flood fill needs an explicit stack: prolang guarantees nothing about recursion depth, and a
  * recursive fill over a large region would be thousands of frames deep.
  *
- * It lives here rather than in std/ because std/ is not scanned by the test corpus — only
- * examples/ and tests/ are — so a data structure put there would ship with no coverage at all.
+ * std/ is not scanned by the test corpus — only examples/ and tests/ are — so this is covered by
+ * tests/std/test_intstack.prl, which run_tests.prl drives.
  *
- * The interface follows std/dynarray.prl: mutators return a new struct and the caller reassigns.
- * That is forced rather than chosen. A prolang struct is a .NET value type, so a function that
- * assigned to `s.count` would be writing to its own copy of the parameter; only the contents of
- * the `items` array outlive the call.
+ * Mutators return a new stack and the caller reassigns: `s = s->push(3)`. That is forced rather
+ * than chosen. A prolang struct is a .NET value type, so a function that assigned to `self.count`
+ * would be writing to its own copy of the receiver; only the contents of the `items` array outlive
+ * the call. `imp` changes how these are spelled, not what they mean.
  */
 
 import "array"
@@ -20,63 +20,66 @@ struct IntStack {
     count: int;
 }
 
-/*
- * A stack that can hold `capacity` values.
- *
- * The capacity is fixed. Every caller here knows its own bound in advance — the flood fill can
- * push each pixel at most once — so growing would be code that never runs.
- */
-func intstack_new(capacity: int) : IntStack {
-    let items: array<int> = array_new(capacity)
-    return IntStack { items: items, count: 0 }
-}
 
-/*
- * Pushes a value. Silently ignores the push when full, which cannot happen for the callers here
- * and is still better than an out-of-range write, since prolang cannot catch the exception.
- */
-func intstack_push(stack: IntStack, value: int) : IntStack {
-    if (stack.count >= stack.items.length()) {
-        return stack
+imp IntStack {
+    /*
+     * A stack that can hold `capacity` values.
+     *
+     * The capacity is fixed. Every caller here knows its own bound in advance — the flood fill can
+     * push each pixel at most once — so growing would be code that never runs.
+     */
+    func new(capacity: int) : IntStack {
+        let items: array<int> = array_new(capacity)
+        return IntStack { items: items, count: 0 }
     }
 
-    stack.items[stack.count] = value
-    return IntStack { items: stack.items, count: stack.count + 1 }
-}
+    /*
+     * Pushes a value. Silently ignores the push when full, which cannot happen for the callers here
+     * and is still better than an out-of-range write, since prolang cannot catch the exception.
+     */
+    func push(self: IntStack, value: int) : IntStack {
+        if (self.count >= self.items.length()) {
+            return self
+        }
 
-/*
- * Removes the top value.
- *
- * Read it with intstack_peek first: prolang has no tuples and no out-parameters, so a pop that
- * both removed and returned the value would need a carrier struct for every call. Peek-then-pop
- * costs one extra call and reads better than unpacking a result struct each time.
- */
-func intstack_pop(stack: IntStack) : IntStack {
-    if (stack.count == 0) {
-        return stack
+        self.items[self.count] = value
+        return IntStack { items: self.items, count: self.count + 1 }
     }
 
-    return IntStack { items: stack.items, count: stack.count - 1 }
-}
+    /*
+     * Removes the top value.
+     *
+     * Read it with `peek` first: prolang has no tuples and no out-parameters, so a pop that
+     * both removed and returned the value would need a carrier struct for every call. Peek-then-pop
+     * costs one extra call and reads better than unpacking a result struct each time.
+     */
+    func pop(self: IntStack) : IntStack {
+        if (self.count == 0) {
+            return self
+        }
 
-// The top value, or -1 when the stack is empty.
-func intstack_peek(stack: IntStack) : int {
-    if (stack.count == 0) {
-        return 0 - 1
+        return IntStack { items: self.items, count: self.count - 1 }
     }
 
-    return stack.items[stack.count - 1]
-}
+    // The top value, or -1 when the stack is empty.
+    func peek(self: IntStack) : int {
+        if (self.count == 0) {
+            return 0 - 1
+        }
 
-func intstack_count(stack: IntStack) : int {
-    return stack.count
-}
+        return self.items[self.count - 1]
+    }
 
-func intstack_is_empty(stack: IntStack) : bool {
-    return stack.count == 0
-}
+    func count(self: IntStack) : int {
+        return self.count
+    }
 
-// Discards every value, keeping the buffer so it can be refilled without another allocation.
-func intstack_clear(stack: IntStack) : IntStack {
-    return IntStack { items: stack.items, count: 0 }
+    func is_empty(self: IntStack) : bool {
+        return self.count == 0
+    }
+
+    // Discards every value, keeping the buffer so it can be refilled without another allocation.
+    func clear(self: IntStack) : IntStack {
+        return IntStack { items: self.items, count: 0 }
+    }
 }

@@ -42,7 +42,7 @@ func chrome_blit(bitmapId: int, doc: Document) : void {
 func chrome_set_view(canvasId: int, view: View, activeTheme: int) : void {
     let grid: int = 0
 
-    if (view_show_grid(view)) {
+    if (view->show_grid()) {
         grid = theme_grid(activeTheme)
     }
 
