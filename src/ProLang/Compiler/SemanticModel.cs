@@ -237,11 +237,20 @@ public sealed class SemanticModel
 
             foreach (var declaration in tree.Root.Declarations)
             {
-                if (declaration is FunctionDeclarationSyntax function
-                    && position >= function.Span.Start
-                    && position <= function.Span.End)
+                // An imp block's members are functions too, and they are nested rather than
+                // top-level, so a walk over declarations alone would find nothing inside one.
+                var candidates = declaration is ImpDeclarationSyntax imp
+                    ? imp.Functions.Cast<DeclarationSyntax>()
+                    : [declaration];
+
+                foreach (var candidate in candidates)
                 {
-                    return function;
+                    if (candidate is FunctionDeclarationSyntax function
+                        && position >= function.Span.Start
+                        && position <= function.Span.End)
+                    {
+                        return function;
+                    }
                 }
             }
         }

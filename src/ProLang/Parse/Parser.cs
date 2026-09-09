@@ -128,6 +128,11 @@ public sealed class Parser
             return ParseStructDeclaration();
         }
 
+        if (Current.Kind == SyntaxKind.ImpKeyword)
+        {
+            return ParseImpDeclaration();
+        }
+
         if (Current.Kind == SyntaxKind.EnumKeyword)
         {
             return ParseEnumDeclaration();
@@ -228,6 +233,56 @@ public sealed class Parser
         var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
 
         return new StructDeclarationSyntax(_syntaxTree, structKeyword, identifier, lessThanToken, typeParameters, greaterThanToken, openCurlyToken, fields.ToImmutable(), closeCurlyToken);
+    }
+
+    /// <summary>
+    /// Parses <c>imp Type { func ... }</c>.
+    /// </summary>
+    /// <remarks>
+    /// Members go through <see cref="ParseFunctionDeclaration"/> unchanged, so an imp member is
+    /// syntactically an ordinary function and everything downstream that expects a
+    /// <c>FunctionDeclarationSyntax</c> keeps working.
+    /// </remarks>
+    private ImpDeclarationSyntax ParseImpDeclaration()
+    {
+        var impKeyword = Match(SyntaxKind.ImpKeyword);
+        var identifier = Match(SyntaxKind.IdentifierToken);
+
+        SyntaxToken? lessThanToken = null;
+        var typeParameters = new SeparatedSyntaxList<SyntaxToken>(ImmutableArray<SyntaxNode>.Empty);
+        SyntaxToken? greaterThanToken = null;
+
+        if (Current.Kind == SyntaxKind.LessThanToken)
+        {
+            lessThanToken = Match(SyntaxKind.LessThanToken);
+            typeParameters = ParseTypeParameterList();
+            greaterThanToken = Match(SyntaxKind.GreaterThanToken);
+        }
+
+        var openCurlyToken = Match(SyntaxKind.LeftCurlyToken);
+
+        var functions = ImmutableArray.CreateBuilder<FunctionDeclarationSyntax>();
+
+        while (Current.Kind != SyntaxKind.RightCurlyToken && Current.Kind != SyntaxKind.EofToken)
+        {
+            var startToken = Current;
+
+            if (Current.Kind == SyntaxKind.FunctionKeyword)
+            {
+                // ParseFunctionDeclaration is typed to the shared declaration base, but its only
+                // production is a function declaration.
+                functions.Add((FunctionDeclarationSyntax)ParseFunctionDeclaration());
+            }
+
+            // Same no-progress guard the struct parser uses: without it, a stray token inside the
+            // block spins forever.
+            if (Current == startToken)
+                NextToken();
+        }
+
+        var closeCurlyToken = Match(SyntaxKind.RightCurlyToken);
+
+        return new ImpDeclarationSyntax(_syntaxTree, impKeyword, identifier, lessThanToken, typeParameters, greaterThanToken, openCurlyToken, functions.ToImmutable(), closeCurlyToken);
     }
 
     private EnumDeclarationSyntax ParseEnumDeclaration()
@@ -953,6 +1008,42 @@ public sealed class Parser
                 var rightBracket = Match(SyntaxKind.RightBracketToken);
                 expression = new IndexExpressionSyntax(_syntaxTree, expression, leftBracket, index, rightBracket);
             }
+            else if (Current.Kind == SyntaxKind.MinusGreaterThanToken && Peek(1).Kind == SyntaxKind.IdentifierToken)
+            {
+                var arrowToken = Match(SyntaxKind.MinusGreaterThanToken);
+                var name = Match(SyntaxKind.IdentifierToken);
+
+                SyntaxToken? lessThanToken = null;
+                var typeArguments = ImmutableArray<TypeSyntax>.Empty;
+                SyntaxToken? greaterThanToken = null;
+
+                // `a->get<int>(0)`. Offset 1 rather than 2, because the arrow and the name have
+                // already been consumed and `<` is now the current token.
+                if (Current.Kind == SyntaxKind.LessThanToken &&
+                    LookAheadGenericEnd(1, SyntaxKind.LeftParenthesisToken, out _))
+                {
+                    lessThanToken = Match(SyntaxKind.LessThanToken);
+                    typeArguments = ParseTypeArgumentList();
+                    greaterThanToken = Match(SyntaxKind.GreaterThanToken);
+                }
+
+                if (Current.Kind == SyntaxKind.LeftParenthesisToken)
+                {
+                    var arrowOpenParen = Match(SyntaxKind.LeftParenthesisToken);
+                    var arrowArguments = ParseArguments();
+                    var arrowCloseParen = Match(SyntaxKind.RightParenthesisToken);
+
+                    expression = new ArrowCallExpressionSyntax(
+                        _syntaxTree, expression, arrowToken, name,
+                        lessThanToken, typeArguments, greaterThanToken,
+                        arrowOpenParen, arrowArguments, arrowCloseParen);
+                }
+                else
+                {
+                    // No argument list: this is a function value, `Rect->area`.
+                    expression = new ArrowAccessExpressionSyntax(_syntaxTree, expression, arrowToken, name);
+                }
+            }
             else if (Current.Kind == SyntaxKind.DotToken && Peek(1).Kind == SyntaxKind.IdentifierToken)
             {
                 if (Peek(2).Kind == SyntaxKind.LeftParenthesisToken)
@@ -993,10 +1084,17 @@ public sealed class Parser
     }
 
     // Returns true if: after current identifier + '<', there is a balanced '>' followed by 'followedBy'
-    private bool LookAheadGenericEnd(SyntaxKind followedBy, out int closeOffset)
+    private bool LookAheadGenericEnd(SyntaxKind followedBy, out int closeOffset) =>
+        LookAheadGenericEnd(2, followedBy, out closeOffset);
+
+    /// <param name="startOffset">
+    /// First token inside the type-argument list. Two for a bare call (identifier, <c>&lt;</c>), three
+    /// after an arrow (<c>-&gt;</c>, identifier, <c>&lt;</c>).
+    /// </param>
+    private bool LookAheadGenericEnd(int startOffset, SyntaxKind followedBy, out int closeOffset)
     {
         closeOffset = 0;
-        int i = 2; // skip identifier(0) and '<'(1)
+        int i = startOffset;
         int depth = 1;
         while (true)
         {

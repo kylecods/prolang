@@ -269,6 +269,105 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Report(location, message);
     }
 
+    // ── imp blocks ───────────────────────────────────────────────────────────────
+
+    public void ReportImpTargetNotAType(TextLocation location, string name)
+    {
+        var message = $"'{name}' is not a type, so there is nothing for an imp block to add functions to.";
+        Report(location, message);
+    }
+
+    public void ReportImpMemberAlreadyDeclared(TextLocation location, string typeName, string memberName)
+    {
+        var message = $"'{typeName}->{memberName}' is already declared.";
+        Report(location, message);
+    }
+
+    /// <summary>
+    /// <c>self</c> in any position but the first.
+    /// </summary>
+    /// <remarks>
+    /// The receiver is passed as argument 0, so a <c>self</c> anywhere else would silently be treated
+    /// as an ordinary parameter and the function would not be callable on a value.
+    /// </remarks>
+    public void ReportSelfParameterMustBeFirst(TextLocation location)
+    {
+        var message = "'self' must be the first parameter.";
+        Report(location, message);
+    }
+
+    public void ReportSelfParameterOutsideImpBlock(TextLocation location)
+    {
+        var message =
+            "'self' only means anything inside an imp block. A top-level function has no receiver, so "
+            + "name the parameter something else.";
+
+        Report(location, message);
+    }
+
+    public void ReportSelfParameterTypeMismatch(TextLocation location, string typeName, TypeSymbol actual)
+    {
+        var message =
+            $"'self' must have type '{typeName}' in an imp block for '{typeName}', but was declared "
+            + $"'{actual}'.";
+
+        Report(location, message);
+    }
+
+    public void ReportUndefinedImpFunction(TextLocation location, string typeName, string memberName)
+    {
+        var message = $"'{typeName}' has no function named '{memberName}'.";
+        Report(location, message);
+    }
+
+    /// <summary>
+    /// An instance method reached through the type rather than a value.
+    /// </summary>
+    /// <remarks>
+    /// Phrased as the fix rather than the fault: during a migration this is the diagnostic that turns a
+    /// wrong mechanical edit into a compile error carrying its own correction.
+    /// </remarks>
+    public void ReportInstanceMethodCalledOnType(TextLocation location, string typeName, string memberName)
+    {
+        var message =
+            $"'{typeName}->{memberName}' takes 'self', so call it on a value: 'value->{memberName}(...)'. "
+            + $"To pass the receiver explicitly, give it as the first argument.";
+
+        Report(location, message);
+    }
+
+    public void ReportAssociatedFunctionCalledOnValue(TextLocation location, string typeName, string memberName)
+    {
+        var message =
+            $"'{typeName}->{memberName}' has no 'self' parameter, so call it on the type: "
+            + $"'{typeName}->{memberName}(...)'.";
+
+        Report(location, message);
+    }
+
+    /// <summary>A method reference bound to a receiver.</summary>
+    /// <remarks>
+    /// A ProLang function value is a bare pointer with a null delegate target — there is nowhere to put
+    /// the receiver. <c>Type-&gt;member</c> is a value; <c>value-&gt;member</c> is not.
+    /// </remarks>
+    public void ReportCannotTakeBoundMethodReference(TextLocation location, string typeName, string memberName)
+    {
+        var message =
+            $"A function value cannot capture a receiver. Write '{typeName}->{memberName}' to take the "
+            + $"function itself; it takes 'self' as its first argument.";
+
+        Report(location, message);
+    }
+
+    public void ReportGenericImpNotSupported(TextLocation location, string typeName)
+    {
+        var message =
+            $"An imp block for a generic type ('{typeName}') is not supported yet, because type "
+            + "arguments cannot be inferred through a struct instantiation.";
+
+        Report(location, message);
+    }
+
     public void ReportStructCannotContainItself(TextLocation location, string name)
     {
         var message =

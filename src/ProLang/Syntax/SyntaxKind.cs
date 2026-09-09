@@ -48,6 +48,7 @@ public enum SyntaxKind
     BangEqualsToken, // '!='
     PlusEqualsToken, // '+='
     MinusEqualsToken,// '-='
+    MinusGreaterThanToken,// '->' — reaches an imp function on a type or a value
     SlashEqualsToken,// '/='
     StarEqualsToken,// '*='
     HatEqualsToken,// '^='
@@ -78,6 +79,7 @@ public enum SyntaxKind
     ImportKeyword,
     StructKeyword,
     ClassKeyword,
+    ImpKeyword,
     AsKeyword,
     EnumKeyword,
     GlobalKeyword,
@@ -98,6 +100,8 @@ public enum SyntaxKind
     MapExpression,
     IndexExpression,
     MethodCallExpression,
+    ArrowCallExpression,
+    ArrowAccessExpression,
     MapEntry,
     CastExpression,
     
@@ -132,6 +136,7 @@ public enum SyntaxKind
     Parameter,
     NamedArgument,
     StructDeclaration,
+    ImpDeclaration,
     FieldDeclaration,
     EnumDeclaration,
     EnumMemberDeclaration,

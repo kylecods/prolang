@@ -28,6 +28,7 @@ public sealed class CBackendTests
 {
     public static TheoryData<string> CCompatiblePrograms =>
     [
+        "tests/language/imp/imp-blocks.prl",
         "tests/language/classes/recursive.prl",
         "tests/language/classes/reference-semantics.prl",
         // forward-and-recursive-references.prl is deliberately absent: it declares a generic struct,

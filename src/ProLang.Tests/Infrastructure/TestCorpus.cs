@@ -72,6 +72,7 @@ internal static class TestCorpus
         new("tests/language/datatypes/types.prl", CorpusKind.Runnable),
         new("tests/language/functions/default-and-named-arguments.prl", CorpusKind.Runnable),
         new("tests/language/functions/function-values.prl", CorpusKind.Runnable),
+        new("tests/language/imp/imp-blocks.prl", CorpusKind.Runnable),
         new("tests/language/classes/recursive.prl", CorpusKind.Runnable),
         new("tests/language/classes/reference-semantics.prl", CorpusKind.Runnable),
         new("tests/language/structs/array-of-structs.prl", CorpusKind.Runnable),

@@ -106,6 +106,13 @@ internal sealed class Binder
 
         binder.ReportValueStructCycles(declaredStructs);
 
+        // After struct fields, so `self: Rect` resolves; before free functions, so a colliding member
+        // is reported against its imp block.
+        foreach (var impDecl in allDeclarations.OfType<ImpDeclarationSyntax>())
+        {
+            binder.BindImpDeclaration(impDecl);
+        }
+
         foreach (var function in functionDeclarations)
         {
             binder.BindFunctionDeclaration(function);
@@ -441,7 +448,58 @@ internal sealed class Binder
             globalScope.GlobalVariables, globalScope.GlobalInitializers);
     }
 
-    private void BindFunctionDeclaration(FunctionDeclarationSyntax syntax)
+    /// <summary>
+    /// Declares the members of an <c>imp</c> block against the type they belong to.
+    /// </summary>
+    /// <remarks>
+    /// Runs after struct fields are bound, so <c>self: Rect</c> resolves, and before the free-function
+    /// pass, so a member colliding with an earlier one is reported at the imp block rather than at some
+    /// unrelated function.
+    /// <para>
+    /// Several imp blocks may target one type, in any file. That falls out of declaring into the same
+    /// flat function table under a qualified name: two blocks contributing the same member simply
+    /// collide, and are diagnosed.
+    /// </para>
+    /// </remarks>
+    private void BindImpDeclaration(ImpDeclarationSyntax syntax)
+    {
+        var typeName = syntax.Identifier.Text;
+
+        // Enums live in their own table rather than with structs, and they erase to int, so they are
+        // reached separately here.
+        TypeSymbol? target = LookupType(typeName);
+
+        if (target is not StructSymbol && _scope.TryLookupEnumType(typeName, out var enumType))
+        {
+            target = enumType;
+        }
+
+        if (target is not (StructSymbol or EnumSymbol))
+        {
+            _diagnostics.ReportImpTargetNotAType(syntax.Identifier.Location, typeName);
+            return;
+        }
+
+        // Parsed so the node shape never has to change, rejected so that it is not shipped before
+        // inference can see through a struct instantiation.
+        if (syntax.TypeParameters.Count > 0 || (target is StructSymbol { IsGeneric: true }))
+        {
+            _diagnostics.ReportGenericImpNotSupported(syntax.Identifier.Location, typeName);
+            return;
+        }
+
+        _recorder?.RecordSymbol(syntax.Identifier.Location, target, OccurrenceKind.Reference);
+
+        foreach (var member in syntax.Functions)
+        {
+            BindFunctionDeclaration(member, target);
+        }
+    }
+
+    private void BindFunctionDeclaration(FunctionDeclarationSyntax syntax) =>
+        BindFunctionDeclaration(syntax, containingType: null);
+
+    private void BindFunctionDeclaration(FunctionDeclarationSyntax syntax, TypeSymbol? containingType)
     {
         var typeParamSymbols = ImmutableArray.CreateBuilder<TypeParameterSymbol>();
         foreach (var tp in syntax.TypeParameters)
@@ -496,19 +554,78 @@ internal sealed class Binder
 
         _scope = savedScope;
 
-        var function = new FunctionSymbol(syntax.Identifier.Text, parameters.ToImmutable(), type, syntax,
+        var simpleName = syntax.Identifier.Text;
+        var boundParameters = parameters.ToImmutable();
+
+        // A parameter named `self` anywhere but first would be bound as an ordinary parameter and the
+        // function would silently not be callable on a value, so it is rejected rather than ignored.
+        for (var i = 1; i < boundParameters.Length; i++)
+        {
+            if (boundParameters[i].Name == SelfParameterName)
+            {
+                _diagnostics.ReportSelfParameterMustBeFirst(syntax.Parameters[i].Location);
+            }
+        }
+
+        var isInstanceMethod = containingType != null
+            && boundParameters.Length > 0
+            && boundParameters[0].Name == SelfParameterName;
+
+        if (isInstanceMethod && boundParameters[0].Type != containingType)
+        {
+            _diagnostics.ReportSelfParameterTypeMismatch(
+                syntax.Parameters[0].Location, containingType!.Name, boundParameters[0].Type);
+        }
+
+        if (containingType == null && boundParameters.Length > 0 && boundParameters[0].Name == SelfParameterName)
+        {
+            _diagnostics.ReportSelfParameterOutsideImpBlock(syntax.Parameters[0].Location);
+        }
+
+        var name = containingType == null ? simpleName : QualifyImpMember(containingType.Name, simpleName);
+
+        var function = new FunctionSymbol(name, boundParameters, type, syntax,
             typeParamSymbols.ToImmutable())
         {
             Documentation = DocumentationFor(syntax),
+            ContainingTypeName = containingType?.Name,
+            SimpleName = simpleName,
+            IsInstanceMethod = isInstanceMethod,
         };
 
         _recorder?.RecordSymbol(syntax.Identifier.Location, function, OccurrenceKind.Definition);
 
         if (!_scope.TryDeclareFunction(function))
         {
-            _diagnostics.ReportSymbolAlreadyDeclared(syntax.Identifier.Location, function.Name);
+            if (containingType != null)
+            {
+                _diagnostics.ReportImpMemberAlreadyDeclared(syntax.Identifier.Location, containingType.Name, simpleName);
+            }
+            else
+            {
+                _diagnostics.ReportSymbolAlreadyDeclared(syntax.Identifier.Location, function.Name);
+            }
         }
     }
+
+    /// <summary>The parameter name that makes an imp member callable on a value.</summary>
+    internal const string SelfParameterName = "self";
+
+    /// <summary>
+    /// The name an imp member is declared under.
+    /// </summary>
+    /// <remarks>
+    /// Qualification lives in the name because a function is identified by its name alone — the scope's
+    /// function table, the emitter's method map and both bound-program dictionaries all key off it, so
+    /// two types could not otherwise each have a <c>new</c>.
+    /// <para>
+    /// <c>__</c> rather than <c>::</c> or <c>.</c>: it is a legal identifier in C, C# and CLI metadata,
+    /// so it survives all four backends with no sanitizer change and keeps the emitted name identical
+    /// across them. <c>::</c> would decompile to invalid C#; <c>.</c> collides with the existing
+    /// <c>variable.method</c> lookup.
+    /// </para>
+    /// </remarks>
+    internal static string QualifyImpMember(string typeName, string memberName) => $"{typeName}__{memberName}";
 
     /// <summary>
     /// Binds a parameter's default value and reduces it to the constant the call site will use.
@@ -1456,6 +1573,10 @@ internal sealed class Binder
                 return BindIndexExpression((IndexExpressionSyntax)syntax);
             case SyntaxKind.MethodCallExpression:
                 return BindMethodCallExpression((MethodCallExpressionSyntax)syntax);
+            case SyntaxKind.ArrowCallExpression:
+                return BindArrowCallExpression((ArrowCallExpressionSyntax)syntax);
+            case SyntaxKind.ArrowAccessExpression:
+                return BindArrowAccessExpression((ArrowAccessExpressionSyntax)syntax);
             case SyntaxKind.StructCreationExpression:
                 return BindStructCreationExpression((StructCreationExpressionSyntax)syntax);
             case SyntaxKind.FieldAccessExpression:
@@ -1958,6 +2079,190 @@ internal sealed class Binder
         return new BoundFunctionReference(function, functionType);
     }
 
+    /// <summary>
+    /// The name an imp member on <paramref name="type"/> would be declared under.
+    /// </summary>
+    /// <remarks>
+    /// A generic instantiation resolves to its template, so <c>DynArray&lt;int&gt;</c> and
+    /// <c>DynArray&lt;string&gt;</c> share one set of members. The primitive arms resolve to nothing
+    /// today; they exist because migrating the builtin array and string methods to <c>imp</c> blocks
+    /// written in ProLang is the eventual plan, and this is where that lands.
+    /// </remarks>
+    private static string? ImpKeyFor(TypeSymbol type) => type switch
+    {
+        StructSymbol { OriginalGeneric: { } template } => template.Name,
+        StructSymbol s => s.Name,
+        EnumSymbol e => e.Name,
+        _ when type == TypeSymbol.Error => null,
+        _ => type.Name,
+    };
+
+    /// <summary>
+    /// Resolves the left of an arrow to the type whose members it names.
+    /// </summary>
+    /// <remarks>
+    /// A bare name that is not a declared variable is a type name — the same rule <c>.</c> already uses
+    /// to tell <c>StringBuilder.new()</c> from an instance call, so the two operators never disagree
+    /// about what <c>Foo</c> means.
+    /// </remarks>
+    private bool TryResolveArrowReceiverAsType(ExpressionSyntax receiverSyntax, out string typeName)
+    {
+        typeName = string.Empty;
+
+        if (receiverSyntax is not NameExpressionSyntax nameExpr)
+        {
+            return false;
+        }
+
+        var candidate = nameExpr.IdentifierToken.Text;
+
+        if (_scope.TryLookupVariable(candidate, out _))
+        {
+            return false;
+        }
+
+        TypeSymbol? type = LookupType(candidate);
+
+        if (type is not StructSymbol && _scope.TryLookupEnumType(candidate, out var enumType))
+        {
+            type = enumType;
+        }
+
+        if (type is not (StructSymbol or EnumSymbol))
+        {
+            return false;
+        }
+
+        _recorder?.RecordSymbol(nameExpr.IdentifierToken.Location, type, OccurrenceKind.Reference);
+        typeName = type.Name;
+        return true;
+    }
+
+    private BoundExpression BindArrowCallExpression(ArrowCallExpressionSyntax syntax)
+    {
+        var memberName = syntax.Name.Text;
+
+        var argumentSyntaxes = new ExpressionSyntax[syntax.Arguments.Count];
+        var argumentNames = new SyntaxToken?[syntax.Arguments.Count];
+        var namedArgumentCount = 0;
+
+        for (int i = 0; i < syntax.Arguments.Count; i++)
+        {
+            if (syntax.Arguments[i] is NamedArgumentSyntax named)
+            {
+                argumentSyntaxes[i] = named.Expression;
+                argumentNames[i] = named.Identifier;
+                namedArgumentCount++;
+            }
+            else
+            {
+                argumentSyntaxes[i] = syntax.Arguments[i];
+
+                if (namedArgumentCount > 0)
+                {
+                    _diagnostics.ReportPositionalArgumentAfterNamed(syntax.Arguments[i].Location);
+                    return new BoundErrorExpression();
+                }
+            }
+        }
+
+        BoundExpression? receiver = null;
+        string typeName;
+
+        if (TryResolveArrowReceiverAsType(syntax.Expression, out typeName))
+        {
+            // `Rect->new(...)` — nothing to bind on the left.
+        }
+        else
+        {
+            receiver = BindExpression(syntax.Expression);
+
+            if (receiver.Type == TypeSymbol.Error)
+            {
+                return new BoundErrorExpression();
+            }
+
+            if (ImpKeyFor(receiver.Type) is not { } key)
+            {
+                return new BoundErrorExpression();
+            }
+
+            typeName = key;
+        }
+
+        if (!_scope.TryLookupFunction(QualifyImpMember(typeName, memberName), out var function) || function == null)
+        {
+            _diagnostics.ReportUndefinedImpFunction(syntax.Name.Location, typeName, memberName);
+            return new BoundErrorExpression();
+        }
+
+        // Calling an instance method on the type is allowed when the receiver is passed explicitly —
+        // `Rect->area(r)` means the same as `r->area()`. It is only an error when the argument count
+        // shows the receiver was forgotten.
+        if (receiver == null && function.IsInstanceMethod && syntax.Arguments.Count < function.Parameters.Length)
+        {
+            _diagnostics.ReportInstanceMethodCalledOnType(syntax.Name.Location, typeName, memberName);
+            return new BoundErrorExpression();
+        }
+
+        if (receiver != null && !function.IsInstanceMethod)
+        {
+            _diagnostics.ReportAssociatedFunctionCalledOnValue(syntax.Name.Location, typeName, memberName);
+            return new BoundErrorExpression();
+        }
+
+        _recorder?.RecordSymbol(syntax.Name.Location, function, OccurrenceKind.Reference);
+
+        var boundArguments = ImmutableArray.CreateBuilder<BoundExpression>();
+        foreach (var argument in argumentSyntaxes)
+        {
+            boundArguments.Add(BindExpression(argument));
+        }
+
+        return BindResolvedCall(
+            syntax.Location,
+            syntax.Name.Location,
+            function,
+            receiver,
+            syntax.Expression.Location,
+            syntax.TypeArguments,
+            [.. argumentSyntaxes.Select(a => a.Location)],
+            argumentNames,
+            boundArguments,
+            namedArgumentCount);
+    }
+
+    /// <summary>
+    /// <c>Type-&gt;member</c> with no argument list: the function itself, as a value.
+    /// </summary>
+    private BoundExpression BindArrowAccessExpression(ArrowAccessExpressionSyntax syntax)
+    {
+        var memberName = syntax.Name.Text;
+
+        if (!TryResolveArrowReceiverAsType(syntax.Expression, out var typeName))
+        {
+            // A value on the left would mean a bound method, and a ProLang function value is a bare
+            // pointer with a null delegate target — there is nowhere to keep the receiver.
+            var receiver = BindExpression(syntax.Expression);
+            var owner = receiver.Type == TypeSymbol.Error ? null : ImpKeyFor(receiver.Type);
+
+            if (owner != null)
+            {
+                _diagnostics.ReportCannotTakeBoundMethodReference(syntax.Name.Location, owner, memberName);
+            }
+
+            return new BoundErrorExpression();
+        }
+
+        if (!_scope.TryLookupFunction(QualifyImpMember(typeName, memberName), out var function) || function == null)
+        {
+            _diagnostics.ReportUndefinedImpFunction(syntax.Name.Location, typeName, memberName);
+            return new BoundErrorExpression();
+        }
+
+        return BindFunctionReference(function, syntax.Name.Location);
+    }
+
     private BoundExpression BindCallExpression(CallExpressionSyntax syntax, TypeSymbol? expectedType = null)
     {
         // Separate `name: value` arguments from positional ones. Everything below works on the
@@ -2044,17 +2349,64 @@ internal sealed class Binder
         // function as it is written in the source rather than DynArray_push<int>.
         _recorder?.RecordSymbol(syntax.Identifier.Location, function, OccurrenceKind.Reference);
 
+        return BindResolvedCall(
+            syntax.Location,
+            syntax.Identifier.Location,
+            function!,
+            receiver: null,
+            receiverLocation: default,
+            syntax.TypeArguments,
+            [.. syntax.Arguments.Select(a => a.Location)],
+            argumentNames,
+            boundArguments,
+            namedArgumentCount);
+    }
+
+    /// <summary>
+    /// The tail shared by every by-name call: named arguments, defaults, generic instantiation and
+    /// per-argument conversion.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Extracted so that a call through <c>-&gt;</c> gets all four, rather than routing to a simpler
+    /// path that silently supports none of them.
+    /// </para>
+    /// <para>
+    /// <paramref name="receiver"/> is prepended as argument 0 <em>before</em> reordering, which is what
+    /// makes <c>self</c> an ordinary parameter from here on: arity checks, named-argument matching,
+    /// default filling and type inference all see a complete positional list and need no special case.
+    /// </para>
+    /// </remarks>
+    private BoundExpression BindResolvedCall(
+        TextLocation callLocation,
+        TextLocation nameLocation,
+        FunctionSymbol function,
+        BoundExpression? receiver,
+        TextLocation receiverLocation,
+        ImmutableArray<TypeSyntax> explicitTypeArguments,
+        TextLocation[] argumentLocations,
+        SyntaxToken?[] argumentNames,
+        ImmutableArray<BoundExpression>.Builder boundArguments,
+        int namedArgumentCount)
+    {
         // Named arguments are a ProLang-function feature. Interop overloads are picked by metadata
         // signature, where a parameter's name is not part of the contract it publishes.
         if (namedArgumentCount > 0 && function is DotNetFunctionSymbol)
         {
-            _diagnostics.ReportNamedArgumentNotSupported(syntax.Identifier.Location, function.Name);
+            _diagnostics.ReportNamedArgumentNotSupported(nameLocation, function.DisplayName);
             return new BoundErrorExpression();
+        }
+
+        if (receiver != null)
+        {
+            boundArguments.Insert(0, receiver);
+            argumentLocations = [receiverLocation, .. argumentLocations];
+            argumentNames = [null, .. argumentNames];
         }
 
         // Put the arguments in parameter order and fill in the defaults, so that everything past
         // this point — generic inference included — sees a complete, positional argument list.
-        if (!TryReorderArguments(syntax, function!, argumentNames, boundArguments,
+        if (!TryReorderArguments(callLocation, argumentLocations, function, argumentNames, boundArguments,
                 out var orderedArguments, out var orderedLocations))
         {
             return new BoundErrorExpression();
@@ -2064,9 +2416,9 @@ internal sealed class Binder
         if (function.IsGeneric)
         {
             TypeSymbol[] typeArgs;
-            if (syntax.TypeArguments.Length > 0)
+            if (explicitTypeArguments.Length > 0)
             {
-                typeArgs = syntax.TypeArguments.Select(t => BindTypeSyntax(t)).ToArray();
+                typeArgs = explicitTypeArguments.Select(t => BindTypeSyntax(t)).ToArray();
             }
             else
             {
@@ -2075,7 +2427,7 @@ internal sealed class Binder
 
             if (typeArgs.Length != function.TypeParameters.Length)
             {
-                _diagnostics.ReportWrongArgumentCount(syntax.Location, function.Name,
+                _diagnostics.ReportWrongArgumentCount(callLocation, function.DisplayName,
                     function.TypeParameters.Length, typeArgs.Length);
                 return new BoundErrorExpression();
             }
@@ -2151,7 +2503,8 @@ internal sealed class Binder
     /// a positional argument after a named one — so a positional argument's index is its ordinal.
     /// </remarks>
     private bool TryReorderArguments(
-        CallExpressionSyntax syntax,
+        TextLocation callLocation,
+        TextLocation[] argumentLocations,
         FunctionSymbol function,
         SyntaxToken?[] argumentNames,
         ImmutableArray<BoundExpression>.Builder boundArguments,
@@ -2166,7 +2519,7 @@ internal sealed class Binder
 
         for (int i = 0; i < boundArguments.Count; i++)
         {
-            var location = syntax.Arguments[i].Location;
+            var location = argumentLocations[i];
             var name = argumentNames[i];
             int target;
 
@@ -2174,7 +2527,7 @@ internal sealed class Binder
             {
                 if (i >= parameters.Length)
                 {
-                    _diagnostics.ReportWrongArgumentCount(syntax.Location, function.Name,
+                    _diagnostics.ReportWrongArgumentCount(callLocation, function.DisplayName,
                         parameters.Length, boundArguments.Count);
                     return false;
                 }
@@ -2196,7 +2549,7 @@ internal sealed class Binder
 
                 if (target < 0)
                 {
-                    _diagnostics.ReportUndefinedArgumentName(name.Location, function.Name, name.Text);
+                    _diagnostics.ReportUndefinedArgumentName(name.Location, function.DisplayName, name.Text);
                     return false;
                 }
             }
@@ -2222,14 +2575,14 @@ internal sealed class Binder
 
             if (!parameter.IsOptional)
             {
-                _diagnostics.ReportMissingRequiredArgument(syntax.Location, function.Name, parameter.Name);
+                _diagnostics.ReportMissingRequiredArgument(callLocation, function.DisplayName, parameter.Name);
                 return false;
             }
 
             // A fresh literal per call site: the default is a constant, so there is nothing to
             // re-bind and no expression shared between two calls.
             slots[p] = new BoundLiteralExpression(parameter.DefaultValue!);
-            locations[p] = syntax.Location;
+            locations[p] = callLocation;
         }
 
         foreach (var slot in slots)

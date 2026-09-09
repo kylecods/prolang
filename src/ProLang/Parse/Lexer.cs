@@ -79,14 +79,21 @@ internal sealed class Lexer
                 break;
             case '-':
                 _position++;
-                if (Current != '=')
-                {
-                    _kind = SyntaxKind.MinusToken;
-                }
-                else
+                if (Current == '=')
                 {
                     _position++;
                     _kind = SyntaxKind.MinusEqualsToken;
+                }
+                else if (Current == '>')
+                {
+                    // Recognised here rather than in the '>' arm, which is only reached when '>' is
+                    // the first character. That is what keeps '->' clear of the '>>' shift token.
+                    _position++;
+                    _kind = SyntaxKind.MinusGreaterThanToken;
+                }
+                else
+                {
+                    _kind = SyntaxKind.MinusToken;
                 }
                 break;
             case '/':

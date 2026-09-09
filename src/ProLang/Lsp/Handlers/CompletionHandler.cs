@@ -22,7 +22,7 @@ internal static class CompletionHandler
     /// </remarks>
     private static readonly string[] Keywords =
     [
-        "let", "func", "struct", "class", "enum", "import", "return",
+        "let", "func", "struct", "class", "imp", "enum", "import", "return",
         "if", "elif", "else", "while", "for", "to", "break", "continue",
         "true", "false", "null", "as", "void",
     ];
