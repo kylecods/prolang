@@ -123,7 +123,7 @@ public sealed class Parser
             return ParseFunctionDeclaration();
         }
 
-        if (Current.Kind == SyntaxKind.StructKeyword)
+        if (Current.Kind == SyntaxKind.StructKeyword || Current.Kind == SyntaxKind.ClassKeyword)
         {
             return ParseStructDeclaration();
         }
@@ -188,7 +188,12 @@ public sealed class Parser
 
     private StructDeclarationSyntax ParseStructDeclaration()
     {
-        var structKeyword = Match(SyntaxKind.StructKeyword);
+        // `class` and `struct` differ only in whether the type is a reference; everything after the
+        // keyword parses identically, so they share this method and the node it produces.
+        var structKeyword = Current.Kind == SyntaxKind.ClassKeyword
+            ? Match(SyntaxKind.ClassKeyword)
+            : Match(SyntaxKind.StructKeyword);
+
         var identifier = Match(SyntaxKind.IdentifierToken);
 
         SyntaxToken? lessThanToken = null;

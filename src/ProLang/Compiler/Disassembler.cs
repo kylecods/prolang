@@ -66,7 +66,7 @@ internal static class Disassembler
 
     private static void WriteStruct(StructSymbol s, IndentedTextWriter writer)
     {
-        writer.WriteKeyword("struct ");
+        writer.WriteKeyword(s.IsReferenceType ? "class " : "struct ");
         writer.WriteIdentifier(s.Name);
 
         if (s.TypeParameters.Length > 0)

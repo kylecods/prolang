@@ -126,16 +126,16 @@ static inline String8 Str_8_Join(Arena *arena, String8List *list, StringJoin *op
     if (!buf) return (String8){0};
 
     UINT64 pos = 0;
-    if (join->pre.size) { __builtin_memcpy(buf + pos, join->pre.str, join->pre.size); pos += join->pre.size; }
+    if (join->pre.size) { memcpy(buf + pos, join->pre.str, join->pre.size); pos += join->pre.size; }
 
     UINT64 first = 1;
     for (String8Node *node = list->first; node; node = node->next) {
-        if (!first && join->mid.size) { __builtin_memcpy(buf + pos, join->mid.str, join->mid.size); pos += join->mid.size; }
+        if (!first && join->mid.size) { memcpy(buf + pos, join->mid.str, join->mid.size); pos += join->mid.size; }
         first = 0;
-        __builtin_memcpy(buf + pos, node->string.str, node->string.size);
+        memcpy(buf + pos, node->string.str, node->string.size);
         pos += node->string.size;
     }
-    if (join->post.size) { __builtin_memcpy(buf + pos, join->post.str, join->post.size); pos += join->post.size; }
+    if (join->post.size) { memcpy(buf + pos, join->post.str, join->post.size); pos += join->post.size; }
 
     return (String8){buf, total};
 }
@@ -164,7 +164,7 @@ static inline String8List Str_8_Split(Arena *arena, String8 string, UINT8 *split
 
 /* ── String comparison helpers ── */
 static inline B32 Str_8_Equals(String8 a, String8 b) {
-    return a.size == b.size && __builtin_memcmp(a.str, b.str, (size_t)a.size) == 0;
+    return a.size == b.size && memcmp(a.str, b.str, (size_t)a.size) == 0;
 }
 
 static inline B32 Str_8_Not_Equals(String8 a, String8 b) {

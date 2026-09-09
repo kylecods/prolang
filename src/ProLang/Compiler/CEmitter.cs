@@ -13,8 +13,10 @@ internal sealed class CEmitter
     private readonly StringBuilder _sb = new();
     private int _indent;
 
-    // Collected array element types that need typed array structs
-    private readonly HashSet<string> _emittedArrayTypes = new(StringComparer.Ordinal);
+    // Collected array element types that need typed array structs, keyed by the identifier suffix
+    // used in their typedef and constructor names. The element type is kept, not just the suffix,
+    // because the C element type is not always the suffix: an array of classes holds pointers.
+    private readonly Dictionary<string, TypeSymbol> _emittedArrayTypes = new(StringComparer.Ordinal);
 
     // True while emitting the body of prl___GlobalsInit. An array literal there must allocate
     // from the arena rather than use a compound literal: the literal's storage dies when the
@@ -55,9 +57,40 @@ internal sealed class CEmitter
     public static ImmutableArray<Diagnostic> Emit(BoundProgram program, string moduleName, string outputPath, bool emitMainEntry = true)
     {
         var emitter = new CEmitter(program, moduleName);
+
+        var unsupported = emitter.ReportUnsupportedStructTypes();
+        if (unsupported.Any())
+        {
+            return [.. unsupported];
+        }
+
         emitter.EmitAll(emitMainEntry);
         File.WriteAllText(outputPath, emitter._sb.ToString());
         return [];
+    }
+
+    /// <summary>
+    /// Reports struct declarations this backend silently drops, before anything is written.
+    /// </summary>
+    /// <remarks>
+    /// A generic struct is skipped by the emission loops rather than translated, so the generated C
+    /// referred to a type it never declared and the failure surfaced as a compiler or linker error
+    /// against machine-written code with no line to point at. Classes used to be in the same
+    /// position and no longer are — they allocate from the arena like everything else here.
+    /// </remarks>
+    private DiagnosticBag ReportUnsupportedStructTypes()
+    {
+        var diagnostics = new DiagnosticBag();
+
+        foreach (var structType in _program.StructTypes)
+        {
+            if (structType.IsGeneric)
+            {
+                diagnostics.ReportGenericStructNotSupportedByBackend(structType.Name, "C");
+            }
+        }
+
+        return diagnostics;
     }
 
     private void EmitAll(bool emitMainEntry = true)
@@ -69,13 +102,31 @@ internal sealed class CEmitter
         Line($"#include \"prolang_runtime.h\"");
         Line();
 
-        // Struct-typed arrays (user-defined element types)
-        foreach (var suffix in _emittedArrayTypes)
+        // Struct forward declarations come first: they let structs reference each other, and an
+        // array or function typedef below may name one of them. (An `array<Point>` typedef emitted
+        // ahead of these named a type C had not heard of yet.)
+        foreach (var s in _program.StructTypes)
         {
-            if (!IsBuiltinArraySuffix(suffix))
-                Line($"typedef struct {{ {suffix}* data; int32_t len; }} PrlArray_{suffix};");
+            if (!s.IsGeneric)
+                Line($"typedef struct {SanitizeStructName(s.Name)}_s {SanitizeStructName(s.Name)};");
         }
-        if (_emittedArrayTypes.Any(s => !IsBuiltinArraySuffix(s)))
+        if (_program.StructTypes.Any(s => !s.IsGeneric))
+            Line();
+
+        // Struct- and class-typed arrays. The 12 builtin element types come pre-written in
+        // native/prl_array.h; anything else needs both its typedef and its constructor generated
+        // here. Emitting only the typedef is what left `prl_array_new_<Struct>` undefined — a link
+        // error against generated code, with nothing to point at.
+        var userArrays = _emittedArrayTypes
+            .Where(pair => !IsBuiltinArraySuffix(pair.Key))
+            .OrderBy(pair => pair.Key, StringComparer.Ordinal)
+            .ToList();
+
+        foreach (var (suffix, elementType) in userArrays)
+        {
+            Line($"typedef struct {{ {EmitTypeName(elementType)}* data; int32_t len; }} PrlArray_{suffix};");
+        }
+        if (userArrays.Count > 0)
             Line();
 
         // Function-pointer typedefs, so a function value can be spelled as a plain type name.
@@ -90,20 +141,30 @@ internal sealed class CEmitter
         if (_emittedFunctionTypes.Count > 0)
             Line();
 
-        // Struct forward declarations (so they can reference each other)
-        foreach (var s in _program.StructTypes)
-        {
-            if (!s.IsGeneric)
-                Line($"typedef struct {SanitizeStructName(s.Name)}_s {SanitizeStructName(s.Name)};");
-        }
-        if (_program.StructTypes.Any(s => !s.IsGeneric))
-            Line();
-
         // Struct definitions
         foreach (var s in _program.StructTypes)
         {
             if (!s.IsGeneric)
                 EmitStructDefinition(s);
+        }
+
+        // Constructors for classes, and for arrays whose element type the runtime does not cover.
+        // Both need the full struct definitions above, so they come after them.
+        foreach (var s in _program.StructTypes)
+        {
+            if (!s.IsGeneric && s.IsReferenceType)
+                EmitClassConstructor(s);
+        }
+
+        foreach (var (suffix, elementType) in userArrays)
+        {
+            Line($"static PrlArray_{suffix} prl_array_new_{suffix}(int32_t n) {{");
+            _indent++;
+            Line($"PrlArray_{suffix} a = {{ ({EmitTypeName(elementType)}*) prl_alloc_zero((uint64_t)n * sizeof({EmitTypeName(elementType)})), n }};");
+            Line("return a;");
+            _indent--;
+            Line("}");
+            Line();
         }
 
         // Enum definitions
@@ -353,7 +414,7 @@ internal sealed class CEmitter
             return;
         }
         var suffix = GetArraySuffix(type.TypeArguments[0]);
-        _emittedArrayTypes.Add(suffix);
+        _emittedArrayTypes[suffix] = type.TypeArguments[0];
     }
 
     private void NoteReturnType(TypeSymbol type) => NoteType(type);
@@ -379,6 +440,44 @@ internal sealed class CEmitter
             Line($"{EmitTypeName(field.Type)} {SanitizeName(field.Name)};");
         _indent--;
         Line("};");
+        Line();
+    }
+
+    /// <summary>
+    /// Emits the allocating constructor for a class.
+    /// </summary>
+    /// <remarks>
+    /// <para>
+    /// Memory comes from the same process-lifetime bump arena every ProLang array and string
+    /// concatenation already uses, and like them it is never freed. That is the honest contract on
+    /// this backend: allocation, not collection. A class allocated in a loop accumulates, exactly as
+    /// a string built in a loop does today.
+    /// </para>
+    /// <para>
+    /// <c>prl_alloc_zero</c> rather than <c>prl_alloc</c>, so an unwritten field starts at its
+    /// default — matching <c>newobj</c> on the .NET backend, where the runtime guarantees the same.
+    /// </para>
+    /// </remarks>
+    private void EmitClassConstructor(StructSymbol s)
+    {
+        var typeName = SanitizeStructName(s.Name);
+
+        var parameters = s.Fields.IsEmpty
+            ? "void"
+            : string.Join(", ", s.Fields.Select(f => $"{EmitTypeName(f.Type)} {SanitizeName(f.Name)}"));
+
+        Line($"static {typeName}* prl_new_{typeName}({parameters}) {{");
+        _indent++;
+        Line($"{typeName}* self = ({typeName}*) prl_alloc_zero(sizeof({typeName}));");
+
+        foreach (var field in s.Fields)
+        {
+            Line($"self->{SanitizeName(field.Name)} = {SanitizeName(field.Name)};");
+        }
+
+        Line("return self;");
+        _indent--;
+        Line("}");
         Line();
     }
 
@@ -744,6 +843,9 @@ internal sealed class CEmitter
             case BoundNodeKind.BoundLiteralExpression:
                 EmitLiteral((BoundLiteralExpression)expr);
                 break;
+            case BoundNodeKind.BoundNullExpression:
+                _sb.Append("NULL");
+                break;
             case BoundNodeKind.BoundVariableExpression:
                 _sb.Append(SanitizeName(((BoundVariableExpression)expr).Variable.Name));
                 break;
@@ -806,7 +908,7 @@ internal sealed class CEmitter
             case BoundNodeKind.BoundFieldAccessExpression:
                 var fa = (BoundFieldAccessExpression)expr;
                 EmitExpression(fa.Expression);
-                _sb.Append($".{SanitizeName(fa.FieldName)}");
+                _sb.Append($"{MemberAccess(fa.Expression.Type)}{SanitizeName(fa.FieldName)}");
                 break;
             case BoundNodeKind.BoundFieldAssignmentExpression:
                 EmitFieldAssignment((BoundFieldAssignmentExpression)expr);
@@ -1159,8 +1261,33 @@ internal sealed class CEmitter
     private void EmitStructCreation(BoundStructCreationExpression expr)
     {
         var typeName = SanitizeStructName(expr.StructType.Name);
-        _sb.Append($"({typeName}){{");
         var fields = expr.StructType.Fields;
+
+        // A class has to be allocated and then filled in, and C99 has no expression that does both —
+        // a statement expression is a GCC extension. So each class gets a constructor function, and
+        // creating one is an ordinary call with the fields as positional arguments.
+        if (expr.StructType.IsReferenceType)
+        {
+            _sb.Append($"prl_new_{typeName}(");
+            for (int i = 0; i < fields.Length; i++)
+            {
+                if (i > 0) _sb.Append(", ");
+
+                if (i < expr.FieldValues.Length)
+                {
+                    EmitExpression(expr.FieldValues[i]);
+                }
+                else
+                {
+                    // Unwritten fields take their default, matching newobj on the .NET backend.
+                    _sb.Append(DefaultValueLiteral(fields[i].Type));
+                }
+            }
+            _sb.Append(")");
+            return;
+        }
+
+        _sb.Append($"({typeName}){{");
         for (int i = 0; i < fields.Length && i < expr.FieldValues.Length; i++)
         {
             if (i > 0) _sb.Append(", ");
@@ -1170,12 +1297,34 @@ internal sealed class CEmitter
         _sb.Append("}");
     }
 
+    /// <summary>A zero value for <paramref name="type"/>, for a field a literal left unwritten.</summary>
+    private static string DefaultValueLiteral(TypeSymbol type) => type.Name switch
+    {
+        "string" => "prl_string_from_lit(\"\")",
+        "bool" => "0",
+        _ when type is StructSymbol { IsReferenceType: true } => "NULL",
+        "any" or "null" => "NULL",
+        _ when type.Name == "array" => "(PrlArray_" + GetArraySuffix(type.TypeArguments[0]) + "){0, 0}",
+        _ => "0",
+    };
+
     private void EmitFieldAssignment(BoundFieldAssignmentExpression expr)
     {
         EmitExpression(expr.Expression);
-        _sb.Append($".{SanitizeName(expr.FieldName)} = ");
+        _sb.Append($"{MemberAccess(expr.Expression.Type)}{SanitizeName(expr.FieldName)} = ");
         EmitExpression(expr.Value);
     }
+
+    /// <summary>
+    /// <c>-&gt;</c> for a class, <c>.</c> for a value struct.
+    /// </summary>
+    /// <remarks>
+    /// A class is emitted as a pointer to an arena block, so reaching a field goes through it. This
+    /// is the whole of the difference at a use site — everything else about a class in C is the same
+    /// struct definition a value type gets.
+    /// </remarks>
+    private static string MemberAccess(TypeSymbol receiverType) =>
+        receiverType is StructSymbol { IsReferenceType: true } ? "->" : ".";
 
     private void EmitConversion(BoundConversionExpression expr)
     {
@@ -1261,7 +1410,12 @@ internal sealed class CEmitter
             "void" => "void",
             "any" => "void*",
             "null" => "void*",
-            _ => SanitizeStructName(type.Name)
+
+            // A class is a pointer to an arena block. The struct definition itself is identical to a
+            // value type's — only the way it is named, passed and reached through differs.
+            _ => type is StructSymbol { IsReferenceType: true }
+                ? SanitizeStructName(type.Name) + "*"
+                : SanitizeStructName(type.Name)
         };
     }
 

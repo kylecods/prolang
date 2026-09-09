@@ -22,7 +22,7 @@ internal static class CompletionHandler
     /// </remarks>
     private static readonly string[] Keywords =
     [
-        "let", "func", "struct", "enum", "import", "return",
+        "let", "func", "struct", "class", "enum", "import", "return",
         "if", "elif", "else", "while", "for", "to", "break", "continue",
         "true", "false", "null", "as", "void",
     ];
@@ -199,7 +199,12 @@ internal static class CompletionHandler
                 {
                     Label = symbol.Name,
                     Kind = LspConversions.ToCompletionKind(symbol),
-                    Detail = symbol.Kind == SymbolKind.Struct ? "struct" : "enum",
+                    Detail = symbol switch
+                    {
+                        StructSymbol { IsReferenceType: true } => "class",
+                        StructSymbol => "struct",
+                        _ => "enum",
+                    },
                     Documentation = Documentation(symbol),
                     SortText = "0" + symbol.Name,
                 });

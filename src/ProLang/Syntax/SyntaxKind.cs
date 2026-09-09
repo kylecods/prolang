@@ -77,6 +77,7 @@ public enum SyntaxKind
     ReturnKeyword,
     ImportKeyword,
     StructKeyword,
+    ClassKeyword,
     AsKeyword,
     EnumKeyword,
     GlobalKeyword,

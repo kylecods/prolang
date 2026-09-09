@@ -59,25 +59,31 @@ A backend implements no interface and subclasses nothing. It executes a buffer.
 A node is an `int`, and the whole tree is one `array<int>` addressed as `node * ui_stride() +
 field`. Children hang off `FIRST_KID` / `NEXT_SIB`. "No node" is `-1`.
 
-The obvious `struct Node { kids: array<Node> }` is not available, and it is worth recording why,
-because all three reasons are properties of the compiler rather than preferences:
+When this was written, the obvious `struct Node { kids: array<Node> }` was not available for three
+reasons, all properties of the compiler rather than preferences. **All three have since been fixed**,
+and the history is kept here because it explains the shape of the code:
 
-- **Recursive structs do not bind.** `Binder.BindStructDeclaration` resolves a field's type before
-  it declares the struct, so a struct cannot name itself. (The emitters already support it —
-  `TypeEmitter` registers the type before adding fields, deliberately — so this is a binder change
-  of about thirty lines if it is ever wanted.)
-- **`CEmitter` emits only non-generic structs** (`StructTypes.Where(s => !s.IsGeneric)`), so a
-  `Ui<S>` would silently vanish on the C and PSP backends.
-- **Casting `any` to a struct emits `isinst`**, which yields a boxed reference for a value type, so
-  a heterogeneous `array<any>` of nodes cannot be read back.
+- **Recursive structs did not bind.** The binder resolved a field's type before declaring the
+  struct, so a struct could not name itself. Structs are now declared in one pass and have their
+  fields bound in a second, so self-reference, forward reference and mutual reference all work.
+- **`CEmitter` emits only non-generic structs**, so a `Ui<S>` would have vanished silently on the C
+  and PSP backends. It still emits only non-generic structs — but it now *reports* a generic one
+  instead of dropping it.
+- **Casting `any` to a struct emits `isinst`**, which yields a boxed reference for a value type. Still
+  true, and still a reason not to build a heterogeneous tree out of value structs — but `isinst` is
+  the correct instruction for a `class`, so the round trip works for reference types.
 
-The arena is also simply the better representation: one allocation per frame, no pointer chasing,
-and it transpiles unchanged to C, to the PSP, and to anything a browser backend would want.
+**The arena stays anyway, and that is the point worth keeping.** It is the better representation for
+this problem independently of what the compiler can express: one allocation per frame rather than one
+per node, no pointer chasing, contiguous fields, and it transpiles unchanged to C, to the PSP, and to
+anything a browser backend would want. Rewriting `std/ui` around classes would trade all of that for
+familiarity.
 
-**Reference types were considered and not added.** The `TypeEmitter` pivot is small — struct-ness
-comes from one `System.ValueType` base reference, and `IsEmittedAsValueType` derives the rest from
-the Cecil flag — but the cost lands on the C and PSP backends, which have no allocation or lifetime
-story. The arena gives mutation *and* better locality at no backend risk.
+One correction to the record. This section used to say reference types were not added because "the
+cost lands on the C and PSP backends, which have no allocation or lifetime story." That was wrong:
+those backends have exactly one, the process-lifetime bump arena in `native/prl_memory.h` that every
+array and every string concatenation already allocates from and never frees. A class is a pointer
+into that same arena under the same contract. See `docs/architecture/memory.md`.
 
 ### Mutating through a value type
 

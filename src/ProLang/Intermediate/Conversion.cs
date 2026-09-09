@@ -25,6 +25,16 @@ internal sealed class Conversion
         if (from == to)
             return Identity;
 
+        // `null` converts to any reference type. Deliberately not to `string`, `array<T>` or
+        // `map<K, V>` — all three are CLR-nullable and would work, but widening `null` across them
+        // touches every existing string- and array-heavy program for no gain here. Adding them later
+        // is purely additive.
+        //
+        // `null` into `any` never reaches this method: BindConversion short-circuits `any` before
+        // classifying.
+        if (from == TypeSymbol.Null)
+            return to is StructSymbol { IsReferenceType: true } ? Implicit : None;
+
         // A .NET value is System.Object at the IL level, so it converts wherever `any` does.
         //
         // Without this, giving .NET values their real type instead of `any` would have been a

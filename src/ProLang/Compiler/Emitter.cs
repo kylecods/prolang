@@ -703,7 +703,9 @@ namespace ProLang.Compiler
 
             var variableDefinition = scope.DeclareLocal(node.Variable, typeReference);
 
-            if (node.Variable.Type is StructSymbol)
+            // Only a value type needs zeroing here. A class local is assigned the reference the
+            // initializer produces, and `initobj` on one would merely null the slot first.
+            if (node.Variable.Type is StructSymbol && typeReference.IsValueType)
             {
                 scope.IL.Emit(OpCodes.Ldloca, variableDefinition);
                 scope.IL.Emit(OpCodes.Initobj, typeReference);
@@ -726,6 +728,9 @@ namespace ProLang.Compiler
             {
                 case BoundNodeKind.BoundLiteralExpression:
                     EmitLiteralExpression(scope, (BoundLiteralExpression)node);
+                    break;
+                case BoundNodeKind.BoundNullExpression:
+                    scope.IL.Emit(OpCodes.Ldnull);
                     break;
                 case BoundNodeKind.BoundVariableExpression:
                     EmitVariableExpression(scope, (BoundVariableExpression)node);
@@ -1085,15 +1090,6 @@ namespace ProLang.Compiler
         /// but one for <c>StringBuilder</c> must not be.
         /// </remarks>
         private bool IsEmittedAsValueType(TypeSymbol type) => GetTypeReference(type).IsValueType;
-
-        private static bool IsValueType(TypeSymbol type) =>
-            type == TypeSymbol.Int    || type == TypeSymbol.Bool   ||
-            type == TypeSymbol.UInt32 || type == TypeSymbol.Int8   ||
-            type == TypeSymbol.UInt8  || type == TypeSymbol.Int16  ||
-            type == TypeSymbol.UInt16 || type == TypeSymbol.Int64  ||
-            type == TypeSymbol.UInt64 || type == TypeSymbol.Float32 ||
-            type == TypeSymbol.Float64 || type == TypeSymbol.Float  ||
-            type is StructSymbol;
 
         private void EmitCastExpression(MethodBodyScope scope, BoundCastExpression node)
         {
@@ -1583,11 +1579,32 @@ namespace ProLang.Compiler
             var typeDef = ResolveStructDefinition(structSymbol);
             var typeRef = _assemblyDefinition.MainModule.ImportReference(typeDef);
 
-            var localVar = scope.DeclareTemporary(typeRef);
+            // A class is allocated and initialised through the reference on the stack; a struct is
+            // built in place in a temporary, because a value type has no allocation to speak of and
+            // `stfld` needs its address.
+            var isReference = !typeRef.IsValueType;
+            VariableDefinition? localVar = null;
+
+            if (isReference)
+            {
+                scope.IL.Emit(OpCodes.Newobj,
+                    _assemblyDefinition.MainModule.ImportReference(TypeEmitter.GetDefaultConstructor(typeDef)));
+            }
+            else
+            {
+                localVar = scope.DeclareTemporary(typeRef);
+            }
 
             foreach (var field in structSymbol.Fields)
             {
-                scope.IL.Emit(OpCodes.Ldloca, localVar);
+                if (isReference)
+                {
+                    scope.IL.Emit(OpCodes.Dup);
+                }
+                else
+                {
+                    scope.IL.Emit(OpCodes.Ldloca, localVar);
+                }
 
                 var fieldIndex = structSymbol.Fields.IndexOf(field);
                 var fieldValue = node.FieldValues[fieldIndex];
@@ -1609,7 +1626,12 @@ namespace ProLang.Compiler
                 scope.IL.Emit(OpCodes.Stfld, fieldRef);
             }
 
-            scope.IL.Emit(OpCodes.Ldloc, localVar);
+            // The reference is already on the stack, left there by `newobj` and preserved by the
+            // `dup` before each field store.
+            if (!isReference)
+            {
+                scope.IL.Emit(OpCodes.Ldloc, localVar);
+            }
         }
 
         private void EmitFieldAccessExpression(MethodBodyScope scope, BoundFieldAccessExpression node)
@@ -1664,19 +1686,35 @@ namespace ProLang.Compiler
         }
 
         /// <summary>
-        /// Pushes the address of a struct-typed storage location.
+        /// Pushes a receiver that <c>stfld</c> can store through.
         /// </summary>
         /// <returns>
         /// False when <paramref name="expression"/> has no storage location — the result of a
-        /// call, for instance — in which case nothing has been emitted.
+        /// call returning a struct, for instance — in which case nothing has been emitted.
         /// </returns>
         /// <remarks>
-        /// Recursive so that a chain such as <c>outer.inner.leaf = x</c> resolves to
-        /// <c>ldloca outer; ldflda inner; stfld leaf</c>: each step narrows the address rather
-        /// than copying the struct out of the one before it.
+        /// <para>
+        /// For a value type that means an <em>address</em>, and the walk is recursive so that a chain
+        /// such as <c>outer.inner.leaf = x</c> resolves to <c>ldloca outer; ldflda inner; stfld
+        /// leaf</c>: each step narrows the address rather than copying the struct out of the one
+        /// before it.
+        /// </para>
+        /// <para>
+        /// For a reference type there is nothing to narrow — the reference already designates the
+        /// object every writer shares — so the ordinary value of the expression is the receiver.
+        /// That single case is what makes <c>node.f = x</c>, <c>arr[i].f = x</c> and even
+        /// <c>makeNode().f = x</c> all work for a class, the last of which is a real assignment
+        /// rather than a write to a discarded copy.
+        /// </para>
         /// </remarks>
         private bool TryEmitStructAddress(MethodBodyScope scope, BoundExpression expression)
         {
+            if (expression.Type is StructSymbol { IsReferenceType: true })
+            {
+                EmitExpression(scope, expression);
+                return true;
+            }
+
             switch (expression)
             {
                 case BoundVariableExpression variable:

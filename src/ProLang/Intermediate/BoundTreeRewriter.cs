@@ -180,6 +180,9 @@ internal abstract class BoundTreeRewriter
                 return RewriteErrorExpression((BoundErrorExpression)node);
             case BoundNodeKind.BoundLiteralExpression:
                 return RewriteLiteralExpression((BoundLiteralExpression)node);
+            case BoundNodeKind.BoundNullExpression:
+                // Nothing to rewrite: it has no children and no value.
+                return node;
             case BoundNodeKind.BoundVariableExpression:
                 return RewriteVariableExpression((BoundVariableExpression)node);
             case BoundNodeKind.BoundAssignmentExpression:

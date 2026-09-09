@@ -86,10 +86,25 @@ internal sealed class Binder
             binder.BindEnumDeclaration(enumDecl);
         }
 
+        // Structs are declared in one pass and have their fields bound in a second, so that a field can
+        // name a struct declared later in the file, or the struct it is declared in. See
+        // Binder.DeclareStructDeclaration.
+        var declaredStructs = new List<(StructDeclarationSyntax Syntax, StructSymbol Symbol)>();
         foreach (var structDecl in structDeclarations)
         {
-            binder.BindStructDeclaration(structDecl);
+            var structSymbol = binder.DeclareStructDeclaration(structDecl);
+            if (structSymbol != null)
+            {
+                declaredStructs.Add((structDecl, structSymbol));
+            }
         }
+
+        foreach (var (structDecl, structSymbol) in declaredStructs)
+        {
+            binder.BindStructFields(structDecl, structSymbol);
+        }
+
+        binder.ReportValueStructCycles(declaredStructs);
 
         foreach (var function in functionDeclarations)
         {
@@ -636,7 +651,17 @@ internal sealed class Binder
         };
     }
 
-    private void BindStructDeclaration(StructDeclarationSyntax syntax)
+    /// <summary>
+    /// First pass: declares the struct's name, with its fields left unbound.
+    /// </summary>
+    /// <remarks>
+    /// Field types are bound separately by <see cref="BindStructFields"/> once every struct name is in
+    /// scope. Binding them here — as this did — resolves a field's type before its own struct exists,
+    /// so a struct could not name itself, name a struct declared later in the file, or take part in a
+    /// cycle of mutual references. Both emitters already tolerate all three: <c>TypeEmitter</c>
+    /// registers the definition before adding fields, and <c>CEmitter</c> emits forward typedefs.
+    /// </remarks>
+    private StructSymbol? DeclareStructDeclaration(StructDeclarationSyntax syntax)
     {
         var name = syntax.Identifier.Text;
 
@@ -648,11 +673,48 @@ internal sealed class Binder
             typeParameters.Add(typeParam);
         }
 
+        var structSymbol = StructSymbol.Declaring(
+            name,
+            typeParameters.ToImmutable(),
+            syntax.IsReferenceType,
+            DocumentationFor(syntax));
+
+        _recorder?.RecordSymbol(syntax.Identifier.Location, structSymbol, OccurrenceKind.Definition);
+
+        if (_structTypes == null)
+        {
+            _structTypes = ImmutableArray.CreateBuilder<StructSymbol>();
+        }
+
+        if (!_scope.TryDeclareType(structSymbol))
+        {
+            _diagnostics.ReportSymbolAlreadyDeclared(syntax.Identifier.Location, name);
+            return null;
+        }
+
+        _structTypes.Add(structSymbol);
+        return structSymbol;
+    }
+
+    /// <summary>
+    /// Second pass: binds the field types of a struct declared by <see cref="DeclareStructDeclaration"/>
+    /// and completes the same symbol instance.
+    /// </summary>
+    /// <remarks>
+    /// Completing the instance created in the first pass, rather than building a second symbol, is what
+    /// makes a forward reference whole: a field bound here may already hold the placeholder for a
+    /// struct whose own fields are bound later, and because it is the same object that reference is
+    /// retroactively complete.
+    /// </remarks>
+    private void BindStructFields(StructDeclarationSyntax syntax, StructSymbol structSymbol)
+    {
+        var name = syntax.Identifier.Text;
+
         var savedScope = _scope;
-        if (typeParameters.Count > 0)
+        if (structSymbol.TypeParameters.Length > 0)
         {
             _scope = new BoundScope(_scope);
-            foreach (var typeParam in typeParameters)
+            foreach (var typeParam in structSymbol.TypeParameters)
             {
                 _scope.TryDeclareTypeSymbol(typeParam);
             }
@@ -681,25 +743,76 @@ internal sealed class Binder
 
         _scope = savedScope;
 
-        var structSymbol = new StructSymbol(name, typeParameters.ToImmutable(), fields.ToImmutable())
-        {
-            Documentation = DocumentationFor(syntax),
-        };
+        structSymbol.CompleteFields(fields.ToImmutable());
+    }
 
-        _recorder?.RecordSymbol(syntax.Identifier.Location, structSymbol, OccurrenceKind.Definition);
+    /// <summary>
+    /// Reports any struct that contains itself by value, directly or through a chain of other structs.
+    /// </summary>
+    /// <remarks>
+    /// Such a struct has no finite size, and nothing downstream would catch it: <c>TypeEmitter</c>
+    /// happily emits a value type whose field is that same value type, and the CLR rejects it at load
+    /// time with a <c>TypeLoadException</c> rather than anything pointing at the source. The ordering
+    /// bug that <see cref="DeclareStructDeclaration"/> fixes used to make this unreachable by reporting
+    /// an undefined type instead.
+    /// <para>
+    /// Only a field whose type is itself a struct forms an edge. An <c>array&lt;T&gt;</c>,
+    /// <c>map&lt;K, V&gt;</c>, function type, string, <c>any</c> or .NET type is a single reference of
+    /// known size however deeply it nests, which is why <c>struct Ui { data: array&lt;int&gt; }</c> is
+    /// legal today and must stay so.
+    /// </para>
+    /// </remarks>
+    private void ReportValueStructCycles(List<(StructDeclarationSyntax Syntax, StructSymbol Symbol)> declared)
+    {
+        // Colour per symbol: absent = unvisited, false = on the current path, true = fully explored.
+        var state = new Dictionary<StructSymbol, bool>();
 
-        if (_structTypes == null)
+        foreach (var (syntax, symbol) in declared)
         {
-            _structTypes = ImmutableArray.CreateBuilder<StructSymbol>();
+            Visit(symbol, syntax);
         }
 
-        if (!_scope.TryDeclareType(structSymbol))
+        void Visit(StructSymbol symbol, StructDeclarationSyntax? syntax)
         {
-            _diagnostics.ReportSymbolAlreadyDeclared(syntax.Identifier.Location, name);
-        }
-        else
-        {
-            _structTypes.Add(structSymbol);
+            if (state.TryGetValue(symbol, out var finished))
+            {
+                if (!finished && syntax != null)
+                {
+                    _diagnostics.ReportStructCannotContainItself(syntax.Identifier.Location, symbol.Name);
+                }
+
+                return;
+            }
+
+            state[symbol] = false;
+
+            foreach (var field in symbol.Fields)
+            {
+                // A class field is one reference of known size, exactly like an array field, so it
+                // ends the chain rather than extending it. That is the whole point of `class Node {
+                // next: Node }`.
+                if (field.Type is not StructSymbol { IsReferenceType: false } fieldStruct)
+                    continue;
+
+                // A generic instantiation stands in for its template: `struct A<T> { x: A<int> }` is
+                // the same cycle as a direct self-reference, and the instantiation is not itself a
+                // declared symbol.
+                var target = fieldStruct.OriginalGeneric ?? fieldStruct;
+
+                if (state.TryGetValue(target, out var targetFinished) && !targetFinished)
+                {
+                    if (syntax != null)
+                    {
+                        _diagnostics.ReportStructCannotContainItself(syntax.Identifier.Location, symbol.Name);
+                    }
+
+                    continue;
+                }
+
+                Visit(target, declared.FirstOrDefault(d => d.Symbol == target).Syntax);
+            }
+
+            state[symbol] = true;
         }
     }
 
@@ -1154,6 +1267,14 @@ internal sealed class Binder
         var initializer = type != null ? BindExpression(syntax.Expression, type) : BindExpression(syntax.Expression);
 
         var variableType = type ?? initializer.Type;
+
+        // `let x = null` would otherwise give x the null type, which nothing can be assigned to and
+        // no backend can represent. The type has to be written down.
+        if (variableType == TypeSymbol.Null)
+        {
+            _diagnostics.ReportCannotInferTypeFromNull(syntax.Identifier.Location, syntax.Identifier.Text);
+            variableType = TypeSymbol.Error;
+        }
 
         var variable = BindVariable(syntax.Identifier, false, variableType);
 
@@ -1673,6 +1794,13 @@ internal sealed class Binder
         if (boundLeft.Type == TypeSymbol.Error || boundRight.Type == TypeSymbol.Error)
             return new BoundErrorExpression();
 
+        // Comparing against null is handled ahead of the operator table, which matches on exact
+        // operand types and so cannot express "any reference type, against null".
+        if (boundLeft.Type == TypeSymbol.Null || boundRight.Type == TypeSymbol.Null)
+        {
+            return BindNullComparison(syntax, boundLeft, boundRight);
+        }
+
         var boundOperator = BoundBinaryOperator.Bind(syntax.OperatorToken.Kind, boundLeft.Type, boundRight.Type);
 
         // Fallback: try numeric promotion (e.g. uint8 - int → int - int)
@@ -1701,6 +1829,50 @@ internal sealed class Binder
         return new BoundBinaryExpression(boundLeft, boundOperator, boundRight);
     }
 
+    /// <summary>
+    /// Binds <c>x == null</c> / <c>x != null</c> (in either order) as a reference comparison.
+    /// </summary>
+    /// <remarks>
+    /// <see cref="BoundBinaryOperator.Bind"/> scans a static table keyed on exact operand types, so
+    /// it can say "int == int" but not "any reference type == null". Nothing needs to change in the
+    /// emitter: it already falls through to a bare <c>ceq</c> for operands that are not strings, and
+    /// <c>ceq</c> against <c>ldnull</c> is precisely a reference comparison.
+    /// <para>
+    /// <c>any</c> is allowed as the other operand because an `any`-typed value genuinely can hold a
+    /// null reference, and a boxed zero is not reference-equal to one.
+    /// </para>
+    /// </remarks>
+    private BoundExpression BindNullComparison(BinaryExpressionSyntax syntax, BoundExpression boundLeft, BoundExpression boundRight)
+    {
+        var operatorKind = syntax.OperatorToken.Kind;
+
+        if (operatorKind != SyntaxKind.EqualsEqualsToken && operatorKind != SyntaxKind.BangEqualsToken)
+        {
+            _diagnostics.ReportUndefinedBinaryOperator(
+                syntax.OperatorToken.Location, syntax.OperatorToken.Text, boundLeft.Type, boundRight.Type);
+
+            return new BoundErrorExpression();
+        }
+
+        var otherType = boundLeft.Type == TypeSymbol.Null ? boundRight.Type : boundLeft.Type;
+
+        var comparable =
+            otherType == TypeSymbol.Null ||
+            otherType == TypeSymbol.Any ||
+            otherType is DotNetTypeSymbol ||
+            otherType is StructSymbol { IsReferenceType: true };
+
+        if (!comparable)
+        {
+            _diagnostics.ReportCannotCompareWithNull(syntax.OperatorToken.Location, otherType);
+            return new BoundErrorExpression();
+        }
+
+        var boundOperator = BoundBinaryOperator.ReferenceEquality(operatorKind, boundLeft.Type, boundRight.Type);
+
+        return new BoundBinaryExpression(boundLeft, boundOperator, boundRight);
+    }
+
     private BoundExpression BindUnaryExpression(UnaryExpressionSyntax syntax)
     {
         var boundOperand = BindExpression(syntax.Operand);
@@ -1723,6 +1895,14 @@ internal sealed class Binder
 
     private BoundExpression BindLiteralExpression(LiteralExpressionSyntax syntax)
     {
+        // Tested on the token rather than on a null Value, so that a malformed literal whose value
+        // failed to parse cannot be mistaken for someone having written `null`. This used to read
+        // `syntax.Value ?? 0`, which bound every `null` in the language to the integer 0.
+        if (syntax.LiteralToken.Kind == SyntaxKind.NullKeyword)
+        {
+            return new BoundNullExpression();
+        }
+
         var value = syntax.Value ?? 0;
         return new BoundLiteralExpression(value);
     }

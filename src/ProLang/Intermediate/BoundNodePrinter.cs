@@ -59,6 +59,9 @@ internal static class BoundNodePrinter
             case BoundNodeKind.BoundLiteralExpression:
                 WriteLiteralExpression((BoundLiteralExpression)node, writer);
                 break;
+            case BoundNodeKind.BoundNullExpression:
+                writer.WriteKeyword("null");
+                break;
             case BoundNodeKind.BoundVariableExpression:
                 WriteVariableExpression((BoundVariableExpression)node, writer);
                 break;

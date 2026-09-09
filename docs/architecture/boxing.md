@@ -93,26 +93,32 @@ That is the whole fix. The C backend recovers the static type; the MSIL backend 
 
 ## Should reference types be introduced?
 
-**No — it would not remove a single one of these 196 boxes.**
+**They since have been — as `class`, documented in `memory.md` — but not for this. The conclusion
+below still stands: reference types remove none of these 196 boxes.**
 
 Boxing here is not caused by structs being value types. It is caused by `int`, `bool`, and the
 sized integers being converted to `System.Object` because a builtin's parameter is declared `any`.
-Adding a `class` keyword changes how *user aggregates* are represented; it does nothing about
-primitives flowing into `any`, which is where all the cost is.
+A `class` keyword changes how *user aggregates* are represented; it does nothing about primitives
+flowing into `any`, which is where all the cost is. A program that declares every one of its types
+as a class boxes exactly as much as it did before.
 
-It would also cost real things:
+The costs this section anticipated were real, and two of the three landed as predicted:
 
-- **GC pressure it is meant to relieve.** Every struct becomes a heap allocation; today they are
-  stack values with `SequentialLayout`.
-- **Null and identity.** Reference types introduce null-dereference as a runtime failure mode and
-  make aliasing observable — `a = b` then mutating `b.x` would change `a.x`. That is a language
-  semantics change, not an optimisation.
-- **The C backend.** There is no GC there. Reference types mean ownership, lifetimes, and either a
-  collector or manual free in generated C. This is the single largest cost, and it lands on the
-  backend that currently has *no* boxing problem at all.
+- **GC pressure.** Confirmed, and the reason `std/ui` keeps its integer arena: one allocation per
+  frame is better than one per node, and expressiveness is not a reason to give that up where the
+  arena already works.
+- **Null and identity.** Confirmed. `a = b` then mutating `b.x` does change `a.x`, and null
+  dereference is a runtime failure. That is the price of the feature, paid deliberately.
+- **The C backend.** This one was wrong, or rather it asked for more than was needed. It assumed
+  reference types imply ownership, lifetimes, and either a collector or manual `free`. They do not —
+  they imply *allocation*, and the C backend already had an allocator: the process-lifetime bump
+  arena in `native/prl_memory.h` that every array, string concatenation and file read already uses
+  and never frees. A class is a pointer into it under exactly the same contract. No collector, no
+  ownership, no new failure mode; only a higher allocation rate.
 
-Reference types are worth considering if ProLang wants inheritance, interfaces, or shared mutable
-aggregates. They are the wrong tool for this problem.
+So the conclusion to carry forward is the narrow one. Reference types are for **recursive shapes and
+shared mutable aggregates**, which is what they were eventually added for. They were never a fix for
+boxing, and adding them did not make one.
 
 ---
 

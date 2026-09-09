@@ -23,7 +23,21 @@ public sealed class StructDeclarationSyntax : DeclarationSyntax
         CloseCurlyToken = closeCurlyToken;
     }
 
+    /// <summary>Either <c>struct</c> or <c>class</c>.</summary>
     public SyntaxToken StructKeyword { get; }
+
+    /// <summary>
+    /// Whether this declaration was written with <c>class</c>, making it a heap-allocated reference
+    /// type rather than a copied value.
+    /// </summary>
+    /// <remarks>
+    /// The two share a syntax node because they differ only in that keyword: same fields, same
+    /// generics, same creation expression. A separate node would have forced every consumer that
+    /// matches <see cref="StructDeclarationSyntax"/> — the binder's declaration pass, the document
+    /// symbol handler, semantic tokens — to grow a parallel case for no gain.
+    /// </remarks>
+    public bool IsReferenceType => StructKeyword.Kind == SyntaxKind.ClassKeyword;
+
     public SyntaxToken Identifier { get; }
     public SyntaxToken? LessThanToken { get; }
     public SeparatedSyntaxList<SyntaxToken> TypeParameters { get; }

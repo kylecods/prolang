@@ -251,6 +251,33 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
         Report(location, message);
     }
 
+    public void ReportCannotCompareWithNull(TextLocation location, TypeSymbol type)
+    {
+        var message =
+            $"'{type}' is a value and can never be null, so comparing it with null is always "
+            + "the same answer. Only a class, 'any', or a .NET type can be null.";
+
+        Report(location, message);
+    }
+
+    public void ReportCannotInferTypeFromNull(TextLocation location, string name)
+    {
+        var message =
+            $"Cannot infer the type of '{name}' from 'null'. Give it an explicit type, as in "
+            + $"'let {name}: SomeClass = null'.";
+
+        Report(location, message);
+    }
+
+    public void ReportStructCannotContainItself(TextLocation location, string name)
+    {
+        var message =
+            $"Struct '{name}' contains itself by value, which has no finite size. "
+            + $"Hold it through an 'array<{name}>' instead.";
+
+        Report(location, message);
+    }
+
     public void ReportCannotConvertImplicitly(TextLocation location, TypeSymbol fromType, TypeSymbol toType)
     {
         var message = $"Cannot convert type '{fromType}' to '{toType}'." +
@@ -360,6 +387,33 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     {
         var message = proLangName == null ? $"The required type '{metaDataName}' cannot be resolved among the given references." :
             $"The required type '{proLangName}' ('{metaDataName}') cannot be resolved among the given references";
+
+        Report(default, message);
+    }
+
+    /// <summary>
+    /// A <c>class</c> reached a backend that cannot allocate one yet.
+    /// </summary>
+    /// <remarks>
+    /// Reported rather than skipped. The precedent this replaces is the generic-struct skip below,
+    /// which emitted nothing and said nothing: the type simply vanished from the generated C and the
+    /// failure surfaced as a compiler or linker error against machine-written code.
+    /// </remarks>
+    public void ReportReferenceTypeNotSupportedByBackend(string name, string backend)
+    {
+        var message =
+            $"'{name}' is a class, and the {backend} backend cannot allocate reference types yet. "
+            + "Declare it as a 'struct' to target this backend.";
+
+        Report(default, message);
+    }
+
+    /// <summary>A generic struct reached a backend that emits only non-generic ones.</summary>
+    public void ReportGenericStructNotSupportedByBackend(string name, string backend)
+    {
+        var message =
+            $"Generic struct '{name}' is not emitted by the {backend} backend, so any use of it "
+            + "would fail to compile. Declare a non-generic struct for this target.";
 
         Report(default, message);
     }
