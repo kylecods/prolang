@@ -7,12 +7,12 @@
  * ── Shapes the language forces ───────────────────────────────────────────────
  *
  * A struct is a .NET value type, so every function takes a copy and returns a new one; callers
- * assign the result (`buf = buf_insert(buf, "x")`). Writes *through* the `lines` array inside the
+ * assign the result (`buf = buf->insert("x")`). Writes *through* the `lines` array inside the
  * copy are visible to everyone — an array field is a reference to a real array — which is what
  * makes in-place line replacement work while the scalar fields travel by return value.
  *
  * A struct field cannot hold another struct (the binder rejects it), so the undo history lives in
- * two fixed arrays of entries rather than a stack, each bounded by `buf_undo_max()`. When the undo
+ * two fixed arrays of entries rather than a stack, each bounded by `Buf->undo_max()`. When the undo
  * stack fills, the oldest entry is dropped; pushing an entry clears the redo stack, as every
  * editor does.
  *
@@ -49,14 +49,6 @@ enum BufKind {
     RANGE
 }
 
-func buf_undo_max() : int {
-    return 128
-}
-
-func buf_start_cap() : int {
-    return 64
-}
-
 struct UndoEntry {
     kind: int,
     row: int,
@@ -90,745 +82,755 @@ struct Buf {
     redoN: int
 }
 
-// ── Construction ─────────────────────────────────────────────────────────────
-
-// A fresh buffer holding one empty line.
-func buf_new() : Buf {
-    let lines: array<string> = array_new(buf_start_cap())
-    lines[0] = ""
-    let undos: array<UndoEntry> = array_new(buf_undo_max())
-    let redos: array<UndoEntry> = array_new(buf_undo_max())
-    return Buf { lines: lines, count: 1, row: 0, col: 0, want: 0, modified: false,
-                 selRow: 0, selCol: 0, selActive: false,
-                 undos: undos, undoN: 0, redos: redos, redoN: 0 }
-}
-
-// A buffer with room but no lines — the starting point buf_from_text fills in.
-func buf_empty() : Buf {
-    let lines: array<string> = array_new(buf_start_cap())
-    let undos: array<UndoEntry> = array_new(buf_undo_max())
-    let redos: array<UndoEntry> = array_new(buf_undo_max())
-    return Buf { lines: lines, count: 0, row: 0, col: 0, want: 0, modified: false,
-                 selRow: 0, selCol: 0, selActive: false,
-                 undos: undos, undoN: 0, redos: redos, redoN: 0 }
-}
-
-// The newline as text: the language has no escape sequences, so "\n" in source is literally
-// backslash-n and the code has to come from its number.
-func buf_nl() : string {
-    return Char.ConvertFromUtf32(10)
-}
-
-/*
- * Parses text into lines, splitting on the newline code point and dropping a carriage return
- * before each one, so a Windows or Unix file loads the same. Text that ends without a newline
- * keeps its final partial line; an empty text is one empty line, like any empty document.
- */
-func buf_from_text(text: string) : Buf {
-    let b: Buf = buf_empty()
-    let n: int = text.length()
-    let start: int = 0
-    let i: int = 0
-
-    while (i < n) {
-        if (text.charCode(i) == 10) {
-            b = buf_append_line(b, buf_strip_cr(text.substring(start, i)))
-            start = i + 1
-        }
-        i = i + 1
+imp Buf {
+    func undo_max() : int {
+        return 128
     }
 
-    if (start < n) {
-        b = buf_append_line(b, buf_strip_cr(text.substring(start, n)))
+    func start_cap() : int {
+        return 64
     }
 
-    if (b.count == 0) {
-        b = buf_append_line(b, "")
+    // ── Construction ─────────────────────────────────────────────────────────────
+
+    // A fresh buffer holding one empty line.
+    func new() : Buf {
+        let lines: array<string> = array_new(Buf->start_cap())
+        lines[0] = ""
+        let undos: array<UndoEntry> = array_new(Buf->undo_max())
+        let redos: array<UndoEntry> = array_new(Buf->undo_max())
+        return Buf { lines: lines, count: 1, row: 0, col: 0, want: 0, modified: false,
+                     selRow: 0, selCol: 0, selActive: false,
+                     undos: undos, undoN: 0, redos: redos, redoN: 0 }
     }
 
-    return b
-}
-
-// Joins the lines back to text, each followed by a newline, so saving round-trips a load.
-func buf_to_text(b: Buf) : string {
-    let nl: string = buf_nl()
-    let s: string = ""
-    let i: int = 0
-    while (i < b.count) {
-        s = s + b.lines[i] + nl
-        i = i + 1
-    }
-    return s
-}
-
-func buf_strip_cr(line: string) : string {
-    let n: int = line.length()
-    if (n > 0) {
-        if (line.charCode(n - 1) == 13) {
-            return line.substring(0, n - 1)
-        }
-    }
-    return line
-}
-
-// Splits text into lines on the newline code point, dropping carriage returns. Empty text is one
-// empty part, which is what a replacement by nothing wants.
-func buf_split_lines(text: string) : DynArray<string> {
-    let parts: DynArray<string> = dynarray_new<string>(8)
-    let n: int = text.length()
-    let start: int = 0
-    let i: int = 0
-    while (i < n) {
-        if (text.charCode(i) == 10) {
-            parts = dynarray_push<string>(parts, buf_strip_cr(text.substring(start, i)))
-            start = i + 1
-        }
-        i = i + 1
-    }
-    if (start < n) {
-        parts = dynarray_push<string>(parts, buf_strip_cr(text.substring(start, n)))
-    }
-    if (dynarray_length<string>(parts) == 0) {
-        parts = dynarray_push<string>(parts, "")
-    }
-    return parts
-}
-
-// ── Internal reshaping ───────────────────────────────────────────────────────
-
-// Returns the buffer with a larger lines array when `need` will not fit; otherwise unchanged.
-func buf_ensure(b: Buf, need: int) : Buf {
-    if (need <= b.lines.length()) {
-        return b
+    // A buffer with room but no lines — the starting point `Buf->from_text` fills in.
+    func empty() : Buf {
+        let lines: array<string> = array_new(Buf->start_cap())
+        let undos: array<UndoEntry> = array_new(Buf->undo_max())
+        let redos: array<UndoEntry> = array_new(Buf->undo_max())
+        return Buf { lines: lines, count: 0, row: 0, col: 0, want: 0, modified: false,
+                     selRow: 0, selCol: 0, selActive: false,
+                     undos: undos, undoN: 0, redos: redos, redoN: 0 }
     }
 
-    let cap: int = b.lines.length()
-    while (cap < need) {
-        cap = cap * 2
+    // The newline as text: the language has no escape sequences, so "\n" in source is literally
+    // backslash-n and the code has to come from its number.
+    func nl() : string {
+        return Char.ConvertFromUtf32(10)
     }
 
-    let lines: array<string> = array_new(cap)
-    let i: int = 0
-    while (i < b.count) {
-        lines[i] = b.lines[i]
-        i = i + 1
-    }
-
-    return Buf { lines: lines, count: b.count, row: b.row, col: b.col, want: b.want,
-                 modified: b.modified, selRow: b.selRow, selCol: b.selCol, selActive: b.selActive,
-                 undos: b.undos, undoN: b.undoN,
-                 redos: b.redos, redoN: b.redoN }
-}
-
-// Inserts a line at `at`, shifting the rest down.
-func buf_insert_line(b: Buf, at: int, s: string) : Buf {
-    let grown: Buf = buf_ensure(b, b.count + 1)
-    let i: int = grown.count
-    while (i > at) {
-        grown.lines[i] = grown.lines[i - 1]
-        i = i - 1
-    }
-    grown.lines[at] = s
-    return Buf { lines: grown.lines, count: grown.count + 1, row: grown.row, col: grown.col,
-                 want: grown.want, modified: grown.modified,
-                 selRow: grown.selRow, selCol: grown.selCol, selActive: grown.selActive,
-                 undos: grown.undos, undoN: grown.undoN, redos: grown.redos, redoN: grown.redoN }
-}
-
-// Removes the line at `at`, shifting the rest up.
-func buf_remove_line(b: Buf, at: int) : Buf {
-    let i: int = at
-    while (i < b.count - 1) {
-        b.lines[i] = b.lines[i + 1]
-        i = i + 1
-    }
-    b.lines[b.count - 1] = ""
-    return Buf { lines: b.lines, count: b.count - 1, row: b.row, col: b.col, want: b.want,
-                 modified: b.modified, selRow: b.selRow, selCol: b.selCol, selActive: b.selActive,
-                 undos: b.undos, undoN: b.undoN,
-                 redos: b.redos, redoN: b.redoN }
-}
-
-func buf_append_line(b: Buf, s: string) : Buf {
-    return buf_insert_line(b, b.count, s)
-}
-
-// Rebuilds the buffer with new cursor state; everything else carries across.
-func buf_state(b: Buf, row: int, col: int, want: int, modified: bool) : Buf {
-    return Buf { lines: b.lines, count: b.count, row: row, col: col, want: want,
-                 modified: modified, selRow: b.selRow, selCol: b.selCol, selActive: b.selActive,
-                 undos: b.undos, undoN: b.undoN,
-                 redos: b.redos, redoN: b.redoN }
-}
-
-/*
- * Takes the document from `base` and the undo bookkeeping from `stacks`.
- *
- * The structural undo/redo branches need both: the line reshaping helpers return a buffer derived
- * from the pre-call one, whose stack counters are stale, while `pushed` carries the counters the
- * pop and push just produced but the old line count.
- */
-func buf_with_stacks(base: Buf, stacks: Buf) : Buf {
-    return Buf { lines: base.lines, count: base.count, row: base.row, col: base.col,
-                 want: base.want, modified: base.modified,
-                 selRow: base.selRow, selCol: base.selCol, selActive: base.selActive,
-                 undos: stacks.undos,
-                 undoN: stacks.undoN, redos: stacks.redos, redoN: stacks.redoN }
-}
-
-// Pushes an undo entry, clearing the redo stack — a new edit forks the timeline.
-func buf_push_undo(b: Buf, e: UndoEntry) : Buf {
-    let undoN: int = b.undoN
-    if (undoN == buf_undo_max()) {
+    /*
+     * Parses text into lines, splitting on the newline code point and dropping a carriage return
+     * before each one, so a Windows or Unix file loads the same. Text that ends without a newline
+     * keeps its final partial line; an empty text is one empty line, like any empty document.
+     */
+    func from_text(text: string) : Buf {
+        let b: Buf = Buf->empty()
+        let n: int = text.length()
+        let start: int = 0
         let i: int = 0
-        while (i < buf_undo_max() - 1) {
-            b.undos[i] = b.undos[i + 1]
+
+        while (i < n) {
+            if (text.charCode(i) == 10) {
+                b = b->append_line(Buf->strip_cr(text.substring(start, i)))
+                start = i + 1
+            }
             i = i + 1
         }
-        undoN = buf_undo_max() - 1
-    }
-    b.undos[undoN] = e
 
-    return Buf { lines: b.lines, count: b.count, row: b.row, col: b.col, want: b.want,
-                 modified: b.modified, selRow: b.selRow, selCol: b.selCol, selActive: b.selActive,
-                 undos: b.undos, undoN: undoN + 1,
-                 redos: b.redos, redoN: 0 }
-}
-
-/*
- * The leading whitespace of a line, as text — what Enter carries onto the next line so a
- * program's indentation survives pressing return inside it.
- */
-func buf_indent_of(line: string) : string {
-    let n: int = line.length()
-    let k: int = 0
-    while (k < n) {
-        let c: int = line.charCode(k)
-        if (c != 32 && c != 9) {
-            return line.substring(0, k)
+        if (start < n) {
+            b = b->append_line(Buf->strip_cr(text.substring(start, n)))
         }
-        k = k + 1
-    }
-    return line
-}
 
-// ── Cursor movement ──────────────────────────────────────────────────────────
-
-// Clamps the cursor onto the document: row inside the lines, column inside the row.
-func buf_clamp(b: Buf) : Buf {
-    let row: int = b.row
-    if (row < 0) { row = 0 }
-    if (row >= b.count) { row = b.count - 1 }
-    let len: int = b.lines[row].length()
-    let col: int = b.col
-    if (col < 0) { col = 0 }
-    if (col > len) { col = len }
-    return buf_state(b, row, col, b.want, b.modified)
-}
-
-func buf_move_left(b: Buf) : Buf {
-    if (b.col > 0) {
-        return buf_state(b, b.row, b.col - 1, b.col - 1, b.modified)
-    }
-    if (b.row > 0) {
-        let len: int = b.lines[b.row - 1].length()
-        return buf_state(b, b.row - 1, len, len, b.modified)
-    }
-    return b
-}
-
-func buf_move_right(b: Buf) : Buf {
-    if (b.col < b.lines[b.row].length()) {
-        return buf_state(b, b.row, b.col + 1, b.col + 1, b.modified)
-    }
-    if (b.row < b.count - 1) {
-        return buf_state(b, b.row + 1, 0, 0, b.modified)
-    }
-    return b
-}
-
-/*
- * Vertical movement aims for the wanted column even when the line crossed is shorter, so
- * stepping down through short lines and back up lands where the journey started. Landing on a
- * shorter line settles at its end.
- */
-func buf_move_vertical(b: Buf, row: int) : Buf {
-    let r: int = row
-    if (r < 0) { r = 0 }
-    if (r >= b.count) { r = b.count - 1 }
-    let len: int = b.lines[r].length()
-    let col: int = b.want
-    if (col > len) { col = len }
-    return buf_state(b, r, col, b.want, b.modified)
-}
-
-func buf_move_up(b: Buf) : Buf {
-    return buf_move_vertical(b, b.row - 1)
-}
-
-func buf_move_down(b: Buf) : Buf {
-    return buf_move_vertical(b, b.row + 1)
-}
-
-func buf_move_home(b: Buf) : Buf {
-    return buf_state(b, b.row, 0, 0, b.modified)
-}
-
-func buf_move_end(b: Buf) : Buf {
-    let len: int = b.lines[b.row].length()
-    return buf_state(b, b.row, len, len, b.modified)
-}
-
-// Moves the cursor `n` lines down (negative is up), as Page Up and Page Down do.
-func buf_move_page(b: Buf, n: int) : Buf {
-    return buf_move_vertical(b, b.row + n)
-}
-
-// Places the cursor directly — where a mouse click lands.
-//
-// `keep` extends an existing selection instead of clearing one: a drag calls it every frame, and
-// the anchor it holds is the cursor the drag started from. A plain click leaves it false, which
-// drops any selection and moves the anchor to the new spot.
-func buf_set_cursor(b: Buf, row: int, col: int, keep: bool = false) : Buf {
-    let r: int = row
-    if (r < 0) { r = 0 }
-    if (r >= b.count) { r = b.count - 1 }
-    let len: int = b.lines[r].length()
-    let c: int = col
-    if (c < 0) { c = 0 }
-    if (c > len) { c = len }
-    let next: Buf = buf_state(b, r, c, c, b.modified)
-    if (keep) {
-        return buf_with_sel(next, b.row, b.col, true)
-    }
-    return buf_with_sel(next, r, c, false)
-}
-
-// ── Selection ────────────────────────────────────────────────────────────────
-//
-// A selection is one anchor — where it started — and the cursor, which is always in the struct.
-// Everything else is derived: the two ends ordered, the text they span, and the edits that
-// replace the span with something else.
-
-// Rebuilds the buffer with new selection state; everything else carries across.
-func buf_with_sel(b: Buf, selRow: int, selCol: int, selActive: bool) : Buf {
-    return Buf { lines: b.lines, count: b.count, row: b.row, col: b.col, want: b.want,
-                 modified: b.modified, selRow: selRow, selCol: selCol, selActive: selActive,
-                 undos: b.undos, undoN: b.undoN, redos: b.redos, redoN: b.redoN }
-}
-
-func buf_has_selection(b: Buf) : bool {
-    if (!b.selActive) { return false }
-    if (b.row != b.selRow) { return true }
-    return b.col != b.selCol
-}
-
-// Drops the selection and keeps the cursor where it is.
-func buf_collapse_selection(b: Buf) : Buf {
-    return buf_with_sel(b, b.row, b.col, false)
-}
-
-// Starts a selection anchored at the cursor, if one is not already underway. What shift-arrow
-// calls first, so extending from nothing anchors where the cursor sits.
-func buf_begin_selection(b: Buf) : Buf {
-    if (b.selActive) { return b }
-    return buf_with_sel(b, b.row, b.col, true)
-}
-
-// Selects the whole document: anchor at the very start, cursor at the very end.
-func buf_select_all(b: Buf) : Buf {
-    let lastLen: int = b.lines[b.count - 1].length()
-    let moved: Buf = buf_state(b, b.count - 1, lastLen, lastLen, b.modified)
-    return buf_with_sel(moved, 0, 0, true)
-}
-
-// The selection's two ends, ordered. `out` receives row1, col1, row2, col2 with the start
-// before the end — an out-slot because the language returns one value at a time.
-func buf_sel_ordered(b: Buf, out: array<int>) : void {
-    let r1: int = b.row
-    let c1: int = b.col
-    let r2: int = b.selRow
-    let c2: int = b.selCol
-    if (b.selRow < b.row || (b.selRow == b.row && b.selCol < b.col)) {
-        r1 = b.selRow
-        c1 = b.selCol
-        r2 = b.row
-        c2 = b.col
-    }
-    out[0] = r1
-    out[1] = c1
-    out[2] = r2
-    out[3] = c2
-}
-
-// The text the selection spans, joined by newlines the way buf_from_text parses it back.
-func buf_selection_text(b: Buf) : string {
-    let ends: array<int> = array_new(4)
-    buf_sel_ordered(b, ends)
-    let r1: int = ends[0]
-    let c1: int = ends[1]
-    let r2: int = ends[2]
-    let c2: int = ends[3]
-    let nl: string = buf_nl()
-
-    if (r1 == r2) {
-        return b.lines[r1].substring(c1, c2)
-    }
-
-    let s: string = b.lines[r1].substring(c1, b.lines[r1].length())
-    let i: int = r1 + 1
-    while (i < r2) {
-        s = s + nl + b.lines[i]
-        i = i + 1
-    }
-    return s + nl + b.lines[r2].substring(0, c2)
-}
-
-// ── Range replacement ────────────────────────────────────────────────────────
-
-/*
- * Replaces the text from (r1, c1) to (r2, c2) — which must be ordered — with `text`, which may
- * contain newlines and may be empty. This is the one structural edit everything selection-shaped
- * goes through: a deleted selection replaces its range with nothing, a paste replaces the cursor
- * point with the clipboard, and undo and redo of a RANGE entry are both just this with different
- * arguments. No undo bookkeeping here — the callers push their own entries.
- */
-func buf_replace_range(b: Buf, r1: int, c1: int, r2: int, c2: int, text: string) : Buf {
-    let len2: int = b.lines[r2].length()
-    if (c2 > len2) { c2 = len2 }
-
-    let head: string = b.lines[r1].substring(0, c1)
-    let tail: string = b.lines[r2].substring(c2, len2)
-    let parts: DynArray<string> = buf_split_lines(text)
-    let pn: int = dynarray_length<string>(parts)
-
-    // The first part carries the range's head, the last one its tail; with a single part both
-    // land on the same line.
-    let newCount: int = b.count - (r2 - r1 + 1) + pn
-    let grown: Buf = buf_ensure(b, newCount)
-
-    // The lines after the range move to make room, copied out first so a paste of many lines —
-    // which shifts them down — cannot overwrite them before they are read.
-    let tailCount: int = b.count - r2 - 1
-    let tailLines: array<string> = array_new(tailCount + 1)
-    let k: int = 0
-    while (k < tailCount) {
-        tailLines[k] = grown.lines[r2 + 1 + k]
-        k = k + 1
-    }
-
-    let first: string = head + dynarray_get<string>(parts, 0)
-    if (pn == 1) {
-        grown.lines[r1] = first + tail
-    } else {
-        grown.lines[r1] = first
-        let p: int = 1
-        while (p < pn) {
-            if (p == pn - 1) {
-                grown.lines[r1 + p] = dynarray_get<string>(parts, p) + tail
-            } else {
-                grown.lines[r1 + p] = dynarray_get<string>(parts, p)
-            }
-            p = p + 1
+        if (b.count == 0) {
+            b = b->append_line("")
         }
-    }
 
-    let m: int = 0
-    while (m < tailCount) {
-        grown.lines[r1 + pn + m] = tailLines[m]
-        m = m + 1
-    }
-
-    return Buf { lines: grown.lines, count: newCount, row: grown.row, col: grown.col,
-                 want: grown.want, modified: grown.modified,
-                 selRow: grown.selRow, selCol: grown.selCol, selActive: grown.selActive,
-                 undos: grown.undos, undoN: grown.undoN, redos: grown.redos, redoN: grown.redoN }
-}
-
-// Deletes the selection. The cursor lands where the selection started; one RANGE entry remembers
-// the removed text, so undo restores it and the cursor in a single step.
-func buf_delete_selection(b: Buf) : Buf {
-    if (!buf_has_selection(b)) {
         return b
     }
 
-    let ends: array<int> = array_new(4)
-    buf_sel_ordered(b, ends)
-    let r1: int = ends[0]
-    let c1: int = ends[1]
-    let r2: int = ends[2]
-    let c2: int = ends[3]
+    // Joins the lines back to text, each followed by a newline, so saving round-trips a load.
+    func to_text(self: Buf) : string {
+        let nl: string = Buf->nl()
+        let s: string = ""
+        let i: int = 0
+        while (i < self.count) {
+            s = s + self.lines[i] + nl
+            i = i + 1
+        }
+        return s
+    }
 
-    let removed: string = buf_selection_text(b)
-    let entry: UndoEntry = UndoEntry { kind: BufKind.RANGE, row: r1, pos: c1,
-        line: removed, line2: "", top: "",
-        prevRow: r1, prevCol: c1, postRow: r1, postCol: c1,
-        endRow: r2, endCol: c2, postEndRow: r1, postEndCol: c1 }
-    let next: Buf = buf_push_undo(b, entry)
-    let replaced: Buf = buf_replace_range(b, r1, c1, r2, c2, "")
-    let done: Buf = buf_with_stacks(replaced, next)
-    return buf_state(buf_with_sel(done, r1, c1, false), r1, c1, c1, true)
-}
+    func strip_cr(line: string) : string {
+        let n: int = line.length()
+        if (n > 0) {
+            if (line.charCode(n - 1) == 13) {
+                return line.substring(0, n - 1)
+            }
+        }
+        return line
+    }
 
-// ── Edits ────────────────────────────────────────────────────────────────────
+    // Splits text into lines on the newline code point, dropping carriage returns. Empty text is one
+    // empty part, which is what a replacement by nothing wants.
+    func split_lines(text: string) : DynArray<string> {
+        let parts: DynArray<string> = dynarray_new<string>(8)
+        let n: int = text.length()
+        let start: int = 0
+        let i: int = 0
+        while (i < n) {
+            if (text.charCode(i) == 10) {
+                parts = dynarray_push<string>(parts, Buf->strip_cr(text.substring(start, i)))
+                start = i + 1
+            }
+            i = i + 1
+        }
+        if (start < n) {
+            parts = dynarray_push<string>(parts, Buf->strip_cr(text.substring(start, n)))
+        }
+        if (dynarray_length<string>(parts) == 0) {
+            parts = dynarray_push<string>(parts, "")
+        }
+        return parts
+    }
 
-// Inserts text at the cursor. With a selection active, the selection is what gets replaced —
-// typing over a highlight — and the whole thing is one undo step.
-func buf_insert(b: Buf, s: string) : Buf {
-    if (buf_has_selection(b)) {
+    // ── Internal reshaping ───────────────────────────────────────────────────────
+
+    // Returns the buffer with a larger lines array when `need` will not fit; otherwise unchanged.
+    func ensure(self: Buf, need: int) : Buf {
+        if (need <= self.lines.length()) {
+            return self
+        }
+
+        let cap: int = self.lines.length()
+        while (cap < need) {
+            cap = cap * 2
+        }
+
+        let lines: array<string> = array_new(cap)
+        let i: int = 0
+        while (i < self.count) {
+            lines[i] = self.lines[i]
+            i = i + 1
+        }
+
+        return Buf { lines: lines, count: self.count, row: self.row, col: self.col, want: self.want,
+                     modified: self.modified, selRow: self.selRow, selCol: self.selCol, selActive: self.selActive,
+                     undos: self.undos, undoN: self.undoN,
+                     redos: self.redos, redoN: self.redoN }
+    }
+
+    // Inserts a line at `at`, shifting the rest down.
+    func insert_line(self: Buf, at: int, s: string) : Buf {
+        let grown: Buf = self->ensure(self.count + 1)
+        let i: int = grown.count
+        while (i > at) {
+            grown.lines[i] = grown.lines[i - 1]
+            i = i - 1
+        }
+        grown.lines[at] = s
+        return Buf { lines: grown.lines, count: grown.count + 1, row: grown.row, col: grown.col,
+                     want: grown.want, modified: grown.modified,
+                     selRow: grown.selRow, selCol: grown.selCol, selActive: grown.selActive,
+                     undos: grown.undos, undoN: grown.undoN, redos: grown.redos, redoN: grown.redoN }
+    }
+
+    // Removes the line at `at`, shifting the rest up.
+    func remove_line(self: Buf, at: int) : Buf {
+        let i: int = at
+        while (i < self.count - 1) {
+            self.lines[i] = self.lines[i + 1]
+            i = i + 1
+        }
+        self.lines[self.count - 1] = ""
+        return Buf { lines: self.lines, count: self.count - 1, row: self.row, col: self.col, want: self.want,
+                     modified: self.modified, selRow: self.selRow, selCol: self.selCol, selActive: self.selActive,
+                     undos: self.undos, undoN: self.undoN,
+                     redos: self.redos, redoN: self.redoN }
+    }
+
+    func append_line(self: Buf, s: string) : Buf {
+        return self->insert_line(self.count, s)
+    }
+
+    // Rebuilds the buffer with new cursor state; everything else carries across.
+    func state(self: Buf, row: int, col: int, want: int, modified: bool) : Buf {
+        return Buf { lines: self.lines, count: self.count, row: row, col: col, want: want,
+                     modified: modified, selRow: self.selRow, selCol: self.selCol, selActive: self.selActive,
+                     undos: self.undos, undoN: self.undoN,
+                     redos: self.redos, redoN: self.redoN }
+    }
+
+    /*
+     * Takes the document from `base` and the undo bookkeeping from `stacks`.
+     *
+     * The structural undo/redo branches need both: the line reshaping helpers return a buffer derived
+     * from the pre-call one, whose stack counters are stale, while `pushed` carries the counters the
+     * pop and push just produced but the old line count.
+     */
+    func with_stacks(self: Buf, stacks: Buf) : Buf {
+        return Buf { lines: self.lines, count: self.count, row: self.row, col: self.col,
+                     want: self.want, modified: self.modified,
+                     selRow: self.selRow, selCol: self.selCol, selActive: self.selActive,
+                     undos: stacks.undos,
+                     undoN: stacks.undoN, redos: stacks.redos, redoN: stacks.redoN }
+    }
+
+    // Pushes an undo entry, clearing the redo stack — a new edit forks the timeline.
+    func push_undo(self: Buf, e: UndoEntry) : Buf {
+        let undoN: int = self.undoN
+        if (undoN == Buf->undo_max()) {
+            let i: int = 0
+            while (i < Buf->undo_max() - 1) {
+                self.undos[i] = self.undos[i + 1]
+                i = i + 1
+            }
+            undoN = Buf->undo_max() - 1
+        }
+        self.undos[undoN] = e
+
+        return Buf { lines: self.lines, count: self.count, row: self.row, col: self.col, want: self.want,
+                     modified: self.modified, selRow: self.selRow, selCol: self.selCol, selActive: self.selActive,
+                     undos: self.undos, undoN: undoN + 1,
+                     redos: self.redos, redoN: 0 }
+    }
+
+    /*
+     * The leading whitespace of a line, as text — what Enter carries onto the next line so a
+     * program's indentation survives pressing return inside it.
+     */
+    func indent_of(line: string) : string {
+        let n: int = line.length()
+        let k: int = 0
+        while (k < n) {
+            let c: int = line.charCode(k)
+            if (c != 32 && c != 9) {
+                return line.substring(0, k)
+            }
+            k = k + 1
+        }
+        return line
+    }
+
+    // ── Cursor movement ──────────────────────────────────────────────────────────
+
+    // Clamps the cursor onto the document: row inside the lines, column inside the row.
+    func clamp(self: Buf) : Buf {
+        let row: int = self.row
+        if (row < 0) { row = 0 }
+        if (row >= self.count) { row = self.count - 1 }
+        let len: int = self.lines[row].length()
+        let col: int = self.col
+        if (col < 0) { col = 0 }
+        if (col > len) { col = len }
+        return self->state(row, col, self.want, self.modified)
+    }
+
+    func move_left(self: Buf) : Buf {
+        if (self.col > 0) {
+            return self->state(self.row, self.col - 1, self.col - 1, self.modified)
+        }
+        if (self.row > 0) {
+            let len: int = self.lines[self.row - 1].length()
+            return self->state(self.row - 1, len, len, self.modified)
+        }
+        return self
+    }
+
+    func move_right(self: Buf) : Buf {
+        if (self.col < self.lines[self.row].length()) {
+            return self->state(self.row, self.col + 1, self.col + 1, self.modified)
+        }
+        if (self.row < self.count - 1) {
+            return self->state(self.row + 1, 0, 0, self.modified)
+        }
+        return self
+    }
+
+    /*
+     * Vertical movement aims for the wanted column even when the line crossed is shorter, so
+     * stepping down through short lines and back up lands where the journey started. Landing on a
+     * shorter line settles at its end.
+     */
+    func move_vertical(self: Buf, row: int) : Buf {
+        let r: int = row
+        if (r < 0) { r = 0 }
+        if (r >= self.count) { r = self.count - 1 }
+        let len: int = self.lines[r].length()
+        let col: int = self.want
+        if (col > len) { col = len }
+        return self->state(r, col, self.want, self.modified)
+    }
+
+    func move_up(self: Buf) : Buf {
+        return self->move_vertical(self.row - 1)
+    }
+
+    func move_down(self: Buf) : Buf {
+        return self->move_vertical(self.row + 1)
+    }
+
+    func move_home(self: Buf) : Buf {
+        return self->state(self.row, 0, 0, self.modified)
+    }
+
+    func move_end(self: Buf) : Buf {
+        let len: int = self.lines[self.row].length()
+        return self->state(self.row, len, len, self.modified)
+    }
+
+    // Moves the cursor `n` lines down (negative is up), as Page Up and Page Down do.
+    func move_page(self: Buf, n: int) : Buf {
+        return self->move_vertical(self.row + n)
+    }
+
+    // Places the cursor directly — where a mouse click lands.
+    //
+    // `keep` extends an existing selection instead of clearing one: a drag calls it every frame, and
+    // the anchor it holds is the cursor the drag started from. A plain click leaves it false, which
+    // drops any selection and moves the anchor to the new spot.
+    func set_cursor(self: Buf, row: int, col: int, keep: bool = false) : Buf {
+        let r: int = row
+        if (r < 0) { r = 0 }
+        if (r >= self.count) { r = self.count - 1 }
+        let len: int = self.lines[r].length()
+        let c: int = col
+        if (c < 0) { c = 0 }
+        if (c > len) { c = len }
+        let next: Buf = self->state(r, c, c, self.modified)
+        if (keep) {
+            return next->with_sel(self.row, self.col, true)
+        }
+        return next->with_sel(r, c, false)
+    }
+
+    // ── Selection ────────────────────────────────────────────────────────────────
+    //
+    // A selection is one anchor — where it started — and the cursor, which is always in the struct.
+    // Everything else is derived: the two ends ordered, the text they span, and the edits that
+    // replace the span with something else.
+
+    // Rebuilds the buffer with new selection state; everything else carries across.
+    func with_sel(self: Buf, selRow: int, selCol: int, selActive: bool) : Buf {
+        return Buf { lines: self.lines, count: self.count, row: self.row, col: self.col, want: self.want,
+                     modified: self.modified, selRow: selRow, selCol: selCol, selActive: selActive,
+                     undos: self.undos, undoN: self.undoN, redos: self.redos, redoN: self.redoN }
+    }
+
+    func has_selection(self: Buf) : bool {
+        if (!self.selActive) { return false }
+        if (self.row != self.selRow) { return true }
+        return self.col != self.selCol
+    }
+
+    // Drops the selection and keeps the cursor where it is.
+    func collapse_selection(self: Buf) : Buf {
+        return self->with_sel(self.row, self.col, false)
+    }
+
+    // Starts a selection anchored at the cursor, if one is not already underway. What shift-arrow
+    // calls first, so extending from nothing anchors where the cursor sits.
+    func begin_selection(self: Buf) : Buf {
+        if (self.selActive) { return self }
+        return self->with_sel(self.row, self.col, true)
+    }
+
+    // Selects the whole document: anchor at the very start, cursor at the very end.
+    func select_all(self: Buf) : Buf {
+        let lastLen: int = self.lines[self.count - 1].length()
+        let moved: Buf = self->state(self.count - 1, lastLen, lastLen, self.modified)
+        return moved->with_sel(0, 0, true)
+    }
+
+    // The selection's two ends, ordered. `out` receives row1, col1, row2, col2 with the start
+    // before the end — an out-slot because the language returns one value at a time.
+    func sel_ordered(self: Buf, out: array<int>) : void {
+        let r1: int = self.row
+        let c1: int = self.col
+        let r2: int = self.selRow
+        let c2: int = self.selCol
+        if (self.selRow < self.row || (self.selRow == self.row && self.selCol < self.col)) {
+            r1 = self.selRow
+            c1 = self.selCol
+            r2 = self.row
+            c2 = self.col
+        }
+        out[0] = r1
+        out[1] = c1
+        out[2] = r2
+        out[3] = c2
+    }
+
+    // The text the selection spans, joined by newlines the way `Buf->from_text` parses it back.
+    func selection_text(self: Buf) : string {
         let ends: array<int> = array_new(4)
-        buf_sel_ordered(b, ends)
+        self->sel_ordered(ends)
         let r1: int = ends[0]
         let c1: int = ends[1]
         let r2: int = ends[2]
         let c2: int = ends[3]
-        let removed: string = buf_selection_text(b)
+        let nl: string = Buf->nl()
+
+        if (r1 == r2) {
+            return self.lines[r1].substring(c1, c2)
+        }
+
+        let s: string = self.lines[r1].substring(c1, self.lines[r1].length())
+        let i: int = r1 + 1
+        while (i < r2) {
+            s = s + nl + self.lines[i]
+            i = i + 1
+        }
+        return s + nl + self.lines[r2].substring(0, c2)
+    }
+
+    // ── Range replacement ────────────────────────────────────────────────────────
+
+    /*
+     * Replaces the text from (r1, c1) to (r2, c2) — which must be ordered — with `text`, which may
+     * contain newlines and may be empty. This is the one structural edit everything selection-shaped
+     * goes through: a deleted selection replaces its range with nothing, a paste replaces the cursor
+     * point with the clipboard, and undo and redo of a RANGE entry are both just this with different
+     * arguments. No undo bookkeeping here — the callers push their own entries.
+     */
+    func replace_range(self: Buf, r1: int, c1: int, r2: int, c2: int, text: string) : Buf {
+        let len2: int = self.lines[r2].length()
+        if (c2 > len2) { c2 = len2 }
+
+        let head: string = self.lines[r1].substring(0, c1)
+        let tail: string = self.lines[r2].substring(c2, len2)
+        let parts: DynArray<string> = Buf->split_lines(text)
+        let pn: int = dynarray_length<string>(parts)
+
+        // The first part carries the range's head, the last one its tail; with a single part both
+        // land on the same line.
+        let newCount: int = self.count - (r2 - r1 + 1) + pn
+        let grown: Buf = self->ensure(newCount)
+
+        // The lines after the range move to make room, copied out first so a paste of many lines —
+        // which shifts them down — cannot overwrite them before they are read.
+        let tailCount: int = self.count - r2 - 1
+        let tailLines: array<string> = array_new(tailCount + 1)
+        let k: int = 0
+        while (k < tailCount) {
+            tailLines[k] = grown.lines[r2 + 1 + k]
+            k = k + 1
+        }
+
+        let first: string = head + dynarray_get<string>(parts, 0)
+        if (pn == 1) {
+            grown.lines[r1] = first + tail
+        } else {
+            grown.lines[r1] = first
+            let p: int = 1
+            while (p < pn) {
+                if (p == pn - 1) {
+                    grown.lines[r1 + p] = dynarray_get<string>(parts, p) + tail
+                } else {
+                    grown.lines[r1 + p] = dynarray_get<string>(parts, p)
+                }
+                p = p + 1
+            }
+        }
+
+        let m: int = 0
+        while (m < tailCount) {
+            grown.lines[r1 + pn + m] = tailLines[m]
+            m = m + 1
+        }
+
+        return Buf { lines: grown.lines, count: newCount, row: grown.row, col: grown.col,
+                     want: grown.want, modified: grown.modified,
+                     selRow: grown.selRow, selCol: grown.selCol, selActive: grown.selActive,
+                     undos: grown.undos, undoN: grown.undoN, redos: grown.redos, redoN: grown.redoN }
+    }
+
+    // Deletes the selection. The cursor lands where the selection started; one RANGE entry remembers
+    // the removed text, so undo restores it and the cursor in a single step.
+    func delete_selection(self: Buf) : Buf {
+        if (!self->has_selection()) {
+            return self
+        }
+
+        let ends: array<int> = array_new(4)
+        self->sel_ordered(ends)
+        let r1: int = ends[0]
+        let c1: int = ends[1]
+        let r2: int = ends[2]
+        let c2: int = ends[3]
+
+        let removed: string = self->selection_text()
+        let entry: UndoEntry = UndoEntry { kind: BufKind.RANGE, row: r1, pos: c1,
+            line: removed, line2: "", top: "",
+            prevRow: r1, prevCol: c1, postRow: r1, postCol: c1,
+            endRow: r2, endCol: c2, postEndRow: r1, postEndCol: c1 }
+        let next: Buf = self->push_undo(entry)
+        let replaced: Buf = self->replace_range(r1, c1, r2, c2, "")
+        let done: Buf = replaced->with_stacks(next)
+        return done->with_sel(r1, c1, false)->state(r1, c1, c1, true)
+    }
+
+    // ── Edits ────────────────────────────────────────────────────────────────────
+
+    // Inserts text at the cursor. With a selection active, the selection is what gets replaced —
+    // typing over a highlight — and the whole thing is one undo step.
+    func insert(self: Buf, s: string) : Buf {
+        if (self->has_selection()) {
+            let ends: array<int> = array_new(4)
+            self->sel_ordered(ends)
+            let r1: int = ends[0]
+            let c1: int = ends[1]
+            let r2: int = ends[2]
+            let c2: int = ends[3]
+            let removed: string = self->selection_text()
+
+            let entry: UndoEntry = UndoEntry { kind: BufKind.RANGE, row: r1, pos: c1,
+                line: removed, line2: s, top: "",
+                prevRow: r1, prevCol: c1, postRow: r1, postCol: c1 + s.length(),
+                endRow: r2, endCol: c2, postEndRow: r1, postEndCol: c1 + s.length() }
+            let next: Buf = self->push_undo(entry)
+            let replaced: Buf = self->replace_range(r1, c1, r2, c2, s)
+            let done: Buf = replaced->with_stacks(next)
+            return done->with_sel(r1, c1, false)->state(r1, c1 + s.length(), c1 + s.length(), true)
+        }
+
+        let line: string = self.lines[self.row]
+        let updated: string = line.substring(0, self.col) + s + line.substring(self.col, line.length())
+        self.lines[self.row] = updated
+
+        let entry: UndoEntry = UndoEntry { kind: BufKind.EDIT, row: self.row, pos: self.col,
+            line: line, line2: updated, top: "",
+            prevRow: self.row, prevCol: self.col, postRow: self.row, postCol: self.col + s.length(),
+            endRow: 0, endCol: 0, postEndRow: 0, postEndCol: 0 }
+        let next: Buf = self->push_undo(entry)
+        return next->state(self.row, self.col + s.length(), self.col + s.length(), true)
+    }
+
+    /*
+     * Inserts multi-line text — what a paste brings — at the cursor, replacing the selection when
+     * there is one. Newlines split into real lines, so the clipboard becomes part of the document
+     * rather than one long line with arrows in it. One RANGE entry: undo takes the whole paste back.
+     */
+    func paste(self: Buf, text: string) : Buf {
+        let ends: array<int> = array_new(4)
+        let r1: int = self.row
+        let c1: int = self.col
+        let r2: int = self.row
+        let c2: int = self.col
+        let removed: string = ""
+
+        if (self->has_selection()) {
+            self->sel_ordered(ends)
+            r1 = ends[0]
+            c1 = ends[1]
+            r2 = ends[2]
+            c2 = ends[3]
+            removed = self->selection_text()
+        }
+
+        // Where the cursor lands: after the last line of the pasted text.
+        let parts: DynArray<string> = Buf->split_lines(text)
+        let pn: int = dynarray_length<string>(parts)
+        let postRow: int = r1 + pn - 1
+        let postCol: int = dynarray_get<string>(parts, pn - 1).length()
 
         let entry: UndoEntry = UndoEntry { kind: BufKind.RANGE, row: r1, pos: c1,
-            line: removed, line2: s, top: "",
-            prevRow: r1, prevCol: c1, postRow: r1, postCol: c1 + s.length(),
-            endRow: r2, endCol: c2, postEndRow: r1, postEndCol: c1 + s.length() }
-        let next: Buf = buf_push_undo(b, entry)
-        let replaced: Buf = buf_replace_range(b, r1, c1, r2, c2, s)
-        let done: Buf = buf_with_stacks(replaced, next)
-        return buf_state(buf_with_sel(done, r1, c1, false), r1, c1 + s.length(), c1 + s.length(), true)
+            line: removed, line2: text, top: "",
+            prevRow: r1, prevCol: c1, postRow: postRow, postCol: postCol,
+            endRow: r2, endCol: c2, postEndRow: postRow, postEndCol: postCol }
+        let next: Buf = self->push_undo(entry)
+        let replaced: Buf = self->replace_range(r1, c1, r2, c2, text)
+        let done: Buf = replaced->with_stacks(next)
+        return done->with_sel(r1, c1, false)->state(postRow, postCol, postCol, true)
     }
 
-    let line: string = b.lines[b.row]
-    let updated: string = line.substring(0, b.col) + s + line.substring(b.col, line.length())
-    b.lines[b.row] = updated
+    // Deletes the character before the cursor; at the start of a line, joins it into the one above.
+    func backspace(self: Buf) : Buf {
+        if (self.col > 0) {
+            let line: string = self.lines[self.row]
+            let updated: string = line.substring(0, self.col - 1) + line.substring(self.col, line.length())
+            self.lines[self.row] = updated
 
-    let entry: UndoEntry = UndoEntry { kind: BufKind.EDIT, row: b.row, pos: b.col,
-        line: line, line2: updated, top: "",
-        prevRow: b.row, prevCol: b.col, postRow: b.row, postCol: b.col + s.length(),
-        endRow: 0, endCol: 0, postEndRow: 0, postEndCol: 0 }
-    let next: Buf = buf_push_undo(b, entry)
-    return buf_state(next, b.row, b.col + s.length(), b.col + s.length(), true)
-}
-
-/*
- * Inserts multi-line text — what a paste brings — at the cursor, replacing the selection when
- * there is one. Newlines split into real lines, so the clipboard becomes part of the document
- * rather than one long line with arrows in it. One RANGE entry: undo takes the whole paste back.
- */
-func buf_paste(b: Buf, text: string) : Buf {
-    let ends: array<int> = array_new(4)
-    let r1: int = b.row
-    let c1: int = b.col
-    let r2: int = b.row
-    let c2: int = b.col
-    let removed: string = ""
-
-    if (buf_has_selection(b)) {
-        buf_sel_ordered(b, ends)
-        r1 = ends[0]
-        c1 = ends[1]
-        r2 = ends[2]
-        c2 = ends[3]
-        removed = buf_selection_text(b)
-    }
-
-    // Where the cursor lands: after the last line of the pasted text.
-    let parts: DynArray<string> = buf_split_lines(text)
-    let pn: int = dynarray_length<string>(parts)
-    let postRow: int = r1 + pn - 1
-    let postCol: int = dynarray_get<string>(parts, pn - 1).length()
-
-    let entry: UndoEntry = UndoEntry { kind: BufKind.RANGE, row: r1, pos: c1,
-        line: removed, line2: text, top: "",
-        prevRow: r1, prevCol: c1, postRow: postRow, postCol: postCol,
-        endRow: r2, endCol: c2, postEndRow: postRow, postEndCol: postCol }
-    let next: Buf = buf_push_undo(b, entry)
-    let replaced: Buf = buf_replace_range(b, r1, c1, r2, c2, text)
-    let done: Buf = buf_with_stacks(replaced, next)
-    return buf_state(buf_with_sel(done, r1, c1, false), postRow, postCol, postCol, true)
-}
-
-// Deletes the character before the cursor; at the start of a line, joins it into the one above.
-func buf_backspace(b: Buf) : Buf {
-    if (b.col > 0) {
-        let line: string = b.lines[b.row]
-        let updated: string = line.substring(0, b.col - 1) + line.substring(b.col, line.length())
-        b.lines[b.row] = updated
-
-        let entry: UndoEntry = UndoEntry { kind: BufKind.EDIT, row: b.row, pos: b.col - 1,
-            line: line, line2: updated, top: "",
-            prevRow: b.row, prevCol: b.col, postRow: b.row, postCol: b.col - 1,
-            endRow: 0, endCol: 0, postEndRow: 0, postEndCol: 0 }
-        let next: Buf = buf_push_undo(b, entry)
-        return buf_state(next, b.row, b.col - 1, b.col - 1, true)
-    }
-
-    if (b.row > 0) {
-        let top: string = b.lines[b.row - 1]
-        let bottom: string = b.lines[b.row]
-        b.lines[b.row - 1] = top + bottom
-        let merged: Buf = buf_remove_line(b, b.row)
-
-        let jentry: UndoEntry = UndoEntry { kind: BufKind.JOIN, row: b.row, pos: 0,
-            line: bottom, line2: "", top: top,
-            prevRow: b.row, prevCol: 0, postRow: b.row - 1, postCol: top.length(),
-            endRow: 0, endCol: 0, postEndRow: 0, postEndCol: 0 }
-        let jnext: Buf = buf_push_undo(merged, jentry)
-        return buf_state(jnext, b.row - 1, top.length(), top.length(), true)
-    }
-
-    return b
-}
-
-// Deletes the character at the cursor; at the end of a line, pulls the next line up into it.
-func buf_delete(b: Buf) : Buf {
-    let line: string = b.lines[b.row]
-
-    if (b.col < line.length()) {
-        let updated: string = line.substring(0, b.col) + line.substring(b.col + 1, line.length())
-        b.lines[b.row] = updated
-
-        let entry: UndoEntry = UndoEntry { kind: BufKind.EDIT, row: b.row, pos: b.col,
-            line: line, line2: updated, top: "",
-            prevRow: b.row, prevCol: b.col, postRow: b.row, postCol: b.col,
-            endRow: 0, endCol: 0, postEndRow: 0, postEndCol: 0 }
-        let next: Buf = buf_push_undo(b, entry)
-        return buf_state(next, b.row, b.col, b.col, true)
-    }
-
-    if (b.row < b.count - 1) {
-        let bottom: string = b.lines[b.row + 1]
-        b.lines[b.row] = line + bottom
-        let merged: Buf = buf_remove_line(b, b.row + 1)
-
-        let dentry: UndoEntry = UndoEntry { kind: BufKind.JOIN, row: b.row + 1, pos: line.length(),
-            line: bottom, line2: "", top: line,
-            prevRow: b.row, prevCol: b.col, postRow: b.row, postCol: b.col,
-            endRow: 0, endCol: 0, postEndRow: 0, postEndCol: 0 }
-        let dnext: Buf = buf_push_undo(merged, dentry)
-        return buf_state(dnext, b.row, b.col, b.col, true)
-    }
-
-    return b
-}
-
-/*
- * Splits the line at the cursor, carrying the current line's indentation onto the new one —
- * pressing return inside an indented block keeps the block's shape.
- */
-func buf_enter(b: Buf) : Buf {
-    let line: string = b.lines[b.row]
-    let indent: string = buf_indent_of(line)
-    let left: string = line.substring(0, b.col)
-    let right: string = indent + line.substring(b.col, line.length())
-
-    b.lines[b.row] = left
-    let split: Buf = buf_insert_line(b, b.row + 1, right)
-
-    let entry: UndoEntry = UndoEntry { kind: BufKind.SPLIT, row: b.row, pos: b.col,
-        line: line, line2: right, top: "",
-        prevRow: b.row, prevCol: b.col, postRow: b.row + 1, postCol: indent.length(),
-        endRow: 0, endCol: 0, postEndRow: 0, postEndCol: 0 }
-    let next: Buf = buf_push_undo(split, entry)
-    return buf_state(next, b.row + 1, indent.length(), indent.length(), true)
-}
-
-// Inserts an indent — four spaces, since tabs are someone else's width.
-func buf_tab(b: Buf) : Buf {
-    return buf_insert(b, "    ")
-}
-
-// Clears the modified flag, as saving does.
-func buf_saved(b: Buf) : Buf {
-    return buf_state(b, b.row, b.col, b.want, false)
-}
-
-// ── Undo and redo ────────────────────────────────────────────────────────────
-
-func buf_undo(b: Buf) : Buf {
-    if (b.undoN == 0) {
-        return b
-    }
-
-    let e: UndoEntry = b.undos[b.undoN - 1]
-    let stepped: Buf = Buf { lines: b.lines, count: b.count, row: b.row, col: b.col,
-        want: b.want, modified: true, selRow: b.selRow, selCol: b.selCol, selActive: b.selActive,
-        undos: b.undos, undoN: b.undoN - 1, redos: b.redos, redoN: b.redoN }
-
-    let redoN: int = stepped.redoN
-    if (redoN == buf_undo_max()) {
-        let i: int = 0
-        while (i < buf_undo_max() - 1) {
-            stepped.redos[i] = stepped.redos[i + 1]
-            i = i + 1
+            let entry: UndoEntry = UndoEntry { kind: BufKind.EDIT, row: self.row, pos: self.col - 1,
+                line: line, line2: updated, top: "",
+                prevRow: self.row, prevCol: self.col, postRow: self.row, postCol: self.col - 1,
+                endRow: 0, endCol: 0, postEndRow: 0, postEndCol: 0 }
+            let next: Buf = self->push_undo(entry)
+            return next->state(self.row, self.col - 1, self.col - 1, true)
         }
-        redoN = buf_undo_max() - 1
-    }
-    stepped.redos[redoN] = e
-    let pushed: Buf = Buf { lines: stepped.lines, count: stepped.count, row: stepped.row,
-        col: stepped.col, want: stepped.want, modified: stepped.modified,
-        selRow: stepped.selRow, selCol: stepped.selCol, selActive: stepped.selActive,
-        undos: stepped.undos, undoN: stepped.undoN,
-        redos: stepped.redos, redoN: redoN + 1 }
 
-    if (e.kind == BufKind.EDIT) {
-        b.lines[e.row] = e.line
-        return buf_state(pushed, e.prevRow, e.prevCol, e.prevCol, true)
-    }
-    if (e.kind == BufKind.SPLIT) {
-        b.lines[e.row] = e.line
-        let joined: Buf = buf_remove_line(b, e.row + 1)
-        return buf_state(buf_with_stacks(joined, pushed), e.prevRow, e.prevCol, e.prevCol, true)
-    }
-    if (e.kind == BufKind.RANGE) {
-        let restored: Buf = buf_replace_range(b, e.row, e.pos, e.postEndRow, e.postEndCol, e.line)
-        let done: Buf = buf_with_stacks(restored, pushed)
-        return buf_state(done, e.prevRow, e.prevCol, e.prevCol, true)
-    }
-    // JOIN
-    b.lines[e.row - 1] = e.top
-    let split: Buf = buf_insert_line(b, e.row, e.line)
-    return buf_state(buf_with_stacks(split, pushed), e.prevRow, e.prevCol, e.prevCol, true)
-}
+        if (self.row > 0) {
+            let top: string = self.lines[self.row - 1]
+            let bottom: string = self.lines[self.row]
+            self.lines[self.row - 1] = top + bottom
+            let merged: Buf = self->remove_line(self.row)
 
-func buf_redo(b: Buf) : Buf {
-    if (b.redoN == 0) {
-        return b
-    }
-
-    let e: UndoEntry = b.redos[b.redoN - 1]
-    let stepped: Buf = Buf { lines: b.lines, count: b.count, row: b.row, col: b.col,
-        want: b.want, modified: true, selRow: b.selRow, selCol: b.selCol, selActive: b.selActive,
-        undos: b.undos, undoN: b.undoN, redos: b.redos, redoN: b.redoN - 1 }
-
-    let undoN: int = stepped.undoN
-    if (undoN == buf_undo_max()) {
-        let i: int = 0
-        while (i < buf_undo_max() - 1) {
-            stepped.undos[i] = stepped.undos[i + 1]
-            i = i + 1
+            let jentry: UndoEntry = UndoEntry { kind: BufKind.JOIN, row: self.row, pos: 0,
+                line: bottom, line2: "", top: top,
+                prevRow: self.row, prevCol: 0, postRow: self.row - 1, postCol: top.length(),
+                endRow: 0, endCol: 0, postEndRow: 0, postEndCol: 0 }
+            let jnext: Buf = merged->push_undo(jentry)
+            return jnext->state(self.row - 1, top.length(), top.length(), true)
         }
-        undoN = buf_undo_max() - 1
-    }
-    stepped.undos[undoN] = e
-    let pushed: Buf = Buf { lines: stepped.lines, count: stepped.count, row: stepped.row,
-        col: stepped.col, want: stepped.want, modified: stepped.modified,
-        selRow: stepped.selRow, selCol: stepped.selCol, selActive: stepped.selActive,
-        undos: stepped.undos, undoN: undoN + 1,
-        redos: stepped.redos, redoN: stepped.redoN }
 
-    if (e.kind == BufKind.EDIT) {
-        b.lines[e.row] = e.line2
-        return buf_state(pushed, e.postRow, e.postCol, e.postCol, true)
+        return self
     }
-    if (e.kind == BufKind.SPLIT) {
-        b.lines[e.row] = e.line.substring(0, e.pos)
-        let split: Buf = buf_insert_line(b, e.row + 1, e.line2)
-        return buf_state(buf_with_stacks(split, pushed), e.postRow, e.postCol, e.postCol, true)
+
+    // Deletes the character at the cursor; at the end of a line, pulls the next line up into it.
+    func delete(self: Buf) : Buf {
+        let line: string = self.lines[self.row]
+
+        if (self.col < line.length()) {
+            let updated: string = line.substring(0, self.col) + line.substring(self.col + 1, line.length())
+            self.lines[self.row] = updated
+
+            let entry: UndoEntry = UndoEntry { kind: BufKind.EDIT, row: self.row, pos: self.col,
+                line: line, line2: updated, top: "",
+                prevRow: self.row, prevCol: self.col, postRow: self.row, postCol: self.col,
+                endRow: 0, endCol: 0, postEndRow: 0, postEndCol: 0 }
+            let next: Buf = self->push_undo(entry)
+            return next->state(self.row, self.col, self.col, true)
+        }
+
+        if (self.row < self.count - 1) {
+            let bottom: string = self.lines[self.row + 1]
+            self.lines[self.row] = line + bottom
+            let merged: Buf = self->remove_line(self.row + 1)
+
+            let dentry: UndoEntry = UndoEntry { kind: BufKind.JOIN, row: self.row + 1, pos: line.length(),
+                line: bottom, line2: "", top: line,
+                prevRow: self.row, prevCol: self.col, postRow: self.row, postCol: self.col,
+                endRow: 0, endCol: 0, postEndRow: 0, postEndCol: 0 }
+            let dnext: Buf = merged->push_undo(dentry)
+            return dnext->state(self.row, self.col, self.col, true)
+        }
+
+        return self
     }
-    if (e.kind == BufKind.RANGE) {
-        let replaced: Buf = buf_replace_range(b, e.row, e.pos, e.endRow, e.endCol, e.line2)
-        let done: Buf = buf_with_stacks(replaced, pushed)
-        return buf_state(done, e.postRow, e.postCol, e.postCol, true)
+
+    /*
+     * Splits the line at the cursor, carrying the current line's indentation onto the new one —
+     * pressing return inside an indented block keeps the block's shape.
+     */
+    func enter(self: Buf) : Buf {
+        let line: string = self.lines[self.row]
+        let indent: string = Buf->indent_of(line)
+        let left: string = line.substring(0, self.col)
+        let right: string = indent + line.substring(self.col, line.length())
+
+        self.lines[self.row] = left
+        let split: Buf = self->insert_line(self.row + 1, right)
+
+        let entry: UndoEntry = UndoEntry { kind: BufKind.SPLIT, row: self.row, pos: self.col,
+            line: line, line2: right, top: "",
+            prevRow: self.row, prevCol: self.col, postRow: self.row + 1, postCol: indent.length(),
+            endRow: 0, endCol: 0, postEndRow: 0, postEndCol: 0 }
+        let next: Buf = split->push_undo(entry)
+        return next->state(self.row + 1, indent.length(), indent.length(), true)
     }
-    // JOIN
-    b.lines[e.row - 1] = e.top + e.line
-    let merged: Buf = buf_remove_line(b, e.row)
-    return buf_state(buf_with_stacks(merged, pushed), e.postRow, e.postCol, e.postCol, true)
+
+    // Inserts an indent — four spaces, since tabs are someone else's width.
+    func tab(self: Buf) : Buf {
+        return self->insert("    ")
+    }
+
+    // Clears the modified flag, as saving does.
+    func saved(self: Buf) : Buf {
+        return self->state(self.row, self.col, self.want, false)
+    }
+
+    // ── Undo and redo ────────────────────────────────────────────────────────────
+
+    func undo(self: Buf) : Buf {
+        if (self.undoN == 0) {
+            return self
+        }
+
+        let e: UndoEntry = self.undos[self.undoN - 1]
+        let stepped: Buf = Buf { lines: self.lines, count: self.count, row: self.row, col: self.col,
+            want: self.want, modified: true, selRow: self.selRow, selCol: self.selCol, selActive: self.selActive,
+            undos: self.undos, undoN: self.undoN - 1, redos: self.redos, redoN: self.redoN }
+
+        let redoN: int = stepped.redoN
+        if (redoN == Buf->undo_max()) {
+            let i: int = 0
+            while (i < Buf->undo_max() - 1) {
+                stepped.redos[i] = stepped.redos[i + 1]
+                i = i + 1
+            }
+            redoN = Buf->undo_max() - 1
+        }
+        stepped.redos[redoN] = e
+        let pushed: Buf = Buf { lines: stepped.lines, count: stepped.count, row: stepped.row,
+            col: stepped.col, want: stepped.want, modified: stepped.modified,
+            selRow: stepped.selRow, selCol: stepped.selCol, selActive: stepped.selActive,
+            undos: stepped.undos, undoN: stepped.undoN,
+            redos: stepped.redos, redoN: redoN + 1 }
+
+        if (e.kind == BufKind.EDIT) {
+            self.lines[e.row] = e.line
+            return pushed->state(e.prevRow, e.prevCol, e.prevCol, true)
+        }
+        if (e.kind == BufKind.SPLIT) {
+            self.lines[e.row] = e.line
+            let joined: Buf = self->remove_line(e.row + 1)
+            return joined->with_stacks(pushed)->state(e.prevRow, e.prevCol, e.prevCol, true)
+        }
+        if (e.kind == BufKind.RANGE) {
+            let restored: Buf = self->replace_range(e.row, e.pos, e.postEndRow, e.postEndCol, e.line)
+            let done: Buf = restored->with_stacks(pushed)
+            return done->state(e.prevRow, e.prevCol, e.prevCol, true)
+        }
+        // JOIN
+        self.lines[e.row - 1] = e.top
+        let split: Buf = self->insert_line(e.row, e.line)
+        return split->with_stacks(pushed)->state(e.prevRow, e.prevCol, e.prevCol, true)
+    }
+
+    func redo(self: Buf) : Buf {
+        if (self.redoN == 0) {
+            return self
+        }
+
+        let e: UndoEntry = self.redos[self.redoN - 1]
+        let stepped: Buf = Buf { lines: self.lines, count: self.count, row: self.row, col: self.col,
+            want: self.want, modified: true, selRow: self.selRow, selCol: self.selCol, selActive: self.selActive,
+            undos: self.undos, undoN: self.undoN, redos: self.redos, redoN: self.redoN - 1 }
+
+        let undoN: int = stepped.undoN
+        if (undoN == Buf->undo_max()) {
+            let i: int = 0
+            while (i < Buf->undo_max() - 1) {
+                stepped.undos[i] = stepped.undos[i + 1]
+                i = i + 1
+            }
+            undoN = Buf->undo_max() - 1
+        }
+        stepped.undos[undoN] = e
+        let pushed: Buf = Buf { lines: stepped.lines, count: stepped.count, row: stepped.row,
+            col: stepped.col, want: stepped.want, modified: stepped.modified,
+            selRow: stepped.selRow, selCol: stepped.selCol, selActive: stepped.selActive,
+            undos: stepped.undos, undoN: undoN + 1,
+            redos: stepped.redos, redoN: stepped.redoN }
+
+        if (e.kind == BufKind.EDIT) {
+            self.lines[e.row] = e.line2
+            return pushed->state(e.postRow, e.postCol, e.postCol, true)
+        }
+        if (e.kind == BufKind.SPLIT) {
+            self.lines[e.row] = e.line.substring(0, e.pos)
+            let split: Buf = self->insert_line(e.row + 1, e.line2)
+            return split->with_stacks(pushed)->state(e.postRow, e.postCol, e.postCol, true)
+        }
+        if (e.kind == BufKind.RANGE) {
+            let replaced: Buf = self->replace_range(e.row, e.pos, e.endRow, e.endCol, e.line2)
+            let done: Buf = replaced->with_stacks(pushed)
+            return done->state(e.postRow, e.postCol, e.postCol, true)
+        }
+        // JOIN
+        self.lines[e.row - 1] = e.top + e.line
+        let merged: Buf = self->remove_line(e.row)
+        return merged->with_stacks(pushed)->state(e.postRow, e.postCol, e.postCol, true)
+    }
 }

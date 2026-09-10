@@ -96,7 +96,7 @@ func ed_repeat_rate() : int {
 // A painter captures nothing, so the document and every bit of view state sit at file scope.
 
 global ed_ui: Ui = ui_new(4096)
-global ed_buf: Buf = buf_new()
+global ed_buf: Buf = Buf->new()
 global ed_path: string = "untitled.prl"
 global ed_theme: int = Theme.MIDNIGHT
 
@@ -363,8 +363,8 @@ func ed_icon_btn(ui: Ui, act: int, theme: int) : int {
 // ── Files and the clipboard ──────────────────────────────────────────────────
 
 func ed_save() : void {
-    writeFile(ed_path, buf_to_text(ed_buf))
-    ed_buf = buf_saved(ed_buf)
+    writeFile(ed_path, ed_buf->to_text())
+    ed_buf = ed_buf->saved()
     ed_status = "Saved " + ed_path
     ed_statusAt = time_millis()
 }
@@ -381,7 +381,7 @@ func ed_save_as() : void {
 
 func ed_load(path: string) : void {
     if (fileExists(path)) {
-        ed_buf = buf_from_text(readFile(path))
+        ed_buf = Buf->from_text(readFile(path))
         ed_status = "Loaded " + path
     } else {
         ed_buf = ed_sample()
@@ -406,7 +406,7 @@ func ed_open() : void {
 // New: an empty document under the until-saved name.
 func ed_new_file() : void {
     ed_path = "untitled.prl"
-    ed_buf = buf_new()
+    ed_buf = Buf->new()
     ed_scroll = 0
     ed_hscroll = 0
     ed_blockDirty = true
@@ -417,8 +417,8 @@ func ed_new_file() : void {
 // ── The clipboard ────────────────────────────────────────────────────────────
 
 func ed_copy() : void {
-    if (buf_has_selection(ed_buf)) {
-        WinFormsHelper.SetClipboardText(buf_selection_text(ed_buf))
+    if (ed_buf->has_selection()) {
+        WinFormsHelper.SetClipboardText(ed_buf->selection_text())
         ed_status = "Copied"
         ed_statusAt = time_millis()
     }
@@ -426,9 +426,9 @@ func ed_copy() : void {
 
 // Copy, then take the selection out of the document.
 func ed_cut() : void {
-    if (buf_has_selection(ed_buf)) {
-        WinFormsHelper.SetClipboardText(buf_selection_text(ed_buf))
-        ed_buf = buf_delete_selection(ed_buf)
+    if (ed_buf->has_selection()) {
+        WinFormsHelper.SetClipboardText(ed_buf->selection_text())
+        ed_buf = ed_buf->delete_selection()
         ed_blockDirty = true
         ed_caretAt = time_millis()
         ed_status = "Cut"
@@ -439,7 +439,7 @@ func ed_cut() : void {
 func ed_paste() : void {
     let text: string = WinFormsHelper.GetClipboardText()
     if (text != "") {
-        ed_buf = buf_paste(ed_buf, text)
+        ed_buf = ed_buf->paste(text)
         ed_blockDirty = true
         ed_caretAt = time_millis()
         ed_status = "Pasted"
@@ -448,17 +448,17 @@ func ed_paste() : void {
 }
 
 func ed_undo() : void {
-    ed_buf = buf_collapse_selection(buf_undo(ed_buf))
+    ed_buf = ed_buf->undo()->collapse_selection()
     ed_blockDirty = true
 }
 
 func ed_redo() : void {
-    ed_buf = buf_collapse_selection(buf_redo(ed_buf))
+    ed_buf = ed_buf->redo()->collapse_selection()
     ed_blockDirty = true
 }
 
 func ed_select_all() : void {
-    ed_buf = buf_select_all(ed_buf)
+    ed_buf = ed_buf->select_all()
     ed_caretAt = time_millis()
 }
 
@@ -467,7 +467,7 @@ func ed_select_all() : void {
  * Joined by hand because there is no way to write a newline inside a string literal.
  */
 func ed_sample() : Buf {
-    let nl: string = buf_nl()
+    let nl: string = Buf->nl()
     let s: string = ""
     s = s + "// A small program to edit. Try changing it." + nl
     s = s + "// Keywords, types, strings, numbers and comments all colour as you type." + nl
@@ -497,7 +497,7 @@ func ed_sample() : Buf {
     s = s + "        print(string(42))" + nl
     s = s + "    }" + nl
     s = s + "}" + nl
-    return buf_from_text(s)
+    return Buf->from_text(s)
 }
 
 // ── Input ────────────────────────────────────────────────────────────────────
@@ -545,9 +545,9 @@ func ed_expire_status(now: int) : void {
  */
 func ed_move(mover: func(Buf) : Buf, extend: bool, now: int) : void {
     if (extend) {
-        ed_buf = buf_begin_selection(ed_buf)
+        ed_buf = ed_buf->begin_selection()
     } else {
-        ed_buf = buf_collapse_selection(ed_buf)
+        ed_buf = ed_buf->collapse_selection()
     }
     ed_buf = mover(ed_buf)
     ed_moved(now)
@@ -555,11 +555,11 @@ func ed_move(mover: func(Buf) : Buf, extend: bool, now: int) : void {
 
 // Page movement takes its distance from the window, so it gets wrappers of its own.
 func ed_page_up(b: Buf) : Buf {
-    return buf_move_page(b, 0 - ed_page_rows())
+    return b->move_page(0 - ed_page_rows())
 }
 
 func ed_page_down(b: Buf) : Buf {
-    return buf_move_page(b, ed_page_rows())
+    return b->move_page(ed_page_rows())
 }
 
 /*
@@ -577,39 +577,39 @@ func ed_key(vk: int, shift: bool, ctrl: bool, now: int) : void {
         elif (vk == 88) { ed_cut() }             // X
         elif (vk == 86) { ed_paste() }           // V
         elif (vk == KeyVk.END) {
-            ed_buf = buf_collapse_selection(ed_buf)
-            ed_buf = buf_set_cursor(ed_buf, ed_buf.count - 1, ed_buf.lines[ed_buf.count - 1].length())
+            ed_buf = ed_buf->collapse_selection()
+            ed_buf = ed_buf->set_cursor(ed_buf.count - 1, ed_buf.lines[ed_buf.count - 1].length())
             ed_moved(now)
         } elif (vk == KeyVk.HOME) {
-            ed_buf = buf_collapse_selection(ed_buf)
-            ed_buf = buf_set_cursor(ed_buf, 0, 0)
+            ed_buf = ed_buf->collapse_selection()
+            ed_buf = ed_buf->set_cursor(0, 0)
             ed_moved(now)
         }
         return
     }
 
     if (vk == KeyVk.LEFT) {
-        ed_move(buf_move_left, shift, now)
+        ed_move(Buf->move_left, shift, now)
         return
     }
     if (vk == KeyVk.RIGHT) {
-        ed_move(buf_move_right, shift, now)
+        ed_move(Buf->move_right, shift, now)
         return
     }
     if (vk == KeyVk.UP) {
-        ed_move(buf_move_up, shift, now)
+        ed_move(Buf->move_up, shift, now)
         return
     }
     if (vk == KeyVk.DOWN) {
-        ed_move(buf_move_down, shift, now)
+        ed_move(Buf->move_down, shift, now)
         return
     }
     if (vk == KeyVk.HOME) {
-        ed_move(buf_move_home, shift, now)
+        ed_move(Buf->move_home, shift, now)
         return
     }
     if (vk == KeyVk.END) {
-        ed_move(buf_move_end, shift, now)
+        ed_move(Buf->move_end, shift, now)
         return
     }
     if (vk == KeyVk.PRIOR) {
@@ -622,43 +622,43 @@ func ed_key(vk: int, shift: bool, ctrl: bool, now: int) : void {
     }
 
     if (vk == KeyVk.BACKSPACE) {
-        if (buf_has_selection(ed_buf)) {
-            ed_buf = buf_delete_selection(ed_buf)
+        if (ed_buf->has_selection()) {
+            ed_buf = ed_buf->delete_selection()
         } else {
-            ed_buf = buf_backspace(ed_buf)
+            ed_buf = ed_buf->backspace()
         }
         ed_edited(now)
         return
     }
     if (vk == KeyVk.DELETE) {
-        if (buf_has_selection(ed_buf)) {
-            ed_buf = buf_delete_selection(ed_buf)
+        if (ed_buf->has_selection()) {
+            ed_buf = ed_buf->delete_selection()
         } else {
-            ed_buf = buf_delete(ed_buf)
+            ed_buf = ed_buf->delete()
         }
         ed_edited(now)
         return
     }
     if (vk == KeyVk.ENTER) {
-        if (buf_has_selection(ed_buf)) {
-            ed_buf = buf_delete_selection(ed_buf)
+        if (ed_buf->has_selection()) {
+            ed_buf = ed_buf->delete_selection()
         }
-        ed_buf = buf_enter(ed_buf)
+        ed_buf = ed_buf->enter()
         ed_edited(now)
         return
     }
     if (vk == KeyVk.TAB) {
-        if (buf_has_selection(ed_buf)) {
-            ed_buf = buf_delete_selection(ed_buf)
+        if (ed_buf->has_selection()) {
+            ed_buf = ed_buf->delete_selection()
         }
-        ed_buf = buf_tab(ed_buf)
+        ed_buf = ed_buf->tab()
         ed_edited(now)
         return
     }
 
     let ch: string = key_to_char(vk, shift)
     if (ch != "") {
-        ed_buf = buf_insert(ed_buf, ch)
+        ed_buf = ed_buf->insert(ch)
         ed_edited(now)
     }
 }
@@ -713,13 +713,13 @@ func ed_input(host: GlHost) : void {
 
     if (clicked && (pressed || dragged)) {
         if (shift) {
-            ed_buf = buf_begin_selection(ed_buf)
-            ed_buf = buf_set_cursor(ed_buf, ed_click_row(my), ed_click_col(mx), true)
+            ed_buf = ed_buf->begin_selection()
+            ed_buf = ed_buf->set_cursor(ed_click_row(my), ed_click_col(mx), true)
         } elif (pressed) {
-            ed_buf = buf_set_cursor(ed_buf, ed_click_row(my), ed_click_col(mx))
+            ed_buf = ed_buf->set_cursor(ed_click_row(my), ed_click_col(mx))
         } else {
-            ed_buf = buf_begin_selection(ed_buf)
-            ed_buf = buf_set_cursor(ed_buf, ed_click_row(my), ed_click_col(mx), true)
+            ed_buf = ed_buf->begin_selection()
+            ed_buf = ed_buf->set_cursor(ed_click_row(my), ed_click_col(mx), true)
         }
         ed_caretAt = now
     }
@@ -824,9 +824,9 @@ func ed_paint(ops: array<int>, at: int, tag: int, x: int, y: int, w: int, h: int
 
     // The selection, one band per row it covers — from the anchor's column on the first row,
     // through the full width of the rows between, to the cursor's column on the last.
-    if (buf_has_selection(ed_buf)) {
+    if (ed_buf->has_selection()) {
         let ends: array<int> = array_new(4)
-        buf_sel_ordered(ed_buf, ends)
+        ed_buf->sel_ordered(ends)
         let r1: int = ends[0]
         let c1: int = ends[1]
         let r2: int = ends[2]
