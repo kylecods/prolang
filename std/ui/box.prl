@@ -60,8 +60,8 @@ func box_measure(ui: Ui, fonts: FontSet, node: int) : void {
     if (kind == UiKind.TEXT || kind == UiKind.BUTTON) {
         let font: int = ui_get(ui, node, UiF.FONT)
 
-        contentW = font_measure(fonts, font, ui_text_of(ui, node))
-        contentH = font_line_height(fonts, font)
+        contentW = fonts->measure(font, ui_text_of(ui, node))
+        contentH = fonts->line_height(font)
     } elif (ui_is_container(ui, node)) {
         let gap: int = ui_get(ui, node, UiF.GAP)
         let horizontal: bool = ui_is_horizontal(ui, node)

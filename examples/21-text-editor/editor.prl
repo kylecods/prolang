@@ -123,7 +123,7 @@ global ed_blockDirty: bool = true
 global ed_iconTex: array<int> = array_new(16)  // OpenGL textures for the toolbar glyphs
 global ed_iconTheme: int = 0 - 1               // the theme the icons were drawn in
 
-global ed_frames: Fps = fps_new()
+global ed_frames: Fps = Fps->new()
 
 // ── Geometry ─────────────────────────────────────────────────────────────────
 
@@ -916,12 +916,12 @@ func ed_run() : void {
     bolds[1] = 0
     let fonts: FontSet = hostgl_fonts(host, families, sizes, bolds)
 
-    ed_cw = font_width(fonts, EdFont.CODE, 77)
-    ed_lh = font_line_height(fonts, EdFont.CODE) + 3
+    ed_cw = fonts->width(EdFont.CODE, 77)
+    ed_lh = fonts->line_height(EdFont.CODE) + 3
     ed_build_icons(ed_theme)
 
     while (hostgl_running(host)) {
-        fps_tick(ed_frames)
+        ed_frames->tick()
         hostgl_begin(host, ed_ui)
         ed_input(host)
 
@@ -968,7 +968,7 @@ func ed_run() : void {
                     ui_text(ed_ui, "Ctrl+Z undo   Ctrl+Y redo   Ctrl+C/X/V clipboard   Ctrl+A all   Shift+arrows select",
                         fg: theme_text_dim(theme), font: EdFont.UI)
                 }
-                ui_text(ed_ui, fps_text(ed_frames), fg: theme_text_dim(theme), font: EdFont.UI)
+                ui_text(ed_ui, ed_frames->text(), fg: theme_text_dim(theme), font: EdFont.UI)
             ui_end(ed_ui)
         ui_end(ed_ui)
 

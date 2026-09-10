@@ -142,14 +142,14 @@ func hostw_open(title: string, width: int, height: int, background: int = 0, max
  */
 func hostw_fonts(families: array<string>, sizes: array<int>, bolds: array<int>) : FontSet {
     let count: int = families.length()
-    let fonts: FontSet = font_new(count)
+    let fonts: FontSet = FontSet->new(count)
 
     let i: int = 0
     while (i < count) {
         let bold: bool = bolds[i] != 0
         let registered: int = WinFormsHelper.SurfaceAddFont(families[i], sizes[i], bold)
 
-        WinFormsHelper.SurfaceMeasureFont(registered, fonts.widths, i * font_glyphs(),
+        WinFormsHelper.SurfaceMeasureFont(registered, fonts.widths, i * FontSet->glyphs(),
             fonts.metrics, i * 2)
 
         i = i + 1
@@ -160,7 +160,7 @@ func hostw_fonts(families: array<string>, sizes: array<int>, bolds: array<int>) 
 
 // A single font, for programs that want one and do not want to build arrays to say so.
 func hostw_font(family: string = "Segoe UI", size: int = 10, bold: bool = false) : FontSet {
-    let fonts: FontSet = font_new(1)
+    let fonts: FontSet = FontSet->new(1)
     let registered: int = WinFormsHelper.SurfaceAddFont(family, size, bold)
 
     WinFormsHelper.SurfaceMeasureFont(registered, fonts.widths, 0, fonts.metrics, 0)

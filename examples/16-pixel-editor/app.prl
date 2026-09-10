@@ -206,7 +206,7 @@ func app_run() : void
     // Sized to the whole image so a shape covering the canvas can still be rewound exactly.
     let touched: array<int> = array_new(doc_pixel_count(doc))
 
-    let history: History = hist_reset(hist_new(doc.width, doc.height, app_undo_slots()), doc)
+    let history: History = History->new(doc.width, doc.height, app_undo_slots())->reset(doc)
     let stroke: Stroke = stroke_new(Tool.PENCIL, palette_colour(0), 1)
     let view: View = View->new(View->fit_zoom(doc.width, doc.height, canvasW, canvasH))->centre(doc.width, doc.height, canvasW, canvasH)
 
@@ -316,7 +316,7 @@ func app_run() : void
                 }
 
                 if (held.commit) {
-                    history = hist_commit(history, doc)
+                    history = history->commit(doc)
                     dirty = true
                 }
 
@@ -342,7 +342,7 @@ func app_run() : void
                 stroke = tool_release(stroke, doc, preview, touched, x, y)
 
                 if (stroke.commit) {
-                    history = hist_commit(history, doc)
+                    history = history->commit(doc)
                     dirty = true
                 }
 
@@ -379,12 +379,12 @@ func app_run() : void
                 chrome_palette(strip, stripImage, swatches, cell, columns, selected)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (ev[3] == Key.Z && (ev[5] & Mod.CONTROL) != 0) {
-                history = hist_undo(history, doc)
+                history = history->undo(doc)
                 doc_copy_into(doc, preview)
                 dirty = true
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (ev[3] == Key.Y && (ev[5] & Mod.CONTROL) != 0) {
-                history = hist_redo(history, doc)
+                history = history->redo(doc)
                 doc_copy_into(doc, preview)
                 dirty = true
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
@@ -408,19 +408,19 @@ func app_run() : void
                 chrome_palette(strip, stripImage, swatches, cell, columns, selected)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.UNDO) {
-                history = hist_undo(history, doc)
+                history = history->undo(doc)
                 doc_copy_into(doc, preview)
                 dirty = true
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.REDO) {
-                history = hist_redo(history, doc)
+                history = history->redo(doc)
                 doc_copy_into(doc, preview)
                 dirty = true
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.CLEAR) {
                 doc_fill(doc, color_rgb(255, 255, 255))
                 doc_copy_into(doc, preview)
-                history = hist_commit(history, doc)
+                history = history->commit(doc)
                 dirty = true
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.ZOOM_IN) {
@@ -458,7 +458,7 @@ func app_run() : void
                     let resized: array<int> = array_new(doc_pixel_count(doc))
                     touched = resized
 
-                    history = hist_reset(hist_new(doc.width, doc.height, app_undo_slots()), doc)
+                    history = History->new(doc.width, doc.height, app_undo_slots())->reset(doc)
                     stroke = stroke_with_tool(stroke, stroke.tool)
                     dirty = false
 

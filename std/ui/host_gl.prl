@@ -109,7 +109,7 @@ func hostgl_close(host: GlHost) : void {
  */
 func hostgl_fonts(host: GlHost, families: array<string>, sizes: array<int>, bolds: array<int>) : FontSet {
     let count: int = families.length()
-    let fonts: FontSet = font_new(count)
+    let fonts: FontSet = FontSet->new(count)
 
     let i: int = 0
     while (i < count) {
@@ -120,7 +120,7 @@ func hostgl_fonts(host: GlHost, families: array<string>, sizes: array<int>, bold
             host.fontIds[i] = id
         }
 
-        gl_measure_font(id, fonts.widths, i * font_glyphs(), fonts.metrics, i * 2)
+        gl_measure_font(id, fonts.widths, i * FontSet->glyphs(), fonts.metrics, i * 2)
         i = i + 1
     }
 

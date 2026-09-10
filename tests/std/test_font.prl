@@ -6,37 +6,37 @@ import "testing"
 import "ui/font"
 
 func test_font_run() : void {
-    let fonts: FontSet = font_new(2)
+    let fonts: FontSet = FontSet->new(2)
 
     // A proportional font, filled in by hand the way a host would fill it from real measurements.
-    font_set_metrics(fonts, 0, 20, 15)
-    font_set_width(fonts, 0, 65, 12)     // 'A'
-    font_set_width(fonts, 0, 66, 10)     // 'B'
-    font_set_width(fonts, 0, 105, 4)     // 'i'
-    font_set_width(fonts, 0, 63, 9)      // '?', the fallback
+    fonts->set_metrics(0, 20, 15)
+    fonts->set_width(0, 65, 12)     // 'A'
+    fonts->set_width(0, 66, 10)     // 'B'
+    fonts->set_width(0, 105, 4)     // 'i'
+    fonts->set_width(0, 63, 9)      // '?', the fallback
 
-    t_eq_int("line height", font_line_height(fonts, 0), 20)
-    t_eq_int("ascent", font_ascent(fonts, 0), 15)
-    t_eq_int("width of A", font_width(fonts, 0, 65), 12)
+    t_eq_int("line height", fonts->line_height(0), 20)
+    t_eq_int("ascent", fonts->ascent(0), 15)
+    t_eq_int("width of A", fonts->width(0, 65), 12)
 
     // Measuring is the sum of the advances, which is what the layout pass relies on.
-    t_eq_int("measure AB", font_measure(fonts, 0, "AB"), 22)
-    t_eq_int("measure ABi", font_measure(fonts, 0, "ABi"), 26)
-    t_eq_int("measure empty", font_measure(fonts, 0, ""), 0)
+    t_eq_int("measure AB", fonts->measure(0, "AB"), 22)
+    t_eq_int("measure ABi", fonts->measure(0, "ABi"), 26)
+    t_eq_int("measure empty", fonts->measure(0, ""), 0)
 
     // A character the table does not cover falls back rather than reading out of bounds. This is
     // the check that matters: the alternative is an index crash on the first non-ASCII character.
-    t_eq_int("high code falls back", font_width(fonts, 0, 8364), 9)
-    t_eq_int("negative code falls back", font_width(fonts, 0, 0 - 5), 9)
+    t_eq_int("high code falls back", fonts->width(0, 8364), 9)
+    t_eq_int("negative code falls back", fonts->width(0, 0 - 5), 9)
 
     // A second font is independent of the first.
-    font_set_monospace(fonts, 1, 8, 8, 7)
-    t_eq_int("monospace advance", font_width(fonts, 1, 65), 8)
-    t_eq_int("monospace is uniform", font_width(fonts, 1, 105), 8)
-    t_eq_int("monospace measure", font_measure(fonts, 1, "abcd"), 32)
-    t_eq_int("font 0 unaffected", font_width(fonts, 0, 65), 12)
+    fonts->set_monospace(1, 8, 8, 7)
+    t_eq_int("monospace advance", fonts->width(1, 65), 8)
+    t_eq_int("monospace is uniform", fonts->width(1, 105), 8)
+    t_eq_int("monospace measure", fonts->measure(1, "abcd"), 32)
+    t_eq_int("font 0 unaffected", fonts->width(0, 65), 12)
 
     // An out-of-range font reports nothing rather than indexing past the table.
-    t_eq_int("unknown font width", font_width(fonts, 9, 65), 0)
-    t_eq_int("unknown font height", font_line_height(fonts, 9), 0)
+    t_eq_int("unknown font width", fonts->width(9, 65), 0)
+    t_eq_int("unknown font height", fonts->line_height(9), 0)
 }

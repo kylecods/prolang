@@ -295,8 +295,8 @@ func dl_button(ui: Ui, fonts: FontSet, ops: array<int>, at: int, node: int) : in
     if (index < 0) { return next }
 
     let font: int = ui_get(ui, node, UiF.FONT)
-    let textW: int = font_measure(fonts, font, ui.strs[index])
-    let textH: int = font_line_height(fonts, font)
+    let textW: int = fonts->measure(font, ui.strs[index])
+    let textH: int = fonts->line_height(font)
 
     let x: int = ui_get(ui, node, UiF.X) + ((ui_get(ui, node, UiF.W) - textW) / 2)
     let y: int = ui_get(ui, node, UiF.Y) + ((ui_get(ui, node, UiF.H) - textH) / 2)

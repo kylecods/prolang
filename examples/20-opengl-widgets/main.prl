@@ -170,10 +170,10 @@ func main()
 
     let fonts: FontSet = hostgl_fonts(host, families, sizes, bolds)
     let ui: Ui = ui_new(512)
-    let frames: Fps = fps_new()
+    let frames: Fps = Fps->new()
 
     while (hostgl_running(host)) {
-        fps_tick(frames)
+        frames->tick()
 
         if (state[SceneS.SPINNING] == 1) {
             state[SceneS.ANG_X] = (state[SceneS.ANG_X] + 1) % 360
@@ -210,7 +210,7 @@ func main()
             ui_row(ui, gap: 8)
                 ui_text(ui, "OpenGL 3D Viewport in UI Widgets", font: Font.TITLE, fg: theme_text(theme))
                 ui_spacer(ui, flex: 1)
-                ui_text(ui, fps_text_detailed(frames), fg: theme_text_dim(theme))
+                ui_text(ui, frames->text_detailed(), fg: theme_text_dim(theme))
             ui_end(ui)
 
             // Main Content Area: 3D Scene + Control Sidebar

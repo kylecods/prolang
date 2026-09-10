@@ -131,9 +131,9 @@ func hostp_open(maxOps: int = 2048) : PspHost {
  * the numbers in the table differ.
  */
 func hostp_fonts() : FontSet {
-    let fonts: FontSet = font_new(1)
+    let fonts: FontSet = FontSet->new(1)
 
-    font_set_monospace(fonts, 0, hostp_glyph_size(), hostp_glyph_size(), hostp_glyph_size())
+    fonts->set_monospace(0, hostp_glyph_size(), hostp_glyph_size(), hostp_glyph_size())
 
     return fonts
 }

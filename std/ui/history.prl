@@ -34,194 +34,196 @@ struct History {
     cursor: int;
 }
 
-/*
- * An empty history sized for `slots` snapshots of a width x height image.
- *
- * `slots` is clamped to at least two: with one slot there is nothing to go back to, and the
- * arithmetic for dropping the oldest entry would run on every commit.
- */
-func hist_new(width: int, height: int, slots: int) : History {
-    let capacity: int = max(slots, 2)
-    let cells: array<int> = array_new(capacity * width * height)
+imp History {
+    /*
+     * An empty history sized for `slots` snapshots of a width x height image.
+     *
+     * `slots` is clamped to at least two: with one slot there is nothing to go back to, and the
+     * arithmetic for dropping the oldest entry would run on every commit.
+     */
+    func new(width: int, height: int, slots: int) : History {
+        let capacity: int = max(slots, 2)
+        let cells: array<int> = array_new(capacity * width * height)
 
-    return History {
-        cells:  cells,
-        slots:  capacity,
-        width:  width,
-        height: height,
-        start:  0,
-        count:  0,
-        cursor: 0
-    }
-}
-
-// Ring slot holding logical entry `logical`.
-func hist_slot(history: History, logical: int) : int {
-    return (history.start + logical) % history.slots
-}
-
-// Offset into the flat buffer where ring slot `slot` begins.
-func hist_offset(history: History, slot: int) : int {
-    return slot * history.width * history.height
-}
-
-// ── Transfer ─────────────────────────────────────────────────────────────────
-
-// Copies the document into a ring slot.
-func hist_store(history: History, slot: int, doc: Document) : void {
-    let base: int = hist_offset(history, slot)
-    let count: int = history.width * history.height
-    let i: int = 0
-
-    while (i < count) {
-        history.cells[base + i] = doc.pixels[i]
-        i = i + 1
-    }
-}
-
-// Copies a ring slot back into the document, overwriting it.
-func hist_load(history: History, slot: int, doc: Document) : void {
-    let base: int = hist_offset(history, slot)
-    let count: int = history.width * history.height
-    let i: int = 0
-
-    while (i < count) {
-        doc.pixels[i] = history.cells[base + i]
-        i = i + 1
-    }
-}
-
-// ── State changes ────────────────────────────────────────────────────────────
-
-/*
- * Discards every snapshot and records `doc` as the starting state.
- *
- * Called on new and on open. Without the initial snapshot the first undo would have nothing to
- * return to and the first edit would be unrepeatable.
- */
-func hist_reset(history: History, doc: Document) : History {
-    hist_store(history, 0, doc)
-
-    return History {
-        cells:  history.cells,
-        slots:  history.slots,
-        width:  history.width,
-        height: history.height,
-        start:  0,
-        count:  1,
-        cursor: 0
-    }
-}
-
-/*
- * Records the document as a new snapshot.
- *
- * Two things happen in order, and getting either wrong produces a history that misbehaves only
- * after a specific sequence:
- *
- *   1. The redo tail is dropped. `count` becomes `cursor + 1`, not `cursor` — the snapshot the
- *      cursor points at is the current state and has to survive.
- *   2. If that fills the ring, the oldest snapshot is forgotten by advancing `start`. `cursor`
- *      must come down with it, because every logical index has just shifted by one; leaving it
- *      alone makes the next undo jump two states back.
- */
-func hist_commit(history: History, doc: Document) : History {
-    let start: int = history.start
-    let count: int = history.cursor + 1
-    let cursor: int = history.cursor
-
-    if (count >= history.slots) {
-        start = (start + 1) % history.slots
-        count = count - 1
-        cursor = cursor - 1
+        return History {
+            cells:  cells,
+            slots:  capacity,
+            width:  width,
+            height: height,
+            start:  0,
+            count:  0,
+            cursor: 0
+        }
     }
 
-    let staged: History = History {
-        cells:  history.cells,
-        slots:  history.slots,
-        width:  history.width,
-        height: history.height,
-        start:  start,
-        count:  count,
-        cursor: cursor
+    // Ring slot holding logical entry `logical`.
+    func slot(self: History, logical: int) : int {
+        return (self.start + logical) % self.slots
     }
 
-    hist_store(staged, hist_slot(staged, count), doc)
-
-    return History {
-        cells:  staged.cells,
-        slots:  staged.slots,
-        width:  staged.width,
-        height: staged.height,
-        start:  staged.start,
-        count:  count + 1,
-        cursor: count
-    }
-}
-
-func hist_can_undo(history: History) : bool {
-    return history.cursor > 0
-}
-
-func hist_can_redo(history: History) : bool {
-    return history.cursor < (history.count - 1)
-}
-
-/*
- * Steps back one snapshot and loads it into `doc`.
- *
- * Mutates the document *and* returns the updated history — the two halves of the state live in
- * different places, and only the array contents survive a call by themselves.
- */
-func hist_undo(history: History, doc: Document) : History {
-    if (!hist_can_undo(history)) {
-        return history
+    // Offset into the flat buffer where ring slot `slot` begins.
+    func offset(self: History, slot: int) : int {
+        return slot * self.width * self.height
     }
 
-    let cursor: int = history.cursor - 1
+    // ── Transfer ─────────────────────────────────────────────────────────────────
 
-    let moved: History = History {
-        cells:  history.cells,
-        slots:  history.slots,
-        width:  history.width,
-        height: history.height,
-        start:  history.start,
-        count:  history.count,
-        cursor: cursor
+    // Copies the document into a ring slot.
+    func store(self: History, slot: int, doc: Document) : void {
+        let base: int = self->offset(slot)
+        let count: int = self.width * self.height
+        let i: int = 0
+
+        while (i < count) {
+            self.cells[base + i] = doc.pixels[i]
+            i = i + 1
+        }
     }
 
-    hist_load(moved, hist_slot(moved, cursor), doc)
-    return moved
-}
+    // Copies a ring slot back into the document, overwriting it.
+    func load(self: History, slot: int, doc: Document) : void {
+        let base: int = self->offset(slot)
+        let count: int = self.width * self.height
+        let i: int = 0
 
-// Steps forward one snapshot and loads it into `doc`.
-func hist_redo(history: History, doc: Document) : History {
-    if (!hist_can_redo(history)) {
-        return history
+        while (i < count) {
+            doc.pixels[i] = self.cells[base + i]
+            i = i + 1
+        }
     }
 
-    let cursor: int = history.cursor + 1
+    // ── State changes ────────────────────────────────────────────────────────────
 
-    let moved: History = History {
-        cells:  history.cells,
-        slots:  history.slots,
-        width:  history.width,
-        height: history.height,
-        start:  history.start,
-        count:  history.count,
-        cursor: cursor
+    /*
+     * Discards every snapshot and records `doc` as the starting state.
+     *
+     * Called on new and on open. Without the initial snapshot the first undo would have nothing to
+     * return to and the first edit would be unrepeatable.
+     */
+    func reset(self: History, doc: Document) : History {
+        self->store(0, doc)
+
+        return History {
+            cells:  self.cells,
+            slots:  self.slots,
+            width:  self.width,
+            height: self.height,
+            start:  0,
+            count:  1,
+            cursor: 0
+        }
     }
 
-    hist_load(moved, hist_slot(moved, cursor), doc)
-    return moved
-}
+    /*
+     * Records the document as a new snapshot.
+     *
+     * Two things happen in order, and getting either wrong produces a history that misbehaves only
+     * after a specific sequence:
+     *
+     *   1. The redo tail is dropped. `count` becomes `cursor + 1`, not `cursor` — the snapshot the
+     *      cursor points at is the current state and has to survive.
+     *   2. If that fills the ring, the oldest snapshot is forgotten by advancing `start`. `cursor`
+     *      must come down with it, because every logical index has just shifted by one; leaving it
+     *      alone makes the next undo jump two states back.
+     */
+    func commit(self: History, doc: Document) : History {
+        let start: int = self.start
+        let count: int = self.cursor + 1
+        let cursor: int = self.cursor
 
-// How many snapshots are live. Used by the tests.
-func hist_count(history: History) : int {
-    return history.count
-}
+        if (count >= self.slots) {
+            start = (start + 1) % self.slots
+            count = count - 1
+            cursor = cursor - 1
+        }
 
-// Which snapshot the document currently matches. Used by the tests.
-func hist_cursor(history: History) : int {
-    return history.cursor
+        let staged: History = History {
+            cells:  self.cells,
+            slots:  self.slots,
+            width:  self.width,
+            height: self.height,
+            start:  start,
+            count:  count,
+            cursor: cursor
+        }
+
+        staged->store(staged->slot(count), doc)
+
+        return History {
+            cells:  staged.cells,
+            slots:  staged.slots,
+            width:  staged.width,
+            height: staged.height,
+            start:  staged.start,
+            count:  count + 1,
+            cursor: count
+        }
+    }
+
+    func can_undo(self: History) : bool {
+        return self.cursor > 0
+    }
+
+    func can_redo(self: History) : bool {
+        return self.cursor < (self.count - 1)
+    }
+
+    /*
+     * Steps back one snapshot and loads it into `doc`.
+     *
+     * Mutates the document *and* returns the updated history — the two halves of the state live in
+     * different places, and only the array contents survive a call by themselves.
+     */
+    func undo(self: History, doc: Document) : History {
+        if (!self->can_undo()) {
+            return self
+        }
+
+        let cursor: int = self.cursor - 1
+
+        let moved: History = History {
+            cells:  self.cells,
+            slots:  self.slots,
+            width:  self.width,
+            height: self.height,
+            start:  self.start,
+            count:  self.count,
+            cursor: cursor
+        }
+
+        moved->load(moved->slot(cursor), doc)
+        return moved
+    }
+
+    // Steps forward one snapshot and loads it into `doc`.
+    func redo(self: History, doc: Document) : History {
+        if (!self->can_redo()) {
+            return self
+        }
+
+        let cursor: int = self.cursor + 1
+
+        let moved: History = History {
+            cells:  self.cells,
+            slots:  self.slots,
+            width:  self.width,
+            height: self.height,
+            start:  self.start,
+            count:  self.count,
+            cursor: cursor
+        }
+
+        moved->load(moved->slot(cursor), doc)
+        return moved
+    }
+
+    // How many snapshots are live. Used by the tests.
+    func count(self: History) : int {
+        return self.count
+    }
+
+    // Which snapshot the document currently matches. Used by the tests.
+    func cursor(self: History) : int {
+        return self.cursor
+    }
 }

@@ -60,12 +60,12 @@ func main()
 
     let fonts: FontSet = hostw_font("Segoe UI", 10)
     let ui: Ui = ui_new(256)
-    let frames: Fps = fps_new()
+    let frames: Fps = Fps->new()
 
     while (hostw_running(host)) {
         // Counted at the top of the loop, so a frame is measured from one build to the next —
         // input, layout, the scene and the paint submission all included.
-        fps_tick(frames)
+        frames->tick()
 
         if (spinning == 1) {
             cube_turn_by(state, 1, 2, 0)
@@ -96,7 +96,7 @@ func main()
 
                 ui_spacer(ui, flex: 1)
 
-                ui_text(ui, fps_text_detailed(frames), fg: theme_text_dim(theme))
+                ui_text(ui, frames->text_detailed(), fg: theme_text_dim(theme))
             ui_end(ui)
 
             // The scene is a widget like any other: it takes the leftover space, sits inside a

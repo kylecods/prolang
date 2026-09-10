@@ -184,7 +184,7 @@ pixel per row is visibly ragged down its right edge.
 
 Layout needs a string's width before anything is drawn, and only the backend truly knows it. Rather
 than calling out mid-layout, **the host measures every glyph once at start-up** into a table, and
-`font_measure` sums advances over it.
+`FontSet->measure` sums advances over it.
 
 That is what keeps the layout engine pure: it runs identically on Windows Forms, on the PSP, and
 under `dotnet test` on a machine with no window system. It is also why `charCode` exists as a

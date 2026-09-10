@@ -93,7 +93,7 @@ It earned its place immediately: it read **40 fps** on the desktop build. The cu
 only changes when someone touches it and is just a frame-rate cap for one that animates. Passing a
 1ms wait while spinning took it to **64 fps**, with the frame time dropping from 32ms to 4ms.
 
-`fps_sample` takes the time as a parameter and only `fps_tick` reads the clock, which is what lets
+`Fps->sample` takes the time as a parameter and only `Fps->tick` reads the clock, which is what lets
 `tests/std/test_fps.prl` drive it with invented timestamps and check the cases that are hard to
 produce deliberately — a frame too fast to measure, a window that overshoots, and the clock wrapping
 past the end of a 32-bit int.

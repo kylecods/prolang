@@ -13,9 +13,9 @@ import "ui/hit"
 import "ui/font"
 
 func test_hit_fonts() : FontSet {
-    let fonts: FontSet = font_new(1)
+    let fonts: FontSet = FontSet->new(1)
 
-    font_set_monospace(fonts, 0, 10, 20, 16)
+    fonts->set_monospace(0, 10, 20, 16)
 
     return fonts
 }
