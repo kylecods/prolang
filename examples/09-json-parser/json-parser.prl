@@ -18,18 +18,16 @@ func parseResult(val: any, pos: int) : ParseResult {
 // UTILITY FUNCTIONS
 // ============================================
 
-func isWhitespace(ch: string) : bool {
-    return ch == " " || ch == "\t" || ch == "\n" || ch == "\r"
+func isWhitespace(ch: char) : bool {
+    return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r'
 }
 
-func isDigit(ch: string) : bool {
-    return ch == "0" || ch == "1" || ch == "2" || ch == "3" || ch == "4" ||
-           ch == "5" || ch == "6" || ch == "7" || ch == "8" || ch == "9"
+func isDigit(ch: char) : bool {
+    return ch >= '0' && ch <= '9'
 }
 
-func digitToInt(ch: string) : int {
-    let digits = "0123456789"
-    return digits.indexOf(ch)
+func digitToInt(ch: char) : int {
+    return ch - '0'
 }
 
 func skipWhitespace(json: string, pos: int) : int {
@@ -45,11 +43,10 @@ func skipWhitespace(json: string, pos: int) : int {
 
 func findQuoteEnd(json: string, startPos: int) : int {
     let pos = startPos + 1
-    let quote = """"
 
     while(pos < json.length()) {
         let ch = json.charAt(pos)
-        if(ch == quote) {
+        if(ch == '"') {
             return pos
         }
         pos = pos + 1
@@ -62,9 +59,7 @@ func findQuoteEnd(json: string, startPos: int) : int {
 // ============================================
 
 func parseString(json: string, pos: int) : ParseResult {
-    let quote = """"
-
-    if(pos >= json.length() || json.charAt(pos) != quote) {
+    if(pos >= json.length() || json.charAt(pos) != '"') {
         return parseResult("", pos)
     }
 
@@ -85,7 +80,7 @@ func parseNumber(json: string, pos: int) : ParseResult {
     let startPos = pos
     let isNegative = false
 
-    if(pos < json.length() && json.charAt(pos) == "-") {
+    if(pos < json.length() && json.charAt(pos) == '-') {
         isNegative = true
         pos = pos + 1
     }
@@ -112,8 +107,7 @@ func parseNumber(json: string, pos: int) : ParseResult {
     let idx = 0
 
     while(idx < numStr.length()) {
-        let digit = numStr.charAt(idx)
-        let digitVal = digitToInt(digit)
+        let digitVal = digitToInt(numStr.charAt(idx))
         result = result * 10 + digitVal
         idx = idx + 1
     }
@@ -166,7 +160,7 @@ func parseArray(json: string, pos: int) : ParseResult {
     pos = pos + 1
     pos = skipWhitespace(json, pos)
 
-    if(pos < json.length() && json.charAt(pos) == "]") {
+    if(pos < json.length() && json.charAt(pos) == ']') {
         return parseResult(dynarray_to_array<any>(arr), pos + 1)
     }
 
@@ -184,11 +178,11 @@ func parseArray(json: string, pos: int) : ParseResult {
         }
 
         let ch = json.charAt(pos)
-        if(ch == "]") {
+        if(ch == ']') {
             return parseResult(dynarray_to_array<any>(arr), pos + 1)
         }
 
-        if(ch == ",") {
+        if(ch == ',') {
             pos = pos + 1
             pos = skipWhitespace(json, pos)
         }
@@ -206,16 +200,14 @@ func parseObject(json: string, pos: int) : ParseResult {
     pos = pos + 1
     pos = skipWhitespace(json, pos)
 
-    if(pos < json.length() && json.charAt(pos) == "}") {
+    if(pos < json.length() && json.charAt(pos) == '}') {
         return parseResult(obj, pos + 1)
     }
-
-    let quote = """"
 
     while(pos < json.length()) {
         pos = skipWhitespace(json, pos)
 
-        if(pos >= json.length() || json.charAt(pos) != quote) {
+        if(pos >= json.length() || json.charAt(pos) != '"') {
             break
         }
 
@@ -225,7 +217,7 @@ func parseObject(json: string, pos: int) : ParseResult {
 
         pos = skipWhitespace(json, pos)
 
-        if(pos >= json.length() || json.charAt(pos) != ":") {
+        if(pos >= json.length() || json.charAt(pos) != ':') {
             break
         }
 
@@ -244,11 +236,11 @@ func parseObject(json: string, pos: int) : ParseResult {
         }
 
         let ch = json.charAt(pos)
-        if(ch == "}") {
+        if(ch == '}') {
             return parseResult(obj, pos + 1)
         }
 
-        if(ch == ",") {
+        if(ch == ',') {
             pos = pos + 1
         }
     }
@@ -269,28 +261,27 @@ func parseValue(json: string, pos: int) : ParseResult {
 
     let ch = json.charAt(pos)
 
-    if(ch == "{") {
+    if(ch == '{') {
         return parseObject(json, pos)
     }
 
-    if(ch == "[") {
+    if(ch == '[') {
         return parseArray(json, pos)
     }
 
-    let quote = """"
-    if(ch == quote) {
+    if(ch == '"') {
         return parseString(json, pos)
     }
 
-    if(ch == "t" || ch == "f") {
+    if(ch == 't' || ch == 'f') {
         return parseBoolean(json, pos)
     }
 
-    if(ch == "n") {
+    if(ch == 'n') {
         return parseNull(json, pos)
     }
 
-    if(isDigit(ch) || ch == "-") {
+    if(isDigit(ch) || ch == '-') {
         return parseNumber(json, pos)
     }
 

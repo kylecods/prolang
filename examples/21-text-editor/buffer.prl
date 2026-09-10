@@ -114,10 +114,9 @@ imp Buf {
                      undos: undos, undoN: 0, redos: redos, redoN: 0 }
     }
 
-    // The newline as text: the language has no escape sequences, so "\n" in source is literally
-    // backslash-n and the code has to come from its number.
+    // The newline as text.
     func nl() : string {
-        return Char.ConvertFromUtf32(10)
+        return "\n"
     }
 
     /*
@@ -132,7 +131,7 @@ imp Buf {
         let i: int = 0
 
         while (i < n) {
-            if (text.charCode(i) == 10) {
+            if (text.charAt(i) == '\n') {
                 b = b->append_line(Buf->strip_cr(text.substring(start, i)))
                 start = i + 1
             }
@@ -165,14 +164,14 @@ imp Buf {
     func strip_cr(line: string) : string {
         let n: int = line.length()
         if (n > 0) {
-            if (line.charCode(n - 1) == 13) {
+            if (line.charAt(n - 1) == '\r') {
                 return line.substring(0, n - 1)
             }
         }
         return line
     }
 
-    // Splits text into lines on the newline code point, dropping carriage returns. Empty text is one
+    // Splits text into lines on the newline, dropping carriage returns. Empty text is one
     // empty part, which is what a replacement by nothing wants.
     func split_lines(text: string) : DynArray<string> {
         let parts: DynArray<string> = dynarray_new<string>(8)
@@ -180,7 +179,7 @@ imp Buf {
         let start: int = 0
         let i: int = 0
         while (i < n) {
-            if (text.charCode(i) == 10) {
+            if (text.charAt(i) == '\n') {
                 parts = dynarray_push<string>(parts, Buf->strip_cr(text.substring(start, i)))
                 start = i + 1
             }
@@ -304,8 +303,8 @@ imp Buf {
         let n: int = line.length()
         let k: int = 0
         while (k < n) {
-            let c: int = line.charCode(k)
-            if (c != 32 && c != 9) {
+            let c: char = line.charAt(k)
+            if (c != ' ' && c != '\t') {
                 return line.substring(0, k)
             }
             k = k + 1

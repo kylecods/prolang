@@ -1,0 +1,94 @@
+import "io"
+import "char"
+
+/*
+ * The char type end to end: literals with escapes, comparisons, implicit conversion in both
+ * directions, arithmetic through promotion, concat, array<char>, and the std char helpers.
+ *
+ * Every line's output is asserted against a golden file by the execution tests, so a backend
+ * that prints the code point where the character belongs fails here rather than in a user's
+ * program.
+ */
+
+func classify(c: char) : string {
+    if (char_is_digit(c)) {
+        return "digit"
+    }
+    if (char_is_alpha(c)) {
+        if (char_is_upper(c)) {
+            return "upper"
+        }
+        return "lower"
+    }
+    if (char_is_whitespace(c)) {
+        return "space"
+    }
+    return "other"
+}
+
+func main() {
+    // Literals and escapes.
+    let a: char = 'a'
+    let newline: char = '\n'
+    let tab: char = '\t'
+    let quote: char = '\''
+    let backslash: char = '\\'
+    let nul: char = '\0'
+
+    print(a)
+    print(quote)
+    print(backslash)
+    print(string(nul).length())
+    print(newline == '\n')
+    print(tab == '\t')
+
+    // Comparisons over the whole alphabet.
+    print('a' < 'b')
+    print('z' >= 'a')
+    print('a' != 'b')
+    print('A' == 'A')
+
+    // Implicit conversion both ways.
+    let code: int = a
+    print(code)
+    let b: char = 98
+    print(b)
+
+    // Arithmetic: a char promotes to int, and '0' subtraction decodes digits.
+    print(a + 1)
+    print('7' - '0')
+
+    // charAt returns a char now.
+    let s = "prolang"
+    let g: char = s.charAt(3)
+    print(g)
+    print(g == 'l')
+
+    // Concatenation, both sides.
+    print("char: " + g)
+    print(g + "!")
+
+    // string() of a char is one-character text.
+    print(string(a))
+    print(string(quote).length())
+
+    // array<char>, written and read back.
+    let chars: array<char> = array_new(4)
+    chars[0] = 'x'
+    chars[1] = 'y'
+    chars[2] = 'z'
+    chars[3] = char(65)
+    print(chars[1])
+    print(chars[3])
+    print(chars.length())
+
+    // The std helpers.
+    print(classify('5'))
+    print(classify('Q'))
+    print(classify('m'))
+    print(classify(' '))
+    print(classify('~'))
+    print(char_to_upper('k'))
+    print(char_to_lower('K'))
+    print(char_hex_value('F'))
+}

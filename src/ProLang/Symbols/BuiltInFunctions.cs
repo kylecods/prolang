@@ -111,12 +111,13 @@ internal static class BuiltInFunctions
         ImmutableArray.Create(
             new ParameterSymbol("str", TypeSymbol.String, 0),
             new ParameterSymbol("index", TypeSymbol.Int, 1)),
-        TypeSymbol.String)
+        TypeSymbol.Char)
     {
         Documentation =
-            "The character at `index`, as a one-character string.\n\n" +
-            "ProLang has no character type, so indexing text yields text. Use `charCode()` to " +
-            "compare or do arithmetic on it. Ends the program if `index` is outside the string.",
+            "The character at `index`, as a `char`.\n\n" +
+            "`'a' == s.charAt(0)` compares directly, and `c - '0'` does arithmetic on it. " +
+            "Use `string(c)` to get one-character text back. Ends the program if `index` is " +
+            "outside the string.",
     };
 
     public static readonly FunctionSymbol StringCharCode = new("charCode",
@@ -127,9 +128,9 @@ internal static class BuiltInFunctions
     {
         Documentation =
             "The character at `index`, as its numeric code.\n\n" +
-            "The only way to do arithmetic on text. Without it, asking whether a character is a " +
-            "digit means comparing a one-character string against ten others. `\"a\".charCode(0)` " +
-            "is 97. Ends the program if `index` is outside the string.",
+            "Kept for code written before the char type: a `char` is now an int implicitly, so " +
+            "`s.charAt(i) - '0'` does the same without it. `\"a\".charCode(0)` is 97. Ends the " +
+            "program if `index` is outside the string.",
     };
 
     public static readonly FunctionSymbol StringSubstring = new("substring",

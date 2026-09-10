@@ -22,7 +22,7 @@ func test_buffer_run() : void {
     let loaded: Buf = Buf->from_text(crlf)
     t_eq_int("trailing newline adds no phantom line", loaded.count, 2)
 
-    let win: string = "one" + Char.ConvertFromUtf32(13) + Buf->nl() + "two"
+    let win: string = "one" + "\r" + Buf->nl() + "two"
     let fromWin: Buf = Buf->from_text(win)
     t_eq_str("carriage returns are dropped", fromWin.lines[0], "one")
     t_eq_int("last line kept", fromWin.count, 2)
@@ -258,7 +258,7 @@ func test_buffer_run() : void {
     t_eq_str("undo restores the selection", oZ.lines[0], "ab")
 
     // Paste with carriage returns, as a Windows clipboard holds.
-    let pasteWin: Buf = Buf->from_text("ab")->set_cursor(0, 2)->paste("x" + Char.ConvertFromUtf32(13) + nl + "y")
+    let pasteWin: Buf = Buf->from_text("ab")->set_cursor(0, 2)->paste("x" + "\r" + nl + "y")
     t_eq_str("carriage returns are dropped", pasteWin.lines[1], "y")
 
     // ── Select all then delete empties the document ──────────────────────────

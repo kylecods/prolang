@@ -9,6 +9,7 @@ public enum SyntaxKind
     WhitespaceToken,// '\t', '\r', ' '
     NumberToken,// '1'
     StringToken,//"test"
+    CharToken,//'a'
     IdentifierToken,//foo
     
     PlusToken,// '+'

@@ -17,6 +17,7 @@ internal sealed class BoundLiteralExpression : BoundExpression
             sbyte => TypeSymbol.Int8,
             short => TypeSymbol.Int16,
             ushort => TypeSymbol.UInt16,
+            char => TypeSymbol.Char,
             long => TypeSymbol.Int64,
             ulong => TypeSymbol.UInt64,
             string => TypeSymbol.String,

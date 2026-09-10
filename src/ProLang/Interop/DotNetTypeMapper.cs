@@ -28,7 +28,7 @@ public static class DotNetTypeMapper
         RegisterPrimitiveMapping(typeof(double), TypeSymbol.Float64);
         RegisterPrimitiveMapping(typeof(decimal), TypeSymbol.Float64);
         RegisterPrimitiveMapping(typeof(string), TypeSymbol.String);
-        RegisterPrimitiveMapping(typeof(char), TypeSymbol.String);
+        RegisterPrimitiveMapping(typeof(char), TypeSymbol.Char);
 
         // WinForms / Drawing value types that map one-to-one to prolang int
         // System.Drawing.Color   → int (ARGB): Color.FromArgb(int) / Color.ToArgb()
@@ -264,10 +264,10 @@ public static class DotNetTypeMapper
         if (value is decimal dec)
             return (double)dec;
 
-        // Convert char to string
-        if (value is char c)
+        // A char is now its own ProLang type, so it passes through rather than becoming text.
+        if (value is char)
         {
-            return c.ToString();
+            return value;
         }
 
         // Convert typed arrays to List<object>

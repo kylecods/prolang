@@ -83,6 +83,7 @@ func syn_is_type(word: string) : bool {
     if (word == "float64") { return true }
     if (word == "bool") { return true }
     if (word == "string") { return true }
+    if (word == "char") { return true }
     if (word == "any") { return true }
     if (word == "array") { return true }
     if (word == "map") { return true }
@@ -90,17 +91,17 @@ func syn_is_type(word: string) : bool {
     return false
 }
 
-func syn_is_digit(c: int) : bool {
-    return c >= 48 && c <= 57
+func syn_is_digit(c: char) : bool {
+    return c >= '0' && c <= '9'
 }
 
-func syn_is_ident_start(c: int) : bool {
-    if (c >= 65 && c <= 90) { return true }
-    if (c >= 97 && c <= 122) { return true }
-    return c == 95
+func syn_is_ident_start(c: char) : bool {
+    if (c >= 'A' && c <= 'Z') { return true }
+    if (c >= 'a' && c <= 'z') { return true }
+    return c == '_'
 }
 
-func syn_is_ident_part(c: int) : bool {
+func syn_is_ident_part(c: char) : bool {
     if (syn_is_ident_start(c)) { return true }
     return syn_is_digit(c)
 }
@@ -108,13 +109,13 @@ func syn_is_ident_part(c: int) : bool {
 /*
  * The end of the identifier starting at `from` — the scan runs to the first character that cannot
  * be part of a name. Written as its own function because && does not short-circuit here, so a
- * bounds test in the same condition as a charCode would read past the end.
+ * bounds test in the same condition as a charAt would read past the end.
  */
 func syn_scan_ident(line: string, from: int) : int {
     let n: int = line.length()
     let run: int = from
     while (run < n) {
-        if (syn_is_ident_part(line.charCode(run))) {
+        if (syn_is_ident_part(line.charAt(run))) {
             run = run + 1
         } else {
             return run
@@ -124,21 +125,21 @@ func syn_scan_ident(line: string, from: int) : int {
 }
 
 // The characters drawn as operators rather than punctuation. + - * / % = < > ! & | ^ ~ :
-func syn_is_oper(c: int) : bool {
-    if (c == 43) { return true }
-    if (c == 45) { return true }
-    if (c == 42) { return true }
-    if (c == 47) { return true }
-    if (c == 37) { return true }
-    if (c == 61) { return true }
-    if (c == 60) { return true }
-    if (c == 62) { return true }
-    if (c == 33) { return true }
-    if (c == 38) { return true }
-    if (c == 124) { return true }
-    if (c == 94) { return true }
-    if (c == 126) { return true }
-    if (c == 58) { return true }
+func syn_is_oper(c: char) : bool {
+    if (c == '+') { return true }
+    if (c == '-') { return true }
+    if (c == '*') { return true }
+    if (c == '/') { return true }
+    if (c == '%') { return true }
+    if (c == '=') { return true }
+    if (c == '<') { return true }
+    if (c == '>') { return true }
+    if (c == '!') { return true }
+    if (c == '&') { return true }
+    if (c == '|') { return true }
+    if (c == '^') { return true }
+    if (c == '~') { return true }
+    if (c == ':') { return true }
     return false
 }
 
@@ -151,7 +152,7 @@ func syn_find_close(line: string, from: int) : int {
     let n: int = line.length()
     let i: int = from
     while (i < n - 1) {
-        if (line.charCode(i) == 42 && line.charCode(i + 1) == 47) {
+        if (line.charAt(i) == '*' && line.charAt(i + 1) == '/') {
             return i
         }
         i = i + 1
@@ -188,14 +189,14 @@ func syn_line(line: string, inBlock: int, outState: array<int>) : DynArray<Tok> 
             continue
         }
 
-        let c: int = line.charCode(i)
+        let c: char = line.charAt(i)
 
         // Whitespace runs.
-        if (c == 32 || c == 9) {
+        if (c == ' ' || c == '\t') {
             let ws: int = i
             while (ws < n) {
-                let wch: int = line.charCode(ws)
-                if (wch != 32 && wch != 9) {
+                let wch: char = line.charAt(ws)
+                if (wch != ' ' && wch != '\t') {
                     break
                 }
                 ws = ws + 1
@@ -207,18 +208,18 @@ func syn_line(line: string, inBlock: int, outState: array<int>) : DynArray<Tok> 
 
         // Comments. Both kinds start with '/', and the second character only exists when there is
         // one — && does not short-circuit in this language, so the lookahead has to be nested.
-        if (c == 47) {
+        if (c == '/') {
             if (i + 1 < n) {
-                let next: int = line.charCode(i + 1)
+                let next: char = line.charAt(i + 1)
 
-                if (next == 47) {
+                if (next == '/') {
                     toks = dynarray_push<Tok>(toks, Tok { start: i, len: n - i, kind: TokKind.COMMENT })
                     i = n
                     continue
                 }
 
                 // Block comment: to the close on this line, or the line ends and the state carries.
-                if (next == 42) {
+                if (next == '*') {
                     let closeC: int = syn_find_close(line, i + 2)
                     if (closeC < 0) {
                         toks = dynarray_push<Tok>(toks, Tok { start: i, len: n - i, kind: TokKind.COMMENT })
@@ -235,14 +236,14 @@ func syn_line(line: string, inBlock: int, outState: array<int>) : DynArray<Tok> 
 
         // String literal. The only escape the language has is a doubled quote, which does not end
         // the string; anything else does, and an unterminated string colours to the end of line.
-        if (c == 34) {
+        if (c == '"') {
             let j: int = i + 1
             let closed: bool = false
             while (j < n) {
-                if (line.charCode(j) == 34) {
+                if (line.charAt(j) == '"') {
                     let doubled: bool = false
                     if (j + 1 < n) {
-                        if (line.charCode(j + 1) == 34) { doubled = true }
+                        if (line.charAt(j + 1) == '"') { doubled = true }
                     }
                     if (doubled) {
                         j = j + 2
@@ -271,9 +272,9 @@ func syn_line(line: string, inBlock: int, outState: array<int>) : DynArray<Tok> 
         // flat chain would read past the end of the line every time a number was already found.
         let numStart: bool = syn_is_digit(c)
         if (!numStart) {
-            if (c == 46) {
+            if (c == '.') {
                 if (i + 1 < n) {
-                    if (syn_is_digit(line.charCode(i + 1))) {
+                    if (syn_is_digit(line.charAt(i + 1))) {
                         numStart = true
                     }
                 }
@@ -282,14 +283,14 @@ func syn_line(line: string, inBlock: int, outState: array<int>) : DynArray<Tok> 
         if (numStart) {
             let nrun: int = i
             while (nrun < n) {
-                let d: int = line.charCode(nrun)
+                let d: char = line.charAt(nrun)
                 if (syn_is_digit(d)) {
                     nrun = nrun + 1
-                } elif (d >= 97 && d <= 102) {
+                } elif (d >= 'a' && d <= 'f') {
                     nrun = nrun + 1
-                } elif (d >= 65 && d <= 70) {
+                } elif (d >= 'A' && d <= 'F') {
                     nrun = nrun + 1
-                } elif (d == 120 || d == 88 || d == 98 || d == 66 || d == 111 || d == 79 || d == 46) {
+                } elif (d == 'x' || d == 'X' || d == 'b' || d == 'B' || d == 'o' || d == 'O' || d == '.') {
                     nrun = nrun + 1
                 } else {
                     break
@@ -315,8 +316,8 @@ func syn_line(line: string, inBlock: int, outState: array<int>) : DynArray<Tok> 
                 let looking: bool = true
                 while (looking) {
                     if (k < n) {
-                        let sc: int = line.charCode(k)
-                        if (sc == 32 || sc == 9) {
+                        let sc: char = line.charAt(k)
+                        if (sc == ' ' || sc == '\t') {
                             k = k + 1
                         } else {
                             looking = false
@@ -326,7 +327,7 @@ func syn_line(line: string, inBlock: int, outState: array<int>) : DynArray<Tok> 
                     }
                 }
                 if (k < n) {
-                    if (line.charCode(k) == 40) {
+                    if (line.charAt(k) == '(') {
                         kind = TokKind.FUNC
                     }
                 }

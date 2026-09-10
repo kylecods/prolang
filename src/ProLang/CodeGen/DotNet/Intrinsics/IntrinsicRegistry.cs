@@ -64,8 +64,9 @@ internal static class IntrinsicRegistry
         [BuiltInFunctions.Random] = Intrinsic.Call(RuntimeLibrary.MathOps, "Random", "System.Int32"),
 
         // ── Strings ──────────────────────────────────────────────────────────────────────
-        // length and indexOf map exactly onto System.String. charAt and substring do not —
-        // ProLang has no char type and its end index is exclusive — so they are adapted.
+        // length and indexOf map exactly onto System.String. charCode and substring do not —
+        // charCode exists so code written before the char type keeps working, and substring's
+        // end index is exclusive — so they are adapted. charAt returns System.Char directly.
         [BuiltInFunctions.StringLength] = Intrinsic.CallVirt("System.String", "get_Length"),
         [BuiltInFunctions.StringIndexOf] = Intrinsic.CallVirt("System.String", "IndexOf", "System.String"),
         [BuiltInFunctions.StringCharAt] = Intrinsic.Call(RuntimeLibrary.StringOps, "CharAt", "System.String", "System.Int32"),

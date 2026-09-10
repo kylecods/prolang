@@ -1,0 +1,94 @@
+/*
+ * Character helpers
+ *
+ * prolang's char type carries the values; this module carries the questions a program asks about
+ * them. Everything is ASCII — the range where the language's UTF-16 code units on .NET and the C
+ * backends' byte-based strings agree, which is the contract every char-typed program relies on.
+ *
+ * These are plain functions rather than builtins on purpose: they are one comparison or one bit of
+ * arithmetic each, written in prolang so all three backends get them for free, and the hot paths
+ * that once argued for builtins — width tables, digit parsing — are calls in a loop the inliner
+ * the emitters already run can see straight through.
+ */
+
+// ── Digits ───────────────────────────────────────────────────────────────────
+
+// True when `c` is an ASCII digit, '0' through '9'.
+func char_is_digit(c: char) : bool {
+    return c >= '0' && c <= '9'
+}
+
+// The value of an ASCII digit: '7' is 7. Anything else wraps, so ask char_is_digit first.
+func char_digit_value(c: char) : int {
+    return c - '0'
+}
+
+// True when `c` is a hex digit in either case, '0'-'9', 'a'-'f' or 'A'-'F'.
+func char_is_hex_digit(c: char) : bool {
+    if (char_is_digit(c)) {
+        return true
+    }
+    return (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')
+}
+
+// The value of a hex digit, 'a'/'A' as 10 through 'f'/'F' as 15. Anything else wraps.
+func char_hex_value(c: char) : int {
+    if (char_is_digit(c)) {
+        return c - '0'
+    }
+    if (c >= 'a') {
+        return (c - 'a') + 10
+    }
+    return (c - 'A') + 10
+}
+
+// ── Letters ──────────────────────────────────────────────────────────────────
+
+// True when `c` is an ASCII letter, upper or lower case.
+func char_is_alpha(c: char) : bool {
+    if (c >= 'A' && c <= 'Z') {
+        return true
+    }
+    return c >= 'a' && c <= 'z'
+}
+
+// True when `c` is an ASCII letter or digit — the characters a name can be made of.
+func char_is_alnum(c: char) : bool {
+    if (char_is_alpha(c)) {
+        return true
+    }
+    return char_is_digit(c)
+}
+
+// True when `c` is an uppercase ASCII letter.
+func char_is_upper(c: char) : bool {
+    return c >= 'A' && c <= 'Z'
+}
+
+// True when `c` is a lowercase ASCII letter.
+func char_is_lower(c: char) : bool {
+    return c >= 'a' && c <= 'z'
+}
+
+// `c` as an uppercase ASCII letter, unchanged when it has no uppercase form.
+func char_to_upper(c: char) : char {
+    if (char_is_lower(c)) {
+        return c - ('a' - 'A')
+    }
+    return c
+}
+
+// `c` as a lowercase ASCII letter, unchanged when it has no lowercase form.
+func char_to_lower(c: char) : char {
+    if (char_is_upper(c)) {
+        return c + ('a' - 'A')
+    }
+    return c
+}
+
+// ── Whitespace ───────────────────────────────────────────────────────────────
+
+// True when `c` is space, tab, carriage return or line feed.
+func char_is_whitespace(c: char) : bool {
+    return c == ' ' || c == '\t' || c == '\r' || c == '\n'
+}

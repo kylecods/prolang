@@ -44,6 +44,33 @@ public class CompilationDiagnosticsTests
     }
 
     /// <summary>
+    /// The char type, its literal, and its two implicit conversions all bind clean.
+    /// </summary>
+    /// <remarks>
+    /// The literal lexes through <see cref="ProLang.Parse.Lexer"/>'s single-quote case; the
+    /// conversions are the same integer rules every other width follows, with <see cref="TypeSymbol.Char"/>
+    /// in <c>Conversion.IsInteger</c> and the operator table's promotion rank.
+    /// </remarks>
+    [Fact]
+    public void CharLiteral_BindsAndConvertsBothWays()
+    {
+        var compilation = Compile("""
+            func main() {
+                let a: char = 'a'
+                let code: int = a
+                let back: char = code
+                let wider: int = a + 1
+                let text: string = "x" + a
+                let decoded: int = '7' - '0'
+                let s = "prolang"
+                let fromCharAt: char = s.charAt(3)
+            }
+            """);
+
+        Assert.Empty(compilation.GetDiagnostics());
+    }
+
+    /// <summary>
     /// Every well-known type a program can name is in the shared table.
     /// </summary>
     /// <remarks>

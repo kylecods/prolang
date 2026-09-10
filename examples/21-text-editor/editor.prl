@@ -655,9 +655,9 @@ func ed_key(vk: int, shift: bool, ctrl: bool, now: int) : void {
         return
     }
 
-    let ch: string = key_to_char(vk, shift)
-    if (ch != "") {
-        ed_buf = ed_buf->insert(ch)
+    let c: char = key_to_char(vk, shift)
+    if (c != '\0') {
+        ed_buf = ed_buf->insert(string(c))
         ed_edited(now)
     }
 }

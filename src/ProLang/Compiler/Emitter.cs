@@ -891,6 +891,7 @@ namespace ProLang.Compiler
                     scope.IL.Emit(OpCodes.Stelem_I1); break;
                 case "System.Int16":
                 case "System.UInt16":
+                case "System.Char":
                     scope.IL.Emit(OpCodes.Stelem_I2); break;
                 case "System.Int64":
                 case "System.UInt64":
@@ -933,6 +934,7 @@ namespace ProLang.Compiler
                 case "System.Int16":
                     scope.IL.Emit(OpCodes.Ldelem_I2); break;
                 case "System.UInt16":
+                case "System.Char":
                     scope.IL.Emit(OpCodes.Ldelem_U2); break;
                 case "System.Int64":
                     scope.IL.Emit(OpCodes.Ldelem_I8); break;
@@ -1067,6 +1069,7 @@ namespace ProLang.Compiler
             if (to == TypeSymbol.Int64)  return OpCodes.Conv_I8;
             if (to == TypeSymbol.UInt8)  return OpCodes.Conv_U1;
             if (to == TypeSymbol.UInt16) return OpCodes.Conv_U2;
+            if (to == TypeSymbol.Char)   return OpCodes.Conv_U2;
             if (to == TypeSymbol.UInt32)  return OpCodes.Conv_U4;
             if (to == TypeSymbol.UInt64)  return OpCodes.Conv_U8;
             if (to == TypeSymbol.Float32) return OpCodes.Conv_R4;
@@ -1077,7 +1080,8 @@ namespace ProLang.Compiler
         private static bool IsNumericType(TypeSymbol type) =>
             type == TypeSymbol.Int    || type == TypeSymbol.Int8   || type == TypeSymbol.Int16  || type == TypeSymbol.Int64  ||
             type == TypeSymbol.UInt8  || type == TypeSymbol.UInt16 || type == TypeSymbol.UInt32 || type == TypeSymbol.UInt64 ||
-            type == TypeSymbol.Float32 || type == TypeSymbol.Float64 || type == TypeSymbol.Float;
+            type == TypeSymbol.Float32 || type == TypeSymbol.Float64 || type == TypeSymbol.Float ||
+            type == TypeSymbol.Char;
 
         /// <summary>
         /// Whether <paramref name="type"/> is emitted as a value type, and so needs boxing to
@@ -1098,7 +1102,7 @@ namespace ProLang.Compiler
             var targetType = node.TargetType;
 
             // Safe casting from 'any' type to target type
-            if (targetType == TypeSymbol.Int || targetType == TypeSymbol.Bool)
+            if (targetType == TypeSymbol.Int || targetType == TypeSymbol.Bool || targetType == TypeSymbol.Char)
             {
                 // Unbox from object to value type - throws InvalidCastException if type mismatch
                 scope.IL.Emit(OpCodes.Unbox_Any, GetTypeReference(targetType));
@@ -1534,9 +1538,11 @@ namespace ProLang.Compiler
             || node.Type == TypeSymbol.UInt32
             || node.Type == TypeSymbol.Int16
             || node.Type == TypeSymbol.UInt16
-            || node.Type == TypeSymbol.UInt8)
+            || node.Type == TypeSymbol.UInt8
+            || node.Type == TypeSymbol.Char)
             {
-                var value = Convert.ToInt32(node.Value);
+                // A char rides the stack in int32 form, as everything narrower than int32 does.
+                var value = node.Value is char ch ? ch : Convert.ToInt32(node.Value);
 
                 scope.IL.Emit(OpCodes.Ldc_I4, value);
             }

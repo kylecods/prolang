@@ -1,23 +1,21 @@
 /*
- * Text editor — the keyboard (keys.prl)
+ * Text editor - the keyboard (keys.prl)
  *
  * The OpenGL host reports the keyboard as polled state, not events: `gl_key_pressed(vk)` says
  * whether a Windows virtual key is held down *this frame*. It never says what was typed. This
  * module is the mapping from that raw state to text and commands: a virtual key plus the shift
  * modifier becomes the character it would have produced on a US layout.
  *
- * Pure prolang over one interop call (`Char.ConvertFromUtf32`, which turns a code into a
- * one-character string — the language has no character type and no other way to build one).
- * Exercised by tests/test_keys.prl.
+ * Pure prolang: a key becomes a `char` through a cast, with no interop call anywhere, which is
+ * what makes the whole editor transpilable to the C and PSP backends. Exercised by
+ * tests/test_keys.prl.
  *
  * The editor.prl side does the event part: it remembers last frame's state and treats a
  * held-this-frame-but-not-last-frame key as a press, with its own repeat timer.
  */
 
-import "dotnet:System"
-
 // Windows virtual-key codes the editor needs. Letters and digits are contiguous ranges, so only
-// the stray keys — the OEM punctuation block and the modifiers — are listed here.
+// the stray keys - the OEM punctuation block and the modifiers - are listed here.
 enum KeyVk {
     BACKSPACE = 8,
     TAB = 9,
@@ -57,84 +55,82 @@ enum KeyVk {
 }
 
 /*
- * The character a key produces, as a one-character string.
+ * The character a key produces.
  *
- * Returns the empty string for every key that types nothing — arrows, function keys, the
- * modifiers themselves — so the caller can try text first and fall through to commands.
- * `shift` is whether either shift key is held.
+ * Returns '\0' for every key that types nothing — arrows, function keys, the modifiers
+ * themselves — so the caller can try text first and fall through to commands. '\0' is safe as
+ * that sentinel because no key types it. `shift` is whether either shift key is held.
  */
-func key_to_char(vk: int, shift: bool) : string {
+func key_to_char(vk: int, shift: bool) : char {
     // Letters: VK codes are the capitals, so shifting changes nothing but the case.
     if (vk >= KeyVk.A && vk <= KeyVk.Z) {
-        let code: int = vk
         if (!shift) {
-            code = vk + 32
+            return char(vk + 32)
         }
-        return Char.ConvertFromUtf32(code)
+        return char(vk)
     }
 
     // Digits, shifted through the row above them. `1` through `9` map to the first nine symbols
     // and `0` wraps to the last, so the index is taken modulo ten.
     if (vk >= KeyVk.SPACE + 16 && vk <= KeyVk.SPACE + 25) {
         if (shift) {
-            let row: string = "!@#$%^&*()"
+            let row = "!@#$%^&*()"
             return row.charAt((vk - KeyVk.SPACE - 17 + 10) % 10)
         }
-        return Char.ConvertFromUtf32(vk)
+        return char(vk)
     }
 
     if (vk == KeyVk.SPACE) {
-        return " "
+        return ' '
     }
 
     // The OEM punctuation block, unshifted and shifted.
     if (vk == KeyVk.OEM_1) {
-        if (shift) { return ":" }
-        return ";"
+        if (shift) { return ':' }
+        return ';'
     }
     if (vk == KeyVk.OEM_PLUS) {
-        if (shift) { return "+" }
-        return "="
+        if (shift) { return '+' }
+        return '='
     }
     if (vk == KeyVk.OEM_COMMA) {
-        if (shift) { return "<" }
-        return ","
+        if (shift) { return '<' }
+        return ','
     }
     if (vk == KeyVk.OEM_MINUS) {
-        if (shift) { return "_" }
-        return "-"
+        if (shift) { return '_' }
+        return '-'
     }
     if (vk == KeyVk.OEM_PERIOD) {
-        if (shift) { return ">" }
-        return "."
+        if (shift) { return '>' }
+        return '.'
     }
     if (vk == KeyVk.OEM_2) {
-        if (shift) { return "?" }
-        return "/"
+        if (shift) { return '?' }
+        return '/'
     }
     if (vk == KeyVk.OEM_3) {
-        if (shift) { return "~" }
-        return "`"
+        if (shift) { return '~' }
+        return '`'
     }
     if (vk == KeyVk.OEM_4) {
-        if (shift) { return "{" }
-        return "["
+        if (shift) { return '{' }
+        return '['
     }
     if (vk == KeyVk.OEM_5) {
-        if (shift) { return "|" }
-        return "\"      // one backslash — the language has no string escapes
+        if (shift) { return '|' }
+        return '\\'
     }
     if (vk == KeyVk.OEM_6) {
-        if (shift) { return "}" }
-        return "]"
+        if (shift) { return '}' }
+        return ']'
     }
     if (vk == KeyVk.OEM_7) {
-        // The shifted one is a double quote, written doubled inside the literal.
-        if (shift) { return """" }
-        return "'"
+        if (shift) { return '"' }
+        return '\''
     }
 
-    return ""
+    return '\0'
 }
 
 /*

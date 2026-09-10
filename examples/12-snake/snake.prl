@@ -175,19 +175,19 @@ func make_food(snake: Snake, w: int, h: int) : FoodPos {
 
 // ─── Frame buffer ────────────────────────────────────────────────────────────
 
-func fb_clear(fb: array<string>, size: int) {
+func fb_clear(fb: array<char>, size: int) {
     let i: int = 0
     while (i < size) {
-        fb[i] = " "
+        fb[i] = ' '
         i = i + 1
     }
 }
 
-func fb_set(fb: array<string>, x: int, y: int, s: string, w: int) {
+func fb_set(fb: array<char>, x: int, y: int, s: char, w: int) {
     fb[y * w + x] = s
 }
 
-func fb_render(fb: array<string>, w: int, h: int) {
+func fb_render(fb: array<char>, w: int, h: int) {
     let color_green: int = 10
     let color_red: int = 12
 
@@ -196,15 +196,15 @@ func fb_render(fb: array<string>, w: int, h: int) {
         if (i % w == 0) {
             console_set_cursor(0, i / w)
         }
-        let cell: string = fb[i]
-        if (cell == "*") {
+        let cell: char = fb[i]
+        if (cell == '*') {
             console_set_color(color_red)
-        } elif (cell == " ") {
+        } elif (cell == ' ') {
             console_reset_color()
         } else {
             console_set_color(color_green)
         }
-        console_write(cell)
+        console_write(string(cell))
         i = i + 1
     }
     console_reset_color()
@@ -212,13 +212,13 @@ func fb_render(fb: array<string>, w: int, h: int) {
 
 // ─── Message helpers ─────────────────────────────────────────────────────────
 
-func show_message(fb: array<string>, msg: string, w: int, h: int) {
+func show_message(fb: array<char>, msg: string, w: int, h: int) {
     let msg_len: int = msg.length()
     let start_x: int = (w - msg_len) / 2
     let mid_y: int = h / 2
     let k: int = 0
     while (k < msg_len) {
-        let ch: string = msg.charAt(k)
+        let ch: char = msg.charAt(k)
         fb_set(fb, start_x + k, mid_y, ch, w)
         k = k + 1
     }
@@ -241,7 +241,7 @@ func main() {
 
     console_hide_cursor()
 
-    let fb: array<string> = array_new(AREA)
+    let fb: array<char> = array_new(AREA)
     fb_clear(fb, AREA)
 
     let playing: bool = true
@@ -316,13 +316,13 @@ func main() {
                 let si: int = 0
                 while (si < snake.length) {
                     if (si == 0) {
-                        fb_set(fb, snake.body_x[si], snake.body_y[si], "@", WIDTH)
+                        fb_set(fb, snake.body_x[si], snake.body_y[si], '@', WIDTH)
                     } else {
-                        fb_set(fb, snake.body_x[si], snake.body_y[si], "#", WIDTH)
+                        fb_set(fb, snake.body_x[si], snake.body_y[si], '#', WIDTH)
                     }
                     si = si + 1
                 }
-                fb_set(fb, food_x, food_y, "*", WIDTH)
+                fb_set(fb, food_x, food_y, '*', WIDTH)
                 show_message(fb, "You lose!", WIDTH, HEIGHT)
                 console_read_key()
                 round_running = false
@@ -335,9 +335,9 @@ func main() {
                         let sj: int = 0
                         while (sj < snake.length) {
                             if (sj == 0) {
-                                fb_set(fb, snake.body_x[sj], snake.body_y[sj], "@", WIDTH)
+                                fb_set(fb, snake.body_x[sj], snake.body_y[sj], '@', WIDTH)
                             } else {
-                                fb_set(fb, snake.body_x[sj], snake.body_y[sj], "#", WIDTH)
+                                fb_set(fb, snake.body_x[sj], snake.body_y[sj], '#', WIDTH)
                             }
                             sj = sj + 1
                         }
@@ -354,13 +354,13 @@ func main() {
                 if (round_running) {
                     // Draw frame
                     fb_clear(fb, AREA)
-                    fb_set(fb, food_x, food_y, "*", WIDTH)
+                    fb_set(fb, food_x, food_y, '*', WIDTH)
                     let sk: int = 0
                     while (sk < snake.length) {
                         if (sk == 0) {
-                            fb_set(fb, snake.body_x[sk], snake.body_y[sk], "@", WIDTH)
+                            fb_set(fb, snake.body_x[sk], snake.body_y[sk], '@', WIDTH)
                         } else {
-                            fb_set(fb, snake.body_x[sk], snake.body_y[sk], "#", WIDTH)
+                            fb_set(fb, snake.body_x[sk], snake.body_y[sk], '#', WIDTH)
                         }
                         sk = sk + 1
                     }

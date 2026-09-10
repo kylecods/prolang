@@ -20,7 +20,8 @@
 import "io"
 import "testing"
 import "test_args.prl"
-import "test_args.prl"
+import "test_util.prl"
+import "test_char.prl"
 import "test_intstack.prl"
 import "test_color.prl"
 import "test_document.prl"
@@ -49,8 +50,12 @@ func main()
     t_reset()
 
     t_begin_module()
-    test_args_run()
+    test_util_run()
     t_end_module("util")
+
+    t_begin_module()
+    test_char_run()
+    t_end_module("char")
 
     t_begin_module()
     test_args_run()

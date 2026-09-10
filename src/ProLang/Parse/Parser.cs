@@ -861,6 +861,8 @@ public sealed class Parser
                 return ParseNumberLiteral(); 
             case SyntaxKind.StringToken:
                 return ParseStringLiteral();
+            case SyntaxKind.CharToken:
+                return ParseCharLiteral();
             case SyntaxKind.LeftBracketToken:
                 return ParseArrayLiteral();
             case SyntaxKind.LeftCurlyToken:
@@ -1206,6 +1208,12 @@ public sealed class Parser
     {
         var stringToken = Match(SyntaxKind.StringToken);
         return new LiteralExpressionSyntax(_syntaxTree,stringToken);
+    }
+
+    private ExpressionSyntax ParseCharLiteral()
+    {
+        var charToken = Match(SyntaxKind.CharToken);
+        return new LiteralExpressionSyntax(_syntaxTree, charToken);
     }
 
     private ExpressionSyntax ParseNumberLiteral()
