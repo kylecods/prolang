@@ -165,7 +165,7 @@ func tool_press(stroke: Stroke, doc: Document, preview: Document, touched: array
         return Stroke {
             tool: next.tool, colour: next.colour, size: next.size,
             startX: x, startY: y, lastX: x, lastY: y,
-            active: false, commit: false, picked: doc_get(doc, x, y), touched: 0
+            active: false, commit: false, picked: doc->get(x, y), touched: 0
         }
     }
 
@@ -185,7 +185,7 @@ func tool_press(stroke: Stroke, doc: Document, preview: Document, touched: array
     }
 
     // A shape tool: start from a clean copy so the preview can be rewound to it.
-    doc_copy_into(doc, preview)
+    doc->copy_into(preview)
     return next
 }
 
@@ -239,7 +239,7 @@ func tool_release(stroke: Stroke, doc: Document, preview: Document, touched: arr
 
     if (tool_is_shape(stroke.tool)) {
         tool_draw_shape(stroke, doc, x, y, stroke.colour, touched, 0)
-        doc_copy_into(doc, preview)
+        doc->copy_into(preview)
     }
 
     return Stroke {

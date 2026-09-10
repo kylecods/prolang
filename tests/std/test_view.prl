@@ -6,38 +6,38 @@ import "testing"
 import "ui/view"
 
 func test_view_run() : void {
-    let v: View = view_new(4)
+    let v: View = View->new(4)
     t_eq_int("zoom is set", v.zoom, 4)
     t_eq_int("pan starts at origin", v.panX, 0)
 
-    t_eq_int("zoom below the minimum is clamped", view_new(0).zoom, view_min_zoom())
-    t_eq_int("zoom above the maximum is clamped", view_new(999).zoom, view_max_zoom())
+    t_eq_int("zoom below the minimum is clamped", View->new(0).zoom, View->min_zoom())
+    t_eq_int("zoom above the maximum is clamped", View->new(999).zoom, View->max_zoom())
 
     // ── Transforms ───────────────────────────────────────────────────────────
-    t_eq_int("screen to image at the origin", view_to_image_x(v, 0), 0)
-    t_eq_int("screen to image within a cell", view_to_image_x(v, 3), 0)
-    t_eq_int("screen to image at the next cell", view_to_image_x(v, 4), 1)
-    t_eq_int("screen to image well inside", view_to_image_y(v, 9), 2)
+    t_eq_int("screen to image at the origin", v->to_image_x(0), 0)
+    t_eq_int("screen to image within a cell", v->to_image_x(3), 0)
+    t_eq_int("screen to image at the next cell", v->to_image_x(4), 1)
+    t_eq_int("screen to image well inside", v->to_image_y(9), 2)
 
     // Floor division, not truncation. A screen pixel one to the left of the image must map to
     // column -1 and be rejected, not fold back into column 0 and paint on the first column.
-    t_eq_int("screen to image just left of the origin", view_to_image_x(v, 0 - 1), 0 - 1)
-    t_eq_int("screen to image a full cell left", view_to_image_x(v, 0 - 4), 0 - 1)
-    t_eq_int("screen to image two cells left", view_to_image_x(v, 0 - 5), 0 - 2)
+    t_eq_int("screen to image just left of the origin", v->to_image_x(0 - 1), 0 - 1)
+    t_eq_int("screen to image a full cell left", v->to_image_x(0 - 4), 0 - 1)
+    t_eq_int("screen to image two cells left", v->to_image_x(0 - 5), 0 - 2)
 
-    t_eq_int("image to screen at the origin", view_to_screen_x(v, 0), 0)
-    t_eq_int("image to screen scales by zoom", view_to_screen_x(v, 3), 12)
+    t_eq_int("image to screen at the origin", v->to_screen_x(0), 0)
+    t_eq_int("image to screen scales by zoom", v->to_screen_x(3), 12)
 
     // The two transforms must be inverses at cell boundaries, which is what keeps the brush under
     // the cursor. WinFormsHelper.CanvasSetView applies the same formula on the C# side.
     let roundTripFailures: int = 0
-    let panned: View = view_pan_by(view_new(8), 3, 5)
+    let panned: View = View->new(8)->pan_by(3, 5)
     let i: int = 0 - 4
     while (i <= 12) {
-        if (view_to_image_x(panned, view_to_screen_x(panned, i)) != i) {
+        if (panned->to_image_x(panned->to_screen_x(i)) != i) {
             roundTripFailures = roundTripFailures + 1
         }
-        if (view_to_image_y(panned, view_to_screen_y(panned, i)) != i) {
+        if (panned->to_image_y(panned->to_screen_y(i)) != i) {
             roundTripFailures = roundTripFailures + 1
         }
         i = i + 1
@@ -45,60 +45,60 @@ func test_view_run() : void {
     t_eq_int("transforms are inverses", roundTripFailures, 0)
 
     // ── Pan ──────────────────────────────────────────────────────────────────
-    let moved: View = view_pan_by(v, 2, 3)
+    let moved: View = v->pan_by(2, 3)
     t_eq_int("pan shifts x", moved.panX, 2)
     t_eq_int("pan shifts y", moved.panY, 3)
-    t_eq_int("pan offsets the mapping", view_to_image_x(moved, 0), 2)
+    t_eq_int("pan offsets the mapping", moved->to_image_x(0), 2)
 
     // ── Zoom about an anchor ─────────────────────────────────────────────────
     // The pixel under the cursor has to stay under it, or the area being worked on slides out of
     // view on every wheel notch.
-    let anchored: View = view_new(4)
-    let beforeX: int = view_to_image_x(anchored, 40)
-    let beforeY: int = view_to_image_y(anchored, 40)
+    let anchored: View = View->new(4)
+    let beforeX: int = anchored->to_image_x(40)
+    let beforeY: int = anchored->to_image_y(40)
 
-    let zoomedIn: View = view_zoom_in(anchored, 40, 40)
+    let zoomedIn: View = anchored->zoom_in(40, 40)
     t_eq_int("zoom in doubles", zoomedIn.zoom, 8)
-    t_eq_int("anchor pixel is unchanged in x", view_to_image_x(zoomedIn, 40), beforeX)
-    t_eq_int("anchor pixel is unchanged in y", view_to_image_y(zoomedIn, 40), beforeY)
+    t_eq_int("anchor pixel is unchanged in x", zoomedIn->to_image_x(40), beforeX)
+    t_eq_int("anchor pixel is unchanged in y", zoomedIn->to_image_y(40), beforeY)
 
-    let zoomedOut: View = view_zoom_out(zoomedIn, 40, 40)
+    let zoomedOut: View = zoomedIn->zoom_out(40, 40)
     t_eq_int("zoom out halves", zoomedOut.zoom, 4)
-    t_eq_int("anchor survives a round trip", view_to_image_x(zoomedOut, 40), beforeX)
+    t_eq_int("anchor survives a round trip", zoomedOut->to_image_x(40), beforeX)
 
     // Zoom is clamped, and a clamped zoom must not shift the pan.
-    let atMax: View = view_new(view_max_zoom())
-    let beyond: View = view_zoom_in(atMax, 10, 10)
-    t_eq_int("cannot zoom past the maximum", beyond.zoom, view_max_zoom())
+    let atMax: View = View->new(View->max_zoom())
+    let beyond: View = atMax->zoom_in(10, 10)
+    t_eq_int("cannot zoom past the maximum", beyond.zoom, View->max_zoom())
     t_eq_int("clamped zoom leaves pan alone", beyond.panX, atMax.panX)
 
-    let atMin: View = view_new(view_min_zoom())
-    t_eq_int("cannot zoom below the minimum", view_zoom_out(atMin, 10, 10).zoom, view_min_zoom())
+    let atMin: View = View->new(View->min_zoom())
+    t_eq_int("cannot zoom below the minimum", atMin->zoom_out(10, 10).zoom, View->min_zoom())
 
     // ── Grid ─────────────────────────────────────────────────────────────────
-    t_false("no grid at zoom 1", view_show_grid(view_new(1)))
-    t_false("no grid below the threshold", view_show_grid(view_new(view_grid_threshold() - 1)))
-    t_true("grid at the threshold", view_show_grid(view_new(view_grid_threshold())))
-    t_true("grid above the threshold", view_show_grid(view_new(16)))
+    t_false("no grid at zoom 1", View->new(1)->show_grid())
+    t_false("no grid below the threshold", View->new(View->grid_threshold() - 1)->show_grid())
+    t_true("grid at the threshold", View->new(View->grid_threshold())->show_grid())
+    t_true("grid above the threshold", View->new(16)->show_grid())
 
     // ── Fit and centre ───────────────────────────────────────────────────────
-    t_eq_int("fit uses the tighter axis", view_fit_zoom(32, 16, 320, 160), 10)
-    t_eq_int("fit is limited by height", view_fit_zoom(16, 32, 320, 160), 5)
-    t_eq_int("fit clamps to the maximum", view_fit_zoom(1, 1, 4096, 4096), view_max_zoom())
-    t_eq_int("fit of an empty image", view_fit_zoom(0, 0, 100, 100), 1)
+    t_eq_int("fit uses the tighter axis", View->fit_zoom(32, 16, 320, 160), 10)
+    t_eq_int("fit is limited by height", View->fit_zoom(16, 32, 320, 160), 5)
+    t_eq_int("fit clamps to the maximum", View->fit_zoom(1, 1, 4096, 4096), View->max_zoom())
+    t_eq_int("fit of an empty image", View->fit_zoom(0, 0, 100, 100), 1)
 
     // Centring a 10x10 image in a 20x20 cell area puts 5 cells of margin on each side, so the
     // pan is negative.
-    let centred: View = view_centre(view_new(1), 10, 10, 20, 20)
+    let centred: View = View->new(1)->centre(10, 10, 20, 20)
     t_eq_int("centre offsets x", centred.panX, 0 - 5)
     t_eq_int("centre offsets y", centred.panY, 0 - 5)
 
     // ── Pan clamping ─────────────────────────────────────────────────────────
-    let far: View = view_pan_by(view_new(4), 10000, 10000)
-    let clamped: View = view_clamp_pan(far, 64, 64, 256, 256)
+    let far: View = View->new(4)->pan_by(10000, 10000)
+    let clamped: View = far->clamp_pan(64, 64, 256, 256)
     t_eq_int("pan cannot run past the image", clamped.panX, 64)
 
-    let farBack: View = view_pan_by(view_new(4), 0 - 10000, 0 - 10000)
-    let clampedBack: View = view_clamp_pan(farBack, 64, 64, 256, 256)
+    let farBack: View = View->new(4)->pan_by(0 - 10000, 0 - 10000)
+    let clampedBack: View = farBack->clamp_pan(64, 64, 256, 256)
     t_eq_int("pan cannot run off the other side", clampedBack.panX, 0 - 64)
 }

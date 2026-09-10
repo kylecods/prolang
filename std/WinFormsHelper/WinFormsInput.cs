@@ -495,6 +495,19 @@ public static partial class WinFormsHelper
         return ShowModal(dialog) == DialogResult.OK ? dialog.FileName : "";
     }
 
+    /// <summary>Puts text on the clipboard, replacing whatever was there.</summary>
+    /// <remarks>
+    /// The clipboard is an STA affair, like the dialogs: the compiler marks the entry point
+    /// <c>[STAThread]</c> for <c>--target=winexe</c>, which is what makes this safe to call from
+    /// the main thread of a GUI program.
+    /// </remarks>
+    public static void SetClipboardText(string text)
+        => System.Windows.Forms.Clipboard.SetText(text ?? string.Empty);
+
+    /// <summary>The clipboard's text, or an empty string when it holds something else.</summary>
+    public static string GetClipboardText()
+        => System.Windows.Forms.Clipboard.GetText() ?? string.Empty;
+
     /// <summary>Shows a Yes/No/Cancel prompt.</summary>
     /// <returns>1 for yes, 0 for no, -1 for cancel.</returns>
     public static int MessageBoxYesNoCancel(string text, string title)

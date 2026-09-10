@@ -18,6 +18,7 @@ public enum  BoundNodeKind
     
     //expressions
     BoundLiteralExpression,
+    BoundNullExpression,
     BoundUnaryExpression,
     BoundBinaryExpression,
     BoundVariableExpression,

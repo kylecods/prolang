@@ -29,6 +29,8 @@ internal static partial class SyntaxFacts
         { "return", SyntaxKind.ReturnKeyword },
         { "import", SyntaxKind.ImportKeyword },
         { "struct", SyntaxKind.StructKeyword },
+        { "class", SyntaxKind.ClassKeyword },
+        { "imp", SyntaxKind.ImpKeyword },
         { "as", SyntaxKind.AsKeyword },
         { "enum", SyntaxKind.EnumKeyword },
         { "global", SyntaxKind.GlobalKeyword },
@@ -175,6 +177,12 @@ internal static partial class SyntaxFacts
                 return "import";
             case SyntaxKind.StructKeyword:
                 return "struct";
+            case SyntaxKind.ClassKeyword:
+                return "class";
+            case SyntaxKind.ImpKeyword:
+                return "imp";
+            case SyntaxKind.MinusGreaterThanToken:
+                return "->";
             case SyntaxKind.AsKeyword:
                 return "as";
             case SyntaxKind.EnumKeyword:

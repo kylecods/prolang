@@ -59,13 +59,13 @@ func main()
     hostw_min_size(host, 420, 320)
 
     let fonts: FontSet = hostw_font("Segoe UI", 10)
-    let ui: Ui = ui_new(256)
-    let frames: Fps = fps_new()
+    let ui: Ui = Ui->new(256)
+    let frames: Fps = Fps->new()
 
     while (hostw_running(host)) {
         // Counted at the top of the loop, so a frame is measured from one build to the next —
         // input, layout, the scene and the paint submission all included.
-        fps_tick(frames)
+        frames->tick()
 
         if (spinning == 1) {
             cube_turn_by(state, 1, 2, 0)
@@ -86,38 +86,36 @@ func main()
 
         hostw_begin(host, ui, wait)
 
-        ui_col(ui, pad: 12, gap: 10, bg: theme_background(theme))
+        ui->col(pad: 12, gap: 10, bg: theme_background(theme))
 
-            ui_row(ui)
-                ui_text(ui, "X " + state[CubeS.ANG_X]
+            ui->row()
+                ui->text("X " + state[CubeS.ANG_X]
                           + "   Y " + state[CubeS.ANG_Y]
-                          + "   Z " + state[CubeS.ANG_Z],
-                        fg: theme_text_dim(theme))
+                          + "   Z " + state[CubeS.ANG_Z], fg: theme_text_dim(theme))
 
-                ui_spacer(ui, flex: 1)
+                ui->spacer(flex: 1)
 
-                ui_text(ui, fps_text_detailed(frames), fg: theme_text_dim(theme))
-            ui_end(ui)
+                ui->text(frames->text_detailed(), fg: theme_text_dim(theme))
+            ui->end()
 
             // The scene is a widget like any other: it takes the leftover space, sits inside a
             // card with a rounded background, and follows the window when it is resized.
-            ui_scene(ui, tag: cube_scene_tag(), flex: 1, pad: 8, radius: 8,
-                     bg: theme_surface(theme))
+            ui->scene(tag: cube_scene_tag(), flex: 1, pad: 8, radius: 8, bg: theme_surface(theme))
 
-            ui_row(ui, gap: 6)
+            ui->row(gap: 6)
                 cube_btn(ui, "X-", CubeAct.ROT_XM, theme)
                 cube_btn(ui, "X+", CubeAct.ROT_XP, theme)
                 cube_btn(ui, "Y-", CubeAct.ROT_YM, theme)
                 cube_btn(ui, "Y+", CubeAct.ROT_YP, theme)
                 cube_btn(ui, "Z-", CubeAct.ROT_ZM, theme)
                 cube_btn(ui, "Z+", CubeAct.ROT_ZP, theme)
-                ui_spacer(ui, flex: 1)
+                ui->spacer(flex: 1)
                 cube_btn(ui, "Spin", CubeAct.SPIN, theme)
                 cube_btn(ui, "Reset", CubeAct.RESET, theme)
                 cube_btn(ui, "Quit", CubeAct.QUIT, theme)
-            ui_end(ui)
+            ui->end()
 
-        ui_end(ui)
+        ui->end()
 
         let act: int = hostw_present_scene(host, ui, fonts, cube_paint, state)
 
@@ -146,10 +144,5 @@ func main()
 }
 
 func cube_btn(ui: Ui, label: string, action: int, theme: int) : int {
-    return ui_button(ui, label,
-        action: action,
-        bg: theme_surface(theme),
-        fg: theme_text(theme),
-        radius: 6,
-        pad: 8)
+    return ui->button(label, action: action, bg: theme_surface(theme), fg: theme_text(theme), radius: 6, pad: 8)
 }

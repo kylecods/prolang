@@ -21,6 +21,8 @@ so an application's own modules and the library's never collide.
 | `dynarray` | a growable array, generic |
 | `testing` | the test harness: a `TestRun` tally threaded through checks, failed by the `assert` builtin |
 | `winforms` | the Windows Forms shim, a C# assembly rather than prolang |
+| `gl` | OpenGL 3D graphics bindings and native windowing via `GLHelper` |
+| `opengl` | alias for `gl` |
 
 ## `ui/` — a toolkit for drawing interfaces
 
@@ -53,13 +55,14 @@ Windows Forms and on the PSP.
 
 | Module | |
 |---|---|
-| `ui/widget` | the node arena and the open/close builder: `ui_col`, `ui_row`, `ui_box`, `ui_text`, `ui_button`, `ui_spacer`, `ui_image`, `ui_scene`, `ui_end` |
+| `ui/widget` | the node arena and the open/close builder: `Ui->col`, `Ui->row`, `Ui->box`, `Ui->text`, `Ui->button`, `Ui->spacer`, `Ui->image`, `Ui->scene`, `Ui->end` |
 | `ui/box` | layout — measure bottom-up, place top-down, divide leftover space between `flex:` children |
 | `ui/hit` | hover, press and click, tracked across frames by a widget's id |
 | `ui/draw` | flattens a laid-out tree into a display list: a flat `array<int>` of drawing commands |
 | `ui/font` | character-width tables, so the layout pass can measure text without asking a window |
 | `ui/fps` | a frame-rate counter, averaged over a window, with the worst frame of each window |
 | `ui/host_winforms` | **imports `winforms`.** Opens a window and submits each frame in one interop call |
+| `ui/host_gl` | **imports `gl`.** Hardware-accelerated OpenGL host for desktop UI widgets |
 | `ui/host_psp` | **imports `psp`.** Executes the same display list through the GU, with a D-pad cursor |
 
 ```prolang
@@ -67,15 +70,15 @@ import "ui/host_winforms"
 
 let host: Host = hostw_open("Counter", 480, 300)
 let fonts: FontSet = hostw_font("Segoe UI", 10)
-let ui: Ui = ui_new(256)
+let ui: Ui = Ui->new(256)
 
 while (hostw_running(host)) {
     hostw_begin(host, ui)
 
-    ui_col(ui, pad: 16, gap: 8)
-        ui_text(ui, "Count: " + count[0])
-        ui_button(ui, "Increment", action: 1, bg: 4473924, fg: 0 - 1, pad: 8)
-    ui_end(ui)
+    ui->col(pad: 16, gap: 8)
+        ui->text("Count: " + count[0])
+        ui->button("Increment", action: 1, bg: 4473924, fg: 0 - 1, pad: 8)
+    ui->end()
 
     if (hostw_present(host, ui, fonts) == 1) { count[0] = count[0] + 1 }
 }
@@ -118,7 +121,7 @@ let bitmaps: array<int> = array_new(sizes.length())
 
 let i: int = 0
 while (i < sizes.length()) {
-    let oversized: Document = doc_new(sizes[i] * 4, sizes[i] * 4, 0)
+    let oversized: Document = Document->new(sizes[i] * 4, sizes[i] * 4, 0)
     my_icon_draw(oversized)                                    // your artwork, any ui/shape calls
     bitmaps[i] = chrome_bitmap_downsampled(oversized, sizes[i], 4)
     i = i + 1
@@ -148,7 +151,7 @@ restoring exactly those.
 
 `ui/shape` draws interfaces. It has none of that and wants the opposite: smooth edges at whatever
 size the display happens to be. It writes only solid pixels; smoothness comes from drawing several
-times oversized and averaging down through `doc_downsample_into`, which is why `ui/icons` looks
+times oversized and averaging down through `Document->downsample_into`, which is why `ui/icons` looks
 right at 100%, 150% and 200% from one description.
 
 ## Writing an application against it
@@ -161,10 +164,10 @@ import "ui/color"
 
 func main()
 {
-    let canvas: Document = doc_new(32, 32, 0)
+    let canvas: Document = Document->new(32, 32, 0)
     shape_disc(canvas, 16, 16, 10, color_rgb(255, 0, 0))
 
-    print("painted " + (doc_pixel_count(canvas) - doc_count_colour(canvas, 0)) + " pixels")
+    print("painted " + (canvas->pixel_count() - canvas->count_colour(0)) + " pixels")
 }
 ```
 

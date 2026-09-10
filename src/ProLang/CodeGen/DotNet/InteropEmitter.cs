@@ -69,6 +69,53 @@ internal sealed class InteropEmitter
 
         if (field != null)
         {
+            if (field.IsLiteral)
+            {
+                var constVal = field.GetRawConstantValue();
+                switch (constVal)
+                {
+                    case int i:
+                        il.Emit(OpCodes.Ldc_I4, i);
+                        return;
+                    case uint u:
+                        il.Emit(OpCodes.Ldc_I4, unchecked((int)u));
+                        return;
+                    case short s:
+                        il.Emit(OpCodes.Ldc_I4, (int)s);
+                        return;
+                    case ushort us:
+                        il.Emit(OpCodes.Ldc_I4, (int)us);
+                        return;
+                    case byte b:
+                        il.Emit(OpCodes.Ldc_I4, (int)b);
+                        return;
+                    case sbyte sb:
+                        il.Emit(OpCodes.Ldc_I4, (int)sb);
+                        return;
+                    case long l:
+                        il.Emit(OpCodes.Ldc_I8, l);
+                        return;
+                    case ulong ul:
+                        il.Emit(OpCodes.Ldc_I8, unchecked((long)ul));
+                        return;
+                    case float f:
+                        il.Emit(OpCodes.Ldc_R4, f);
+                        return;
+                    case double d:
+                        il.Emit(OpCodes.Ldc_R8, d);
+                        return;
+                    case bool bo:
+                        il.Emit(bo ? OpCodes.Ldc_I4_1 : OpCodes.Ldc_I4_0);
+                        return;
+                    case string str:
+                        il.Emit(OpCodes.Ldstr, str);
+                        return;
+                    case null:
+                        il.Emit(OpCodes.Ldnull);
+                        return;
+                }
+            }
+
             var typeRef = ResolveType(function.DeclaringType);
             var fieldRef = new FieldReference(field.Name, ResolveFieldType(field.FieldType), typeRef);
 

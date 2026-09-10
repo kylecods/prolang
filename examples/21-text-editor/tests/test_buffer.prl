@@ -1,0 +1,292 @@
+/*
+ * Text editor tests — buffer.prl
+ *
+ * Each edit is driven the way the editor drives it and the result is read back through the
+ * cursor, the lines, and the undo stack. Every group builds its own buffer: edits write through
+ * the shared lines array, so a buffer reused across groups would carry earlier groups' changes.
+ */
+
+import "testing"
+import "dotnet:System"
+import "../buffer.prl"
+
+func test_buffer_run() : void {
+    // ── Parsing and rendering text ───────────────────────────────────────────
+    let b: Buf = Buf->two("alpha", "beta")
+    t_eq_int("two lines load", b.count, 2)
+    t_eq_str("first line", b.lines[0], "alpha")
+    t_eq_str("second line", b.lines[1], "beta")
+    t_eq_str("round trip", b->to_text(), "alpha" + Buf->nl() + "beta" + Buf->nl())
+
+    let crlf: string = "one" + Buf->nl() + "two" + Buf->nl()
+    let loaded: Buf = Buf->from_text(crlf)
+    t_eq_int("trailing newline adds no phantom line", loaded.count, 2)
+
+    let win: string = "one" + Char.ConvertFromUtf32(13) + Buf->nl() + "two"
+    let fromWin: Buf = Buf->from_text(win)
+    t_eq_str("carriage returns are dropped", fromWin.lines[0], "one")
+    t_eq_int("last line kept", fromWin.count, 2)
+
+    let empty: Buf = Buf->from_text("")
+    t_eq_int("empty text is one empty line", empty.count, 1)
+    t_eq_str("empty line is empty", empty.lines[0], "")
+
+    // ── Insert ───────────────────────────────────────────────────────────────
+    let ins1: Buf = Buf->two("alpha", "beta")->insert("x")
+    t_eq_str("insert at start", ins1.lines[0], "xalpha")
+    t_eq_int("cursor advances", ins1.col, 1)
+    t_true("insert marks modified", ins1.modified)
+
+    let ins2: Buf = Buf->two("alpha", "beta")->set_cursor(0, 5)->insert("-tail")
+    t_eq_str("insert at end", ins2.lines[0], "alpha-tail")
+    t_eq_int("cursor at the new end", ins2.col, 10)
+
+    let ins3: Buf = Buf->two("alpha", "beta")->set_cursor(1, 2)->insert("-")
+    t_eq_str("insert on the second line", ins3.lines[1], "be-ta")
+    t_eq_str("first line untouched", ins3.lines[0], "alpha")
+
+    // ── Movement ─────────────────────────────────────────────────────────────
+    let m: Buf = Buf->two("alpha", "beta")->set_cursor(99, 99)
+    t_eq_int("cursor clamps to the end", m.row, 1)
+    t_eq_int("column clamps too", m.col, 4)
+
+    let fromEnd: Buf = Buf->two("alpha", "beta")->set_cursor(0, 5)
+    t_eq_int("left inside the line steps back", fromEnd->move_left().col, 4)
+
+    let atStart: Buf = Buf->two("alpha", "beta")->set_cursor(1, 0)
+    t_eq_int("left at line start joins up", atStart->move_left().row, 0)
+    t_eq_int("and lands at its end", atStart->move_left().col, 5)
+
+    let endOfFirst: Buf = Buf->two("alpha", "beta")->set_cursor(0, 5)
+    t_eq_int("right at line end wraps down", endOfFirst->move_right().row, 1)
+    t_eq_int("and starts the line", endOfFirst->move_right().col, 0)
+
+    let down: Buf = Buf->two("alpha", "beta")->set_cursor(0, 5)->move_down()
+    t_eq_int("down clamps to the shorter line", down.col, 4)
+    t_eq_int("down remembers the wanted column", down.want, 5)
+    t_eq_int("up returns to the wanted column", down->move_up().col, 5)
+
+    t_eq_int("home is column 0", Buf->two("alpha", "beta")->set_cursor(1, 3)->move_home().col, 0)
+    t_eq_int("end is the line end", Buf->two("alpha", "beta")->set_cursor(1, 0)->move_end().col, 4)
+
+    let paged: Buf = Buf->two("alpha", "beta")->set_cursor(0, 0)->move_page(10)
+    t_eq_int("page down clamps at the last line", paged.row, 1)
+    t_eq_int("page up clamps at the first", paged->move_page(0 - 10).row, 0)
+
+    // ── Backspace and delete ─────────────────────────────────────────────────
+    let mid: Buf = Buf->two("alpha", "beta")->set_cursor(0, 1)->backspace()
+    t_eq_str("backspace removes before the cursor", mid.lines[0], "lpha")
+
+    let lineStart: Buf = Buf->two("alpha", "beta")->set_cursor(1, 0)->backspace()
+    t_eq_int("backspace at line start joins up", lineStart.count, 1)
+    t_eq_str("join keeps both halves", lineStart.lines[0], "alphabeta")
+    t_eq_int("cursor sits at the seam", lineStart.col, 5)
+
+    let del: Buf = Buf->two("alpha", "beta")->set_cursor(0, 0)->delete()
+    t_eq_str("delete removes at the cursor", del.lines[0], "lpha")
+
+    let lineEnd: Buf = Buf->two("alpha", "beta")->set_cursor(0, 5)->delete()
+    t_eq_int("delete at line end pulls the next line up", lineEnd.count, 1)
+    t_eq_str("pull keeps both halves", lineEnd.lines[0], "alphabeta")
+
+    t_eq_str("backspace on an empty document changes nothing",
+        Buf->from_text("")->backspace().lines[0], "")
+
+    // ── Enter and auto-indent ────────────────────────────────────────────────
+    let ind: array<string> = array_new(1)
+    ind[0] = "    let x = 1"
+    let split: Buf = Buf->of(ind, 1)->set_cursor(0, 11)->enter()
+    t_eq_int("enter splits into two lines", split.count, 2)
+    t_eq_str("left half stays", split.lines[0], "    let x =")
+    t_eq_str("right half carries the indent", split.lines[1], "     1")
+    t_eq_int("cursor after the indent", split.col, 4)
+
+    let atEndSplit: Buf = Buf->of(ind, 1)->set_cursor(0, 13)->enter()
+    t_eq_str("enter at line end still indents", atEndSplit.lines[1], "    ")
+
+    // ── Tab ──────────────────────────────────────────────────────────────────
+    let tabbed: Buf = Buf->from_text("x")->tab()
+    t_eq_str("tab inserts four spaces", tabbed.lines[0], "    x")
+
+    // ── Undo and redo ────────────────────────────────────────────────────────
+    let u: Buf = Buf->two("ab", "cd")
+    u = u->set_cursor(0, 2)
+    u = u->insert("X")
+    t_eq_str("insert lands", u.lines[0], "abX")
+
+    u = u->undo()
+    t_eq_str("undo removes the insert", u.lines[0], "ab")
+    t_eq_int("undo restores the cursor", u.col, 2)
+
+    u = u->redo()
+    t_eq_str("redo replays the insert", u.lines[0], "abX")
+    t_eq_int("redo restores the cursor", u.col, 3)
+
+    // Enter at the end of a line, then undo and redo it.
+    u = u->enter()
+    t_eq_int("enter adds a line", u.count, 3)
+    t_eq_str("the new line is empty", u.lines[1], "")
+
+    u = u->undo()
+    t_eq_int("undo rejoins the split", u.count, 2)
+    t_eq_str("undo restores the whole line", u.lines[0], "abX")
+
+    u = u->redo()
+    t_eq_int("redo splits again", u.count, 3)
+    t_eq_str("redo restores the empty line", u.lines[1], "")
+
+    // A join, undone and redone.
+    u = u->set_cursor(1, 0)
+    u = u->backspace()
+    t_eq_int("backspace joins", u.count, 2)
+    t_eq_str("join pulls the empty line in", u.lines[0], "abX")
+
+    u = u->undo()
+    t_eq_int("undo un-joins", u.count, 3)
+    t_eq_str("the empty line comes back", u.lines[1], "")
+
+    u = u->redo()
+    t_eq_int("redo joins again", u.count, 2)
+
+    // A new edit after undo forks the timeline: the redo stack is gone.
+    let f: Buf = Buf->two("ab", "cd")
+    f = f->set_cursor(0, 2)
+    f = f->insert("X")
+    f = f->undo()
+    f = f->insert("Z")
+    t_eq_int("editing after undo clears the redo stack", f.redoN, 0)
+    t_eq_str("and the text is the fork", f.lines[0], "abZ")
+
+    // Undoing a delete-at-end merge both ways.
+    let d: Buf = Buf->two("ab", "cd")->set_cursor(0, 2)->delete()
+    t_eq_int("delete at end merges", d.count, 1)
+    t_eq_str("merge keeps both halves", d.lines[0], "abcd")
+
+    let d2: Buf = d->undo()
+    t_eq_int("undo un-merges", d2.count, 2)
+    t_eq_str("second line comes back", d2.lines[1], "cd")
+
+    let d3: Buf = d2->redo()
+    t_eq_int("redo merges again", d3.count, 1)
+    t_eq_str("text is the merge", d3.lines[0], "abcd")
+
+    // Undoing a backspace-at-start join both ways.
+    let j: Buf = Buf->two("ab", "cd")->set_cursor(1, 0)->backspace()
+    t_eq_str("joined", j.lines[0], "abcd")
+    let j2: Buf = j->undo()
+    t_eq_int("undo restores two lines", j2.count, 2)
+    t_eq_str("undo restores the second line", j2.lines[1], "cd")
+    let j3: Buf = j2->redo()
+    t_eq_str("redo joins again", j3.lines[0], "abcd")
+
+    // ── Saving clears the modified flag ──────────────────────────────────────
+    let s: Buf = Buf->from_text("x")->insert("y")->saved()
+    t_false("saved buffer is not modified", s.modified)
+
+    // ── Selection ────────────────────────────────────────────────────────────
+    let sel: Buf = Buf->two("hello world", "second line")
+    t_false("no selection at rest", sel->has_selection())
+
+    // A selection is the anchor plus the cursor, in either order.
+    let forward: Buf = Buf->two("hello world", "second line")->set_cursor(0, 5)->with_sel(0, 0, true)
+    t_true("forward selection is one", forward->has_selection())
+    t_eq_str("forward selection text", forward->selection_text(), "hello")
+
+    let backward: Buf = Buf->two("hello world", "second line")->set_cursor(0, 0)->with_sel(0, 5, true)
+    t_true("backward selection is one", backward->has_selection())
+    t_eq_str("backward selection text", backward->selection_text(), "hello")
+
+    // Selecting into the second line spans the newline.
+    let across: Buf = Buf->two("hello world", "second line")->set_cursor(1, 3)->with_sel(0, 6, true)
+    t_eq_str("selection across lines", across->selection_text(), "world" + Buf->nl() + "sec")
+
+    // Collapse keeps the cursor and drops the anchor.
+    let flat: Buf = forward->collapse_selection()
+    t_false("collapse drops the selection", flat->has_selection())
+    t_eq_int("collapse keeps the cursor", flat.col, 5)
+
+    // begin_selection anchors at the cursor; it does not move it.
+    let begun: Buf = Buf->two("ab", "cd")->set_cursor(1, 1)->begin_selection()
+    t_true("begin selects", begun.selActive)
+    t_eq_int("begin anchors at the cursor", begun.selRow, 1)
+
+    // Select all spans the document.
+    let all: Buf = Buf->two("ab", "cd")->select_all()
+    t_eq_str("select all takes everything", all->selection_text(), "ab" + Buf->nl() + "cd")
+
+    // ── Typing over a selection replaces it, in one undo step ────────────────
+    let rep: Buf = Buf->two("hello world", "second line")->set_cursor(0, 5)->with_sel(0, 0, true)->insert("goodbye")
+    t_eq_str("typing replaces the selection", rep.lines[0], "goodbye world")
+    t_eq_int("cursor after the typed text", rep.col, 7)
+    t_false("replacement collapses the selection", rep->has_selection())
+    t_eq_int("one entry for the replacement", rep.undoN, 1)
+    let repZ: Buf = rep->undo()
+    t_eq_str("undo restores the replaced text", repZ.lines[0], "hello world")
+    t_eq_int("undo restores the cursor", repZ.col, 0)
+
+    // ── Deleting a selection ─────────────────────────────────────────────────
+    let del: Buf = Buf->two("hello world", "x")->set_cursor(0, 5)->with_sel(0, 0, true)->delete_selection()
+    t_eq_str("delete clears the span", del.lines[0], " world")
+    t_eq_int("cursor at the span start", del.col, 0)
+    let delZ: Buf = del->undo()
+    t_eq_str("undo restores the deleted span", delZ.lines[0], "hello world")
+
+    // A selection spanning the newline rejoins the lines when deleted.
+    let joinDel: Buf = Buf->two("abc", "def")->set_cursor(1, 1)->with_sel(0, 1, true)->delete_selection()
+    t_eq_int("deleting across lines rejoins them", joinDel.count, 1)
+    t_eq_str("the seam is spliced", joinDel.lines[0], "aef")
+    let joinZ: Buf = joinDel->undo()
+    t_eq_int("undo restores two lines", joinZ.count, 2)
+    t_eq_str("both lines come back", joinZ.lines[0] + "|" + joinZ.lines[1], "abc|def")
+
+    // ── Paste, with and without a selection ──────────────────────────────────
+    let nl: string = Buf->nl()
+    let pasted: Buf = Buf->two("ab", "cd")->set_cursor(0, 2)->paste("X" + nl + "Y")
+    t_eq_int("paste splits into lines", pasted.count, 3)
+    t_eq_str("paste splices the first line", pasted.lines[0], "abX")
+    t_eq_str("paste lands the middle line", pasted.lines[1], "Y")
+    t_eq_str("paste keeps the tail", pasted.lines[2], "cd")
+    t_eq_int("cursor after the paste", pasted.row, 1)
+    let pZ: Buf = pasted->undo()
+    t_eq_int("undo takes the whole paste back", pZ.count, 2)
+    t_eq_str("undo restores the text", pZ.lines[0], "ab")
+
+    let over: Buf = Buf->two("ab", "cd")->set_cursor(0, 2)->with_sel(0, 0, true)->paste("Z")
+    t_eq_str("paste over a selection replaces it", over.lines[0], "Z")
+    t_eq_int("replacing paste undoes once", over.undoN, 1)
+    let oZ: Buf = over->undo()
+    t_eq_str("undo restores the selection", oZ.lines[0], "ab")
+
+    // Paste with carriage returns, as a Windows clipboard holds.
+    let pasteWin: Buf = Buf->from_text("ab")->set_cursor(0, 2)->paste("x" + Char.ConvertFromUtf32(13) + nl + "y")
+    t_eq_str("carriage returns are dropped", pasteWin.lines[1], "y")
+
+    // ── Select all then delete empties the document ──────────────────────────
+    let wiped: Buf = Buf->two("ab", "cd")->select_all()->delete_selection()
+    t_eq_int("select all and delete empties", wiped.count, 1)
+    t_eq_str("the one line is empty", wiped.lines[0], "")
+    let wZ: Buf = wiped->undo()
+    t_eq_str("undo brings the document back", wZ.lines[0] + "|" + wZ.lines[1], "ab|cd")
+}
+
+imp Buf {
+    // Builds a buffer from text joined by newlines, so a test's arrange step reads like the file it
+    // describes. The newline is char 10; the language has no escape for it in a literal.
+    func of(lines: array<string>, count: int) : Buf {
+        let nl: string = Buf->nl()
+        let s: string = ""
+        let i: int = 0
+        while (i < count) {
+            s = s + lines[i] + nl
+            i = i + 1
+        }
+        return Buf->from_text(s)
+    }
+
+    func two(a: string, b: string) : Buf {
+        let lines: array<string> = array_new(2)
+        lines[0] = a
+        lines[1] = b
+        return Buf->of(lines, 2)
+    }
+}

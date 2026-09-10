@@ -56,28 +56,34 @@ A backend implements no interface and subclasses nothing. It executes a buffer.
 
 ## The widget tree is an int arena
 
-A node is an `int`, and the whole tree is one `array<int>` addressed as `node * ui_stride() +
+A node is an `int`, and the whole tree is one `array<int>` addressed as `node * Ui->stride() +
 field`. Children hang off `FIRST_KID` / `NEXT_SIB`. "No node" is `-1`.
 
-The obvious `struct Node { kids: array<Node> }` is not available, and it is worth recording why,
-because all three reasons are properties of the compiler rather than preferences:
+When this was written, the obvious `struct Node { kids: array<Node> }` was not available for three
+reasons, all properties of the compiler rather than preferences. **All three have since been fixed**,
+and the history is kept here because it explains the shape of the code:
 
-- **Recursive structs do not bind.** `Binder.BindStructDeclaration` resolves a field's type before
-  it declares the struct, so a struct cannot name itself. (The emitters already support it —
-  `TypeEmitter` registers the type before adding fields, deliberately — so this is a binder change
-  of about thirty lines if it is ever wanted.)
-- **`CEmitter` emits only non-generic structs** (`StructTypes.Where(s => !s.IsGeneric)`), so a
-  `Ui<S>` would silently vanish on the C and PSP backends.
-- **Casting `any` to a struct emits `isinst`**, which yields a boxed reference for a value type, so
-  a heterogeneous `array<any>` of nodes cannot be read back.
+- **Recursive structs did not bind.** The binder resolved a field's type before declaring the
+  struct, so a struct could not name itself. Structs are now declared in one pass and have their
+  fields bound in a second, so self-reference, forward reference and mutual reference all work.
+- **`CEmitter` emits only non-generic structs**, so a `Ui<S>` would have vanished silently on the C
+  and PSP backends. It still emits only non-generic structs — but it now *reports* a generic one
+  instead of dropping it.
+- **Casting `any` to a struct emits `isinst`**, which yields a boxed reference for a value type. Still
+  true, and still a reason not to build a heterogeneous tree out of value structs — but `isinst` is
+  the correct instruction for a `class`, so the round trip works for reference types.
 
-The arena is also simply the better representation: one allocation per frame, no pointer chasing,
-and it transpiles unchanged to C, to the PSP, and to anything a browser backend would want.
+**The arena stays anyway, and that is the point worth keeping.** It is the better representation for
+this problem independently of what the compiler can express: one allocation per frame rather than one
+per node, no pointer chasing, contiguous fields, and it transpiles unchanged to C, to the PSP, and to
+anything a browser backend would want. Rewriting `std/ui` around classes would trade all of that for
+familiarity.
 
-**Reference types were considered and not added.** The `TypeEmitter` pivot is small — struct-ness
-comes from one `System.ValueType` base reference, and `IsEmittedAsValueType` derives the rest from
-the Cecil flag — but the cost lands on the C and PSP backends, which have no allocation or lifetime
-story. The arena gives mutation *and* better locality at no backend risk.
+One correction to the record. This section used to say reference types were not added because "the
+cost lands on the C and PSP backends, which have no allocation or lifetime story." That was wrong:
+those backends have exactly one, the process-lifetime bump arena in `native/prl_memory.h` that every
+array and every string concatenation already allocates from and never frees. A class is a pointer
+into that same arena under the same contract. See `docs/architecture/memory.md`.
 
 ### Mutating through a value type
 
@@ -91,16 +97,16 @@ than in scalar fields: a scalar would be incremented on a copy and thrown away.
 ## The builder opens and closes
 
 ```prolang
-ui_col(ui, pad: 16, gap: 12)
-    ui_text(ui, "Count: " + n, font: TITLE)
-    ui_row(ui, gap: 8)
-        ui_button(ui, "Increment", action: ACT_INC)
-        ui_button(ui, "Reset",     action: ACT_RESET)
-    ui_end(ui)
-ui_end(ui)
+ui->col(pad: 16, gap: 12)
+    ui->text("Count: " + n, font: TITLE)
+    ui->row(gap: 8)
+        ui->button("Increment", action: ACT_INC)
+        ui->button("Reset", action: ACT_RESET)
+    ui->end()
+ui->end()
 ```
 
-Containers open a scope; `ui_end` closes the innermost. Indentation carries the tree.
+Containers open a scope; `Ui->end` closes the innermost. Indentation carries the tree.
 
 The nested-call form Flutter and JSX use would require an array literal of children passed inline
 as an argument — a path nothing in this repository exercises. This form needs no array literals, no
@@ -108,7 +114,7 @@ nested call expressions and no recursive types, so it works on every backend as 
 stands. A conditional child is an ordinary `if` around a statement rather than something that has
 to produce a list.
 
-Its one hazard is an unbalanced `ui_end`, so that is checked: `ui_end` on an empty stack asserts,
+Its one hazard is an unbalanced `Ui->end`, so that is checked: `Ui->end` on an empty stack asserts,
 and so does presenting a frame with a container still open.
 
 Default and named arguments are what make this readable, and they were added to the compiler for
@@ -118,7 +124,7 @@ it. Without them every widget would take a dozen positional integers.
 
 ## Scenes: content the toolkit knows nothing about
 
-`ui_scene` is the escape hatch — a 3D view, a chart, a game viewport — and it is a first-class
+`Ui->scene` is the escape hatch — a 3D view, a chart, a game viewport — and it is a first-class
 widget rather than something bolted on beside one. It takes `flex`, it sits inside a padded card, it
 moves when the window is resized, and it composites in tree order.
 
@@ -178,7 +184,7 @@ pixel per row is visibly ragged down its right edge.
 
 Layout needs a string's width before anything is drawn, and only the backend truly knows it. Rather
 than calling out mid-layout, **the host measures every glyph once at start-up** into a table, and
-`font_measure` sums advances over it.
+`FontSet->measure` sums advances over it.
 
 That is what keeps the layout engine pure: it runs identically on Windows Forms, on the PSP, and
 under `dotnet test` on a machine with no window system. It is also why `charCode` exists as a
@@ -205,7 +211,7 @@ widget report clicks through whatever covers it.
 
 ### Events are integers, not callbacks
 
-`ui_present` returns the action that fired; the frame loop handles it against state it owns.
+The host's `present` returns the action that fired; the frame loop handles it against state it owns.
 
 This is not a limitation being worked around. Function values in ProLang capture nothing — that
 restriction is what lets them compile to a bare function pointer on the C and PSP backends with no
@@ -295,6 +301,6 @@ about the toolkit — and it is what a golden-image test would use.
 - **Scrolling and clipping.** The opcodes exist; no widget emits them.
 - **Text input.** There is no caret, selection or IME. On Windows Forms the escape hatch is a real
   `TextBox` positioned by the layout; the toolkit does not do this yet.
-- **Multi-line and wrapped text.** `ui_text` is one line.
+- **Multi-line and wrapped text.** `Ui->text` is one line.
 - **Focus and keyboard navigation.** `ui/hit` is pointer-only.
 - **Images on the PSP.** There is no path from a bitmap handle to a GU texture.

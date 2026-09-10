@@ -16,9 +16,9 @@ import "ui/color"
 import "ui/font"
 
 func test_scene_fonts() : FontSet {
-    let fonts: FontSet = font_new(1)
+    let fonts: FontSet = FontSet->new(1)
 
-    font_set_monospace(fonts, 0, 10, 20, 16)
+    fonts->set_monospace(0, 10, 20, 16)
 
     return fonts
 }
@@ -65,18 +65,18 @@ func test_scene_run() : void {
 
 func test_scene_widget() : void {
     let fonts: FontSet = test_scene_fonts()
-    let ui: Ui = ui_new(32)
+    let ui: Ui = Ui->new(32)
 
-    ui_begin(ui, 0, 0, false)
-    let root: int = ui_col(ui, pad: 10, gap: 5)
-        let label: int = ui_text(ui, "ab")
-        let scene: int = ui_scene(ui, tag: 7, flex: 1)
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let root: int = ui->col(pad: 10, gap: 5)
+        let label: int = ui->text("ab")
+        let scene: int = ui->scene(tag: 7, flex: 1)
+    ui->end()
 
-    t_eq_int("scene kind", ui_kind(ui, scene), UiKind.SCENE)
-    t_eq_int("tag recorded", ui_get(ui, scene, UiF.SCENE_TAG), 7)
-    t_false("a scene is a leaf", ui_is_container(ui, scene))
-    t_eq_int("a scene takes no children", ui_child_count(ui, scene), 0)
+    t_eq_int("scene kind", ui->kind(scene), UiKind.SCENE)
+    t_eq_int("tag recorded", ui->get(scene, UiF.SCENE_TAG), 7)
+    t_false("a scene is a leaf", ui->is_container(scene))
+    t_eq_int("a scene takes no children", ui->child_count(scene), 0)
 
     box_layout(ui, fonts, root, 0, 0, 200, 100)
 
@@ -86,27 +86,27 @@ func test_scene_widget() : void {
     t_eq_int("scene sits below the label", box_y(ui, scene), 35)
 
     // Not clickable unless it asks to be — a scene is not a button.
-    t_eq_int("no id by default", ui_get(ui, scene, UiF.ID), 0)
+    t_eq_int("no id by default", ui->get(scene, UiF.ID), 0)
 
-    ui_begin(ui, 0, 0, false)
-    let clickable: int = ui_scene(ui, tag: 1, action: 42)
-    t_eq_int("a scene may take an action", ui_get(ui, clickable, UiF.ACTION), 42)
-    t_eq_int("and is then hit tested", ui_get(ui, clickable, UiF.ID), 42)
+    ui->begin(0, 0, false)
+    let clickable: int = ui->scene(tag: 1, action: 42)
+    t_eq_int("a scene may take an action", ui->get(clickable, UiF.ACTION), 42)
+    t_eq_int("and is then hit tested", ui->get(clickable, UiF.ID), 42)
 }
 
 // ── The painter ──────────────────────────────────────────────────────────────
 
 func test_scene_paints() : void {
     let fonts: FontSet = test_scene_fonts()
-    let ui: Ui = ui_new(32)
+    let ui: Ui = Ui->new(32)
     let ops: array<int> = array_new(64 * dl_stride())
     let state: array<int> = array_new(8)
 
     let ink: int = color_rgb(10, 200, 30)
     state[6] = ink
 
-    ui_begin(ui, 0, 0, false)
-    let scene: int = ui_scene(ui, tag: 5, pad: 4, bg: color_rgb(1, 2, 3))
+    ui->begin(0, 0, false)
+    let scene: int = ui->scene(tag: 5, pad: 4, bg: color_rgb(1, 2, 3))
     box_layout(ui, fonts, scene, 0, 0, 100, 60)
     hit_resolve(ui)
 
@@ -140,8 +140,8 @@ func test_scene_paints() : void {
     // A scene with no room left does not call the painter at all, so a painter never has to guard
     // against a zero or negative size.
     state[0] = 0
-    ui_begin(ui, 0, 0, false)
-    let squashed: int = ui_scene(ui, tag: 1, pad: 40)
+    ui->begin(0, 0, false)
+    let squashed: int = ui->scene(tag: 1, pad: 40)
     box_layout(ui, fonts, squashed, 0, 0, 10, 10)
     hit_resolve(ui)
 
@@ -159,7 +159,7 @@ func test_scene_paints() : void {
  */
 func test_scene_order() : void {
     let fonts: FontSet = test_scene_fonts()
-    let ui: Ui = ui_new(32)
+    let ui: Ui = Ui->new(32)
     let ops: array<int> = array_new(64 * dl_stride())
     let state: array<int> = array_new(8)
 
@@ -169,14 +169,14 @@ func test_scene_order() : void {
 
     state[6] = sceneInk
 
-    ui_begin(ui, 0, 0, false)
-    let root: int = ui_col(ui)
-        ui_box(ui, bg: under, height: 10)
-        ui_end(ui)
-        ui_scene(ui, tag: 1, height: 10)
-        ui_box(ui, bg: over, height: 10)
-        ui_end(ui)
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let root: int = ui->col()
+        ui->box(bg: under, height: 10)
+        ui->end()
+        ui->scene(tag: 1, height: 10)
+        ui->box(bg: over, height: 10)
+        ui->end()
+    ui->end()
 
     box_layout(ui, fonts, root, 0, 0, 60, 30)
     hit_resolve(ui)

@@ -42,7 +42,7 @@ func main()
 
     let host: PspHost = hostp_open()
     let fonts: FontSet = hostp_fonts()
-    let ui: Ui = ui_new(128)
+    let ui: Ui = Ui->new(128)
 
     while (hostp_running(host)) {
         let theme: int = activeTheme[0]
@@ -50,26 +50,25 @@ func main()
         hostp_begin(host, ui)
 
         // ── Everything from here to hostp_present is identical to the desktop version ──
-        ui_col(ui, pad: 12, gap: 10, bg: theme_background(theme))
+        ui->col(pad: 12, gap: 10, bg: theme_background(theme))
 
-            ui_text(ui, "Counter", fg: theme_text(theme))
+            ui->text("Counter", fg: theme_text(theme))
 
-            ui_box(ui, pad: 12, radius: 6, flex: 1,
-                   bg: theme_surface(theme), align: UiAlign.CENTER, justify: UiAlign.CENTER)
-                ui_text(ui, "" + count[0], fg: theme_accent(theme))
-            ui_end(ui)
+            ui->box(pad: 12, radius: 6, flex: 1, bg: theme_surface(theme), align: UiAlign.CENTER, justify: UiAlign.CENTER)
+                ui->text("" + count[0], fg: theme_accent(theme))
+            ui->end()
 
-            ui_row(ui, gap: 6)
+            ui->row(gap: 6)
                 psp_counter_button(ui, "-", PspAct.DECREMENT, theme)
                 psp_counter_button(ui, "+", PspAct.INCREMENT, theme)
                 psp_counter_button(ui, "Reset", PspAct.RESET, theme)
-                ui_spacer(ui, flex: 1)
+                ui->spacer(flex: 1)
                 psp_counter_button(ui, "Theme", PspAct.THEME, theme)
-            ui_end(ui)
+            ui->end()
 
-            ui_text(ui, theme_name(theme) + "  Start quits", fg: theme_text_dim(theme))
+            ui->text(theme_name(theme) + "  Start quits", fg: theme_text_dim(theme))
 
-        ui_end(ui)
+        ui->end()
 
         let act: int = hostp_present(host, ui, fonts, theme_background(theme))
 
@@ -87,10 +86,5 @@ func main()
 
 // The same component function as the desktop version, with padding suited to a smaller screen.
 func psp_counter_button(ui: Ui, label: string, action: int, theme: int) : int {
-    return ui_button(ui, label,
-        action: action,
-        bg: theme_surface(theme),
-        fg: theme_text(theme),
-        radius: 4,
-        pad: 6)
+    return ui->button(label, action: action, bg: theme_surface(theme), fg: theme_text(theme), radius: 4, pad: 6)
 }

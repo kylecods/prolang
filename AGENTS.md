@@ -126,10 +126,14 @@ prolang/
 │   ├── 14-chip-8/                 # CHIP-8 emulator
 │   ├── 15-psp-demo/               # PlayStation Portable target
 │   ├── 16-pixel-editor/           # Pixel editor: 4 modules over the std/ui toolkit
-│   └── 17-widgets/                # The widget toolkit: one counter, on Windows Forms and on PSP
+│   ├── 17-widgets/                # The widget toolkit: one counter, on Windows Forms, OpenGL, and on PSP
+│   ├── 18-psp-cube/               # Rotating cube rendered on Windows Forms and PSP
+│   ├── 19-opengl-cube/            # Hardware-accelerated OpenGL 3D cube
+│   ├── 20-opengl-widgets/         # OpenGL UI widgets with embedded 3D viewport
+│   └── 21-text-editor/            # Text editor on the OpenGL host, with prolang syntax highlighting
 │
 ├── std/                           # Standard library, shipped beside the compiler
-│   ├── ui/                        # UI toolkit: shapes, themes, icons, layout, WinForms boundary
+│   ├── ui/                        # UI toolkit: shapes, themes, icons, layout, WinForms & OpenGL hosts
 │   └── README.md                  # Module list and the rules for adding one
 │
 ├── tests/std/                     # The standard library's own suite, written in ProLang
@@ -849,8 +853,40 @@ func main() {
 
 > **Structs are .NET value types**, so passing one to a function passes a *copy*: assigning to a
 > scalar field of a parameter is invisible to the caller. An `array<T>` field is a reference to a
-> real array, so writes *through* it are visible — that is the mutation channel the language has.
-> The repo's convention for everything else is to return a new struct, as `std/dynarray.prl` does.
+> real array, so writes *through* it are visible — that is the mutation channel a struct has.
+> Much of `std/` returns a new struct for this reason, as `std/dynarray.prl` does.
+
+### Classes
+
+A `class` is the same declaration with reference semantics: heap-allocated, assigned by aliasing,
+nullable, and able to name itself.
+
+```prolang
+class Node {
+    value: int;
+    next:  Node;      // a struct cannot do this — it would have no finite size
+}
+
+func bump(n: Node) : void {
+    n.value = n.value + 1     // visible to the caller; the struct version is not
+}
+
+let head: Node = null
+if (head == null) { print("empty") }
+```
+
+> Reach for `struct` by default and `class` when the data has identity — recursive shapes (lists,
+> trees, ASTs) or state that several holders must see. The trade is that `let b = a` then mutating
+> `b` also changes `a`, and that a class can be null.
+>
+> **Lifetime differs by backend, and the language does not say so.** On `--emit-msil` the CLR
+> collects. On `--emit-c` and `--emit-psp` a class is a pointer into the process-lifetime arena and
+> is *never* freed — as is already true of every array and string concatenation there. A loop
+> allocating per iteration is fine on .NET and will exhaust the arena in C. See
+> `docs/architecture/memory.md`.
+>
+> `std/ui` deliberately keeps its integer arena rather than using classes: one allocation per frame
+> beats one per node, and it still transpiles to the PSP.
 
 ### Collections
 
@@ -1156,7 +1192,10 @@ Other `prl_*` runtime functions (print, sleep, console) also get PSP implementat
   use the C transpiler path which has no managed runtime.
 - Integer-heavy code requires explicit casts for narrowing (e.g. `uint8(x & 0xFF)`)
   — the conversion classifier treats widening as implicit, narrowing as explicit.
-- Memory: generated C uses `malloc`/structs (no GC), friendly to the PSP's 32 MB.
+- Memory: generated C allocates everything — arrays, strings, classes — from one
+  process-lifetime bump arena (`native/prl_memory.h`) and never frees. Exhausting it
+  aborts with a message; `DEFAULT_RESERVE` in `native/arena.h` sets the size (16MB
+  desktop, 4MB PSP). See `docs/architecture/memory.md`.
 
 ---
 

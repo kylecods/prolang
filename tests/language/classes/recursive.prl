@@ -1,0 +1,227 @@
+/*
+ * Recursive reference types: the shape the language existed without.
+ *
+ * A struct cannot hold itself by value — it would have no finite size — and before `class` there
+ * was no other way to say "a node that points at a node". std/ui/widget.prl documents the
+ * consequence at length: a widget tree became a flat `array<int>` with a 28-int stride, integer
+ * handles, and `-1` for "no node", because writing `null` compiled to the integer 0, which is a
+ * perfectly valid index and would silently have meant the root.
+ *
+ * Three things had to land before this file could exist:
+ *   - the binder declaring a struct's name before binding its field types, so `Node` can name Node;
+ *   - `class`, so that self-reference is a pointer rather than infinite size;
+ *   - `null` binding to an actual null reference rather than to the integer 0.
+ */
+
+import "io"
+
+class Node {
+    value: int;
+    next:  Node;
+}
+
+class TreeNode {
+    value: int;
+    left:  TreeNode;
+    right: TreeNode;
+}
+
+// Mutual recursion, by reference on both sides.
+class Parent {
+    name:  string;
+    child: Child;
+}
+
+class Child {
+    name:   string;
+    parent: Parent;
+}
+
+// Builds 1 -> 2 -> ... -> n, then returns the head. `next` is left null on the last node.
+func build_list(n: int) : Node
+{
+    let head: Node = null
+
+    for (i = 0 to n - 1) {
+        let value = n - i
+        let node = Node { value: value, next: head }
+        head = node
+    }
+
+    return head
+}
+
+func list_length(head: Node) : int
+{
+    let count = 0
+    let current = head
+
+    while (current != null) {
+        count = count + 1
+        current = current.next
+    }
+
+    return count
+}
+
+func list_sum(head: Node) : int
+{
+    let total = 0
+    let current = head
+
+    while (current != null) {
+        total = total + current.value
+        current = current.next
+    }
+
+    return total
+}
+
+func list_render(head: Node) : string
+{
+    let text = ""
+    let current = head
+
+    while (current != null) {
+        if (text == "") {
+            text = "" + current.value
+        } else {
+            text = text + "->" + current.value
+        }
+
+        current = current.next
+    }
+
+    return text
+}
+
+// Appending walks to the end and mutates the last node in place — a write through a reference,
+// visible to whoever else holds the head.
+func list_append(head: Node, value: int) : void
+{
+    let current = head
+
+    while (current.next != null) {
+        current = current.next
+    }
+
+    current.next = Node { value: value, next: null }
+}
+
+func tree_insert(root: TreeNode, value: int) : TreeNode
+{
+    if (root == null) {
+        return TreeNode { value: value, left: null, right: null }
+    }
+
+    if (value < root.value) {
+        root.left = tree_insert(root.left, value)
+    } else {
+        root.right = tree_insert(root.right, value)
+    }
+
+    return root
+}
+
+func tree_inorder(root: TreeNode) : string
+{
+    if (root == null) {
+        return ""
+    }
+
+    let left = tree_inorder(root.left)
+    let right = tree_inorder(root.right)
+
+    let text = "" + root.value
+
+    if (left != "") {
+        text = left + "," + text
+    }
+
+    if (right != "") {
+        text = text + "," + right
+    }
+
+    return text
+}
+
+func tree_depth(root: TreeNode) : int
+{
+    if (root == null) {
+        return 0
+    }
+
+    let left = tree_depth(root.left)
+    let right = tree_depth(root.right)
+
+    if (left > right) {
+        return left + 1
+    }
+
+    return right + 1
+}
+
+func main()
+{
+    // ── A linked list, terminated by null ────────────────────────────────────
+    let head = build_list(5)
+    print("list        = " + list_render(head))
+    print("length      = " + list_length(head))
+    print("sum         = " + list_sum(head))
+
+    // Mutating the tail through a reference is visible through the head held here.
+    list_append(head, 99)
+    print("appended    = " + list_render(head))
+    print("length now  = " + list_length(head))
+
+    // ── An empty list is just null ───────────────────────────────────────────
+    let empty: Node = null
+    print("empty len   = " + list_length(empty))
+
+    // Printed through a branch rather than as a bool, because the two backends disagree on how a
+    // bool stringifies — .NET gives "True", the C runtime gives "true" — and that divergence is not
+    // what this file is testing.
+    if (empty == null) {
+        print("empty null  = yes")
+    } else {
+        print("empty null  = no")
+    }
+
+    // ── A binary search tree, built by recursion ─────────────────────────────
+    let root: TreeNode = null
+    root = tree_insert(root, 50)
+    root = tree_insert(root, 30)
+    root = tree_insert(root, 70)
+    root = tree_insert(root, 20)
+    root = tree_insert(root, 40)
+    root = tree_insert(root, 60)
+    root = tree_insert(root, 80)
+
+    print("inorder     = " + tree_inorder(root))
+    print("depth       = " + tree_depth(root))
+
+    // ── Mutual recursion: each side points at the other, one object each ─────
+    let parent = Parent { name: "p", child: null }
+    let child = Child { name: "c", parent: parent }
+    parent.child = child
+
+    print("cycle       = " + parent.child.name + "," + child.parent.name)
+    print("round trip  = " + parent.child.parent.child.name)
+
+    // ── any round trip ───────────────────────────────────────────────────────
+    // A class converts to `any` without boxing — it is already a reference — and comes back
+    // through `isinst`, which is the correct instruction for a reference type. For a value struct
+    // the same cast emits `isinst` too, where it yields a boxed reference rather than the value;
+    // that is the third of the three blockers std/ui/widget.prl lists.
+    let boxed: any = head
+    let unboxed = boxed as Node
+    print("any trip    = " + list_render(unboxed))
+
+    let missing: any = null
+
+    if (missing == null) {
+        print("any null    = yes")
+    } else {
+        print("any null    = no")
+    }
+}

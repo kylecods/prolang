@@ -1,17 +1,18 @@
 # The widget toolkit
 
-The same counter, twice: once on Windows Forms, once on a PlayStation Portable.
+The same counter, across backends: on Windows Forms, on hardware-accelerated OpenGL, and on a PlayStation Portable.
 
 ```powershell
-.\build.ps1 -Run                                    # the desktop version
+.\build.ps1 -Run                                    # the Windows Forms version
+.\build.ps1 -OpenGL -Run                            # the OpenGL version
 prolang counter_psp.prl --emit-psp                  # then `make -f Makefile.psp` in WSL
 ```
 
 ## What this example is for
 
-Put `counter.prl` beside `counter_psp.prl`. The part that says what the interface *is* — the
+Put `counter.prl` beside `counter_gl.prl` and `counter_psp.prl`. The part that says what the interface *is* — the
 column, the card, the row of buttons, the spacer that pushes the last group to the right — is
-character for character the same. What differs is four lines of setup and the names of two host
+character for character the same. What differs is four lines of setup and the names of the host
 functions.
 
 The two machines could hardly be less alike. One has windows, a pointer, GDI+ and a .NET runtime.
@@ -31,21 +32,21 @@ parented by hand, styled by hand, and would need a second hand-written pass to s
 Here nothing has a coordinate:
 
 ```prolang
-ui_col(ui, pad: 20, gap: 16, bg: theme_background(theme))
-    ui_text(ui, "Counter", font: Font.TITLE, fg: theme_text(theme))
+Ui->col(ui, pad: 20, gap: 16, bg: theme_background(theme))
+    Ui->text(ui, "Counter", font: Font.TITLE, fg: theme_text(theme))
 
-    ui_box(ui, pad: 20, radius: 8, flex: 1, bg: theme_surface(theme),
+    Ui->box(ui, pad: 20, radius: 8, flex: 1, bg: theme_surface(theme),
            align: UiAlign.CENTER, justify: UiAlign.CENTER)
-        ui_text(ui, "" + count, font: Font.TITLE, fg: theme_accent(theme))
-    ui_end(ui)
+        Ui->text(ui, "" + count, font: Font.TITLE, fg: theme_accent(theme))
+    Ui->end(ui)
 
-    ui_row(ui, gap: 8)
+    Ui->row(ui, gap: 8)
         counter_button(ui, "Decrement", Act.DECREMENT, theme)
         counter_button(ui, "Increment", Act.INCREMENT, theme)
-        ui_spacer(ui, flex: 1)
+        Ui->spacer(ui, flex: 1)
         counter_button(ui, "Quit", Act.QUIT, theme)
-    ui_end(ui)
-ui_end(ui)
+    Ui->end(ui)
+Ui->end(ui)
 ```
 
 Resizing works because the tree is laid out again against the new size. There is no second copy of
@@ -59,7 +60,7 @@ base class to derive from and no interface to implement; composing components is
 **Buttons size themselves.** No width is given: a button measures its label through the font table
 and adds its padding. A number here would be one more thing to keep in step with the font.
 
-**A flexible spacer is how something is pushed to the far end.** `ui_spacer(ui, flex: 1)` takes
+**A flexible spacer is how something is pushed to the far end.** `Ui->spacer(ui, flex: 1)` takes
 whatever the fixed children leave, so everything after it ends up hard against the right edge.
 
 ## Events are integers
