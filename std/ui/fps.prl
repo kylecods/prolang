@@ -134,7 +134,7 @@ imp Fps {
     }
 
     /*
-     * The counter as a line of text, ready for `ui_text`.
+     * The counter as a line of text, ready for `Ui->text`.
      *
      * Reads "--" rather than "0" until a window has closed, because a program that has just started has
      * not measured nothing, it has not measured yet.

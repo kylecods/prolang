@@ -30,16 +30,16 @@ func test_draw_run() : void {
 
 func test_draw_surfaces() : void {
     let fonts: FontSet = test_draw_fonts()
-    let ui: Ui = ui_new(32)
+    let ui: Ui = Ui->new(32)
     let ops: array<int> = array_new(64 * dl_stride())
 
     let panel: int = color_rgb(10, 20, 30)
     let ink: int = color_rgb(240, 240, 240)
 
-    ui_begin(ui, 0, 0, false)
-    let root: int = ui_col(ui, pad: 4, bg: panel, radius: 3)
-        ui_text(ui, "ab", fg: ink)
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let root: int = ui->col(pad: 4, bg: panel, radius: 3)
+        ui->text("ab", fg: ink)
+    ui->end()
 
     box_layout(ui, fonts, root, 0, 0, 100, 40)
     hit_resolve(ui)
@@ -65,10 +65,10 @@ func test_draw_surfaces() : void {
     t_eq_str("the index resolves", ui.strs[dl_arg(ops, 1, 2)], "ab")
 
     // A transparent background emits nothing — most nodes in a real tree are structural.
-    ui_begin(ui, 0, 0, false)
-    let bare: int = ui_col(ui)
-        ui_text(ui, "ab", fg: ink)
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let bare: int = ui->col()
+        ui->text("ab", fg: ink)
+    ui->end()
 
     box_layout(ui, fonts, bare, 0, 0, 100, 40)
     hit_resolve(ui)
@@ -78,9 +78,9 @@ func test_draw_surfaces() : void {
     t_eq_int("only the text remains", dl_op(ops, 0), DlOp.TEXT)
 
     // Without a radius it is a plain rectangle.
-    ui_begin(ui, 0, 0, false)
-    let square: int = ui_col(ui, bg: panel)
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let square: int = ui->col(bg: panel)
+    ui->end()
 
     box_layout(ui, fonts, square, 0, 0, 10, 10)
     hit_resolve(ui)
@@ -91,14 +91,14 @@ func test_draw_surfaces() : void {
 
 func test_draw_button_states() : void {
     let fonts: FontSet = test_draw_fonts()
-    let ui: Ui = ui_new(32)
+    let ui: Ui = Ui->new(32)
     let ops: array<int> = array_new(64 * dl_stride())
 
     let face: int = color_rgb(60, 60, 60)
 
     // Idle: the button is drawn in the colour it was given.
-    ui_begin(ui, 900, 900, false)
-    let idle: int = ui_button(ui, "ab", action: 7, bg: face, width: 60, height: 24)
+    ui->begin(900, 900, false)
+    let idle: int = ui->button("ab", action: 7, bg: face, width: 60, height: 24)
     box_layout(ui, fonts, idle, 0, 0, 60, 24)
     hit_resolve(ui)
 
@@ -112,8 +112,8 @@ func test_draw_button_states() : void {
     t_eq_int("label is centred vertically", dl_arg(ops, 1, 1), 2)
 
     // Hovered: lighter.
-    ui_begin(ui, 30, 12, false)
-    let hovered: int = ui_button(ui, "ab", action: 7, bg: face, width: 60, height: 24)
+    ui->begin(30, 12, false)
+    let hovered: int = ui->button("ab", action: 7, bg: face, width: 60, height: 24)
     box_layout(ui, fonts, hovered, 0, 0, 60, 24)
     hit_resolve(ui)
 
@@ -121,8 +121,8 @@ func test_draw_button_states() : void {
     t_eq_int("hovered lightens", dl_arg(ops, 0, 4), color_shade(face, dl_hover_shade()))
 
     // Pressed: lighter still, and distinct from hovered.
-    ui_begin(ui, 30, 12, true)
-    let pressed: int = ui_button(ui, "ab", action: 7, bg: face, width: 60, height: 24)
+    ui->begin(30, 12, true)
+    let pressed: int = ui->button("ab", action: 7, bg: face, width: 60, height: 24)
     box_layout(ui, fonts, pressed, 0, 0, 60, 24)
     hit_resolve(ui)
 
@@ -140,18 +140,18 @@ func test_draw_button_states() : void {
  */
 func test_draw_overflow() : void {
     let fonts: FontSet = test_draw_fonts()
-    let ui: Ui = ui_new(32)
+    let ui: Ui = Ui->new(32)
     let tiny: array<int> = array_new(2 * dl_stride())
 
     let ink: int = color_rgb(255, 255, 255)
 
-    ui_begin(ui, 0, 0, false)
-    let root: int = ui_col(ui)
-        ui_text(ui, "a", fg: ink)
-        ui_text(ui, "b", fg: ink)
-        ui_text(ui, "c", fg: ink)
-        ui_text(ui, "d", fg: ink)
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let root: int = ui->col()
+        ui->text("a", fg: ink)
+        ui->text("b", fg: ink)
+        ui->text("c", fg: ink)
+        ui->text("d", fg: ink)
+    ui->end()
 
     box_layout(ui, fonts, root, 0, 0, 100, 100)
     hit_resolve(ui)

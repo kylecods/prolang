@@ -254,8 +254,7 @@ func hostw_pump(host: Host, timeoutMs: int = 16) : void {
 func hostw_begin(host: Host, ui: Ui, timeoutMs: int = 16) : void {
     hostw_pump(host, timeoutMs)
 
-    ui_begin(ui, host.st[HostwS.MOUSE_X], host.st[HostwS.MOUSE_Y],
-        host.st[HostwS.MOUSE_DOWN] == 1)
+    ui->begin(host.st[HostwS.MOUSE_X], host.st[HostwS.MOUSE_Y], host.st[HostwS.MOUSE_DOWN] == 1)
 }
 
 /*
@@ -270,7 +269,7 @@ func hostw_present(host: Host, ui: Ui, fonts: FontSet) : int {
 }
 
 /*
- * The same, with a painter for `ui_scene` nodes.
+ * The same, with a painter for `Ui->scene` nodes.
  *
  * The painter appends display-list records rather than drawing, so this host needs no extra code
  * for it — and could not have taken a drawing callback anyway, since the list is executed later on
@@ -279,9 +278,9 @@ func hostw_present(host: Host, ui: Ui, fonts: FontSet) : int {
 func hostw_present_scene(host: Host, ui: Ui, fonts: FontSet,
                          paint: func(array<int>, int, int, int, int, int, int, array<int>) : int,
                          state: array<int>) : int {
-    assert(ui_is_balanced(ui), "a container was left open — every ui_col/ui_row/ui_box needs a ui_end")
+    assert(ui->is_balanced(), "a container was left open — every Ui->col/Ui->row/Ui->box needs a Ui->end")
 
-    let root: int = ui_root(ui)
+    let root: int = ui->root()
 
     if (root < 0) {
         return 0

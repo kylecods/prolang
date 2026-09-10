@@ -35,12 +35,12 @@ func test_box_run() : void {
 
 func test_box_natural() : void {
     let fonts: FontSet = test_box_fonts()
-    let ui: Ui = ui_new(32)
+    let ui: Ui = Ui->new(32)
 
-    ui_begin(ui, 0, 0, false)
-    let root: int = ui_col(ui, pad: 5)
-        let label: int = ui_text(ui, "abcd")
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let root: int = ui->col(pad: 5)
+        let label: int = ui->text("abcd")
+    ui->end()
 
     box_measure(ui, fonts, root)
 
@@ -53,10 +53,10 @@ func test_box_natural() : void {
     t_eq_int("column adds padding to height", box_h(ui, root), 30)
 
     // A fixed size replaces the measurement outright.
-    ui_begin(ui, 0, 0, false)
-    let sized: int = ui_col(ui, pad: 5, width: 100, height: 7)
-        ui_text(ui, "ignored")
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let sized: int = ui->col(pad: 5, width: 100, height: 7)
+        ui->text("ignored")
+    ui->end()
 
     box_measure(ui, fonts, sized)
 
@@ -68,13 +68,13 @@ func test_box_natural() : void {
 
 func test_box_row() : void {
     let fonts: FontSet = test_box_fonts()
-    let ui: Ui = ui_new(32)
+    let ui: Ui = Ui->new(32)
 
-    ui_begin(ui, 0, 0, false)
-    let root: int = ui_row(ui, gap: 6)
-        let a: int = ui_text(ui, "ab")      // 20 wide
-        let b: int = ui_text(ui, "cdef")    // 40 wide
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let root: int = ui->row(gap: 6)
+        let a: int = ui->text("ab")      // 20 wide
+        let b: int = ui->text("cdef")    // 40 wide
+    ui->end()
 
     box_measure(ui, fonts, root)
 
@@ -96,15 +96,15 @@ func test_box_row() : void {
 
 func test_box_flex() : void {
     let fonts: FontSet = test_box_fonts()
-    let ui: Ui = ui_new(32)
+    let ui: Ui = Ui->new(32)
 
     // One flexible child takes everything the fixed ones leave.
-    ui_begin(ui, 0, 0, false)
-    let root: int = ui_row(ui)
-        let left: int = ui_text(ui, "ab")           // 20 wide
-        let filler: int = ui_spacer(ui, flex: 1)
-        let right: int = ui_text(ui, "cd")          // 20 wide
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let root: int = ui->row()
+        let left: int = ui->text("ab")           // 20 wide
+        let filler: int = ui->spacer(flex: 1)
+        let right: int = ui->text("cd")          // 20 wide
+    ui->end()
 
     box_layout(ui, fonts, root, 0, 0, 200, 20)
 
@@ -113,12 +113,12 @@ func test_box_flex() : void {
     t_eq_int("trailing child is pushed to the end", box_x(ui, right), 180)
 
     // Three-way division: 100 does not divide by 3, and the remainder must not be lost.
-    ui_begin(ui, 0, 0, false)
-    let thirds: int = ui_row(ui)
-        let one: int = ui_spacer(ui, flex: 1)
-        let two: int = ui_spacer(ui, flex: 1)
-        let three: int = ui_spacer(ui, flex: 1)
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let thirds: int = ui->row()
+        let one: int = ui->spacer(flex: 1)
+        let two: int = ui->spacer(flex: 1)
+        let three: int = ui->spacer(flex: 1)
+    ui->end()
 
     box_layout(ui, fonts, thirds, 0, 0, 100, 10)
 
@@ -127,11 +127,11 @@ func test_box_flex() : void {
     t_eq_int("the last flexible child takes the remainder", box_w(ui, three), 34)
 
     // Unequal weights divide in proportion.
-    ui_begin(ui, 0, 0, false)
-    let weighted: int = ui_row(ui)
-        let small: int = ui_spacer(ui, flex: 1)
-        let large: int = ui_spacer(ui, flex: 3)
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let weighted: int = ui->row()
+        let small: int = ui->spacer(flex: 1)
+        let large: int = ui->spacer(flex: 3)
+    ui->end()
 
     box_layout(ui, fonts, weighted, 0, 0, 80, 10)
 
@@ -143,41 +143,41 @@ func test_box_flex() : void {
 
 func test_box_align() : void {
     let fonts: FontSet = test_box_fonts()
-    let ui: Ui = ui_new(32)
+    let ui: Ui = Ui->new(32)
 
     // A column stretches its children across the cross axis by default.
-    ui_begin(ui, 0, 0, false)
-    let stretched: int = ui_col(ui)
-        let wide: int = ui_text(ui, "ab")
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let stretched: int = ui->col()
+        let wide: int = ui->text("ab")
+    ui->end()
 
     box_layout(ui, fonts, stretched, 0, 0, 90, 40)
     t_eq_int("stretch fills the cross axis", box_w(ui, wide), 90)
 
     // Centring leaves equal space either side.
-    ui_begin(ui, 0, 0, false)
-    let centred: int = ui_col(ui, align: UiAlign.CENTER)
-        let middle: int = ui_text(ui, "ab")     // 20 wide
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let centred: int = ui->col(align: UiAlign.CENTER)
+        let middle: int = ui->text("ab")     // 20 wide
+    ui->end()
 
     box_layout(ui, fonts, centred, 0, 0, 90, 40)
     t_eq_int("centred keeps its natural width", box_w(ui, middle), 20)
     t_eq_int("centred is offset by half the slack", box_x(ui, middle), 35)
 
     // END puts the child against the far edge.
-    ui_begin(ui, 0, 0, false)
-    let trailing: int = ui_col(ui, align: UiAlign.END)
-        let last: int = ui_text(ui, "ab")
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let trailing: int = ui->col(align: UiAlign.END)
+        let last: int = ui->text("ab")
+    ui->end()
 
     box_layout(ui, fonts, trailing, 0, 0, 90, 40)
     t_eq_int("END aligns to the far edge", box_x(ui, last), 70)
 
     // With no flexible child, justify decides where the leftover main-axis space goes.
-    ui_begin(ui, 0, 0, false)
-    let pushed: int = ui_row(ui, justify: UiAlign.END)
-        let item: int = ui_text(ui, "ab")
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let pushed: int = ui->row(justify: UiAlign.END)
+        let item: int = ui->text("ab")
+    ui->end()
 
     box_layout(ui, fonts, pushed, 0, 0, 100, 20)
     t_eq_int("justify END shifts along the main axis", box_x(ui, item), 80)
@@ -187,16 +187,16 @@ func test_box_align() : void {
 
 func test_box_nesting() : void {
     let fonts: FontSet = test_box_fonts()
-    let ui: Ui = ui_new(64)
+    let ui: Ui = Ui->new(64)
 
-    ui_begin(ui, 0, 0, false)
-    let root: int = ui_col(ui, pad: 10, gap: 5)
-        let header: int = ui_text(ui, "ab")
-        let body: int = ui_row(ui, gap: 4)
-            let leftCell: int = ui_spacer(ui, flex: 1)
-            let rightCell: int = ui_spacer(ui, flex: 1)
-        ui_end(ui)
-    ui_end(ui)
+    ui->begin(0, 0, false)
+    let root: int = ui->col(pad: 10, gap: 5)
+        let header: int = ui->text("ab")
+        let body: int = ui->row(gap: 4)
+            let leftCell: int = ui->spacer(flex: 1)
+            let rightCell: int = ui->spacer(flex: 1)
+        ui->end()
+    ui->end()
 
     box_layout(ui, fonts, root, 0, 0, 200, 100)
 

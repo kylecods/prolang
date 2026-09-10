@@ -1,7 +1,7 @@
 /*
  * Text editor — the application (editor.prl)
  *
- * A text editor over the ui toolkit's OpenGL host: widget chrome around a `ui_scene` whose painter
+ * A text editor over the ui toolkit's OpenGL host: widget chrome around a `Ui->scene` whose painter
  * draws the document itself — line numbers, per-token coloured text, the caret, scrolling — by
  * appending display-list records.
  *
@@ -95,7 +95,7 @@ func ed_repeat_rate() : int {
 //
 // A painter captures nothing, so the document and every bit of view state sit at file scope.
 
-global ed_ui: Ui = ui_new(4096)
+global ed_ui: Ui = Ui->new(4096)
 global ed_buf: Buf = Buf->new()
 global ed_path: string = "untitled.prl"
 global ed_theme: int = Theme.MIDNIGHT
@@ -356,8 +356,7 @@ func ed_build_icons(theme: int) : void {
 // One toolbar button: a scene, because a scene given an action is clickable, and the painter
 // fills it with the glyph's texture.
 func ed_icon_btn(ui: Ui, act: int, theme: int) : int {
-    return ui_scene(ui, tag: act, action: act, width: 30, height: 30, pad: 4,
-        bg: theme_hover(theme), radius: 6)
+    return ui->scene(tag: act, action: act, width: 30, height: 30, pad: 4, bg: theme_hover(theme), radius: 6)
 }
 
 // ── Files and the clipboard ──────────────────────────────────────────────────
@@ -744,7 +743,7 @@ func ed_token_color(kind: int, theme: int) : int {
 /*
  * Paints the document into the scene: the gutter, the current line, the tokens, the caret.
  *
- * Every string goes through `ui_intern` — a TEXT record carries a string-table index, not a
+ * Every string goes through `Ui->intern` — a TEXT record carries a string-table index, not a
  * string — and every token becomes its own record so its characters can have their own colour.
  * The whole text area sits behind a clip push, so a long line scrolls out instead of drawing
  * across the line numbers.
@@ -810,7 +809,7 @@ func ed_paint(ops: array<int>, at: int, tag: int, x: int, y: int, w: int, h: int
         let numColor: int = theme_text_dim(theme)
         if (r == ed_buf.row) { numColor = theme_accent(theme) }
         next = dl_emit(ops, next, DlOp.TEXT, x + gw - 8 - numW, ly,
-            ui_intern(ed_ui, num), numColor, EdFont.CODE, 0)
+            ed_ui->intern(num), numColor, EdFont.CODE, 0)
 
         r = r + 1
     }
@@ -877,7 +876,7 @@ func ed_paint(ops: array<int>, at: int, tag: int, x: int, y: int, w: int, h: int
                     let slice: string = line.substring(tok.start, tok.start + tok.len)
                     let tx: int = textX + (tok.start - ed_hscroll) * cw
                     next = dl_emit(ops, next, DlOp.TEXT, tx, ty,
-                        ui_intern(ed_ui, slice), ed_token_color(tok.kind, theme), EdFont.CODE, 0)
+                        ed_ui->intern(slice), ed_token_color(tok.kind, theme), EdFont.CODE, 0)
                 }
                 t = t + 1
             }
@@ -927,50 +926,49 @@ func ed_run() : void {
 
         let theme: int = ed_theme
 
-        ui_col(ed_ui, pad: 0, gap: 0, bg: theme_background(theme))
-            ui_row(ed_ui, pad: 10, gap: 8, bg: theme_surface(theme))
+        ed_ui->col(pad: 0, gap: 0, bg: theme_background(theme))
+            ed_ui->row(pad: 10, gap: 8, bg: theme_surface(theme))
                 let title: string = "ProLang Editor - " + ed_path
                 if (ed_buf.modified) { title = title + " *" }
-                ui_text(ed_ui, title, fg: theme_text(theme), font: EdFont.UI, pad: 4)
-                ui_spacer(ed_ui, flex: 1)
-                ui_text(ed_ui, theme_name(ed_theme), fg: theme_text_dim(theme), font: EdFont.UI)
-            ui_end(ed_ui)
+                ed_ui->text(title, fg: theme_text(theme), font: EdFont.UI, pad: 4)
+                ed_ui->spacer(flex: 1)
+                ed_ui->text(theme_name(ed_theme), fg: theme_text_dim(theme), font: EdFont.UI)
+            ed_ui->end()
 
-            ui_row(ed_ui, pad: 4, gap: 4, bg: theme_surface(theme))
+            ed_ui->row(pad: 4, gap: 4, bg: theme_surface(theme))
                 ed_icon_btn(ed_ui, EdAct.NEW_FILE, theme)
                 ed_icon_btn(ed_ui, EdAct.OPEN, theme)
                 ed_icon_btn(ed_ui, EdAct.SAVE, theme)
                 ed_icon_btn(ed_ui, EdAct.SAVE_AS, theme)
-                ui_spacer(ed_ui, size: 6, flex: 0)
+                ed_ui->spacer(size: 6, flex: 0)
                 ed_icon_btn(ed_ui, EdAct.UNDO, theme)
                 ed_icon_btn(ed_ui, EdAct.REDO, theme)
-                ui_spacer(ed_ui, size: 6, flex: 0)
+                ed_ui->spacer(size: 6, flex: 0)
                 ed_icon_btn(ed_ui, EdAct.COPY, theme)
                 ed_icon_btn(ed_ui, EdAct.CUT, theme)
                 ed_icon_btn(ed_ui, EdAct.PASTE, theme)
-                ui_spacer(ed_ui, flex: 1)
+                ed_ui->spacer(flex: 1)
                 ed_icon_btn(ed_ui, EdAct.THEME, theme)
                 ed_icon_btn(ed_ui, EdAct.QUIT, theme)
-            ui_end(ed_ui)
+            ed_ui->end()
 
-            ui_box(ed_ui, pad: 0, flex: 1, bg: theme_canvas_backdrop(theme))
-                ui_scene(ed_ui, tag: ed_scene_tag(), flex: 1)
-            ui_end(ed_ui)
+            ed_ui->box(pad: 0, flex: 1, bg: theme_canvas_backdrop(theme))
+                ed_ui->scene(tag: ed_scene_tag(), flex: 1)
+            ed_ui->end()
 
-            ui_row(ed_ui, pad: 6, gap: 16, bg: theme_surface(theme))
+            ed_ui->row(pad: 6, gap: 16, bg: theme_surface(theme))
                 let where: string = "Ln " + string(ed_buf.row + 1) + ", Col " + string(ed_buf.col + 1) + "   " + string(ed_buf.count) + " lines"
                 if (ed_buf.modified) { where = where + "   modified" }
-                ui_text(ed_ui, where, fg: theme_text_dim(theme), font: EdFont.UI)
-                ui_spacer(ed_ui, flex: 1)
+                ed_ui->text(where, fg: theme_text_dim(theme), font: EdFont.UI)
+                ed_ui->spacer(flex: 1)
                 if (ed_status != "") {
-                    ui_text(ed_ui, ed_status, fg: theme_accent(theme), font: EdFont.UI)
+                    ed_ui->text(ed_status, fg: theme_accent(theme), font: EdFont.UI)
                 } else {
-                    ui_text(ed_ui, "Ctrl+Z undo   Ctrl+Y redo   Ctrl+C/X/V clipboard   Ctrl+A all   Shift+arrows select",
-                        fg: theme_text_dim(theme), font: EdFont.UI)
+                    ed_ui->text("Ctrl+Z undo   Ctrl+Y redo   Ctrl+C/X/V clipboard   Ctrl+A all   Shift+arrows select", fg: theme_text_dim(theme), font: EdFont.UI)
                 }
-                ui_text(ed_ui, ed_frames->text(), fg: theme_text_dim(theme), font: EdFont.UI)
-            ui_end(ed_ui)
-        ui_end(ed_ui)
+                ed_ui->text(ed_frames->text(), fg: theme_text_dim(theme), font: EdFont.UI)
+            ed_ui->end()
+        ed_ui->end()
 
         let act: int = hostgl_present_scene(host, ed_ui, fonts, ed_paint, ed_ui.st,
             theme_background(ed_theme))

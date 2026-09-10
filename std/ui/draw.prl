@@ -141,7 +141,7 @@ func dl_build(ui: Ui, fonts: FontSet, root: int, ops: array<int>) : int {
 }
 
 /*
- * The same, with a painter for `ui_scene` nodes.
+ * The same, with a painter for `Ui->scene` nodes.
  *
  * The painter is handed the rectangle the layout gave the scene and appends records of its own:
  *
@@ -181,28 +181,28 @@ func dl_no_scene(ops: array<int>, at: int, tag: int, x: int, y: int, w: int, h: 
 func dl_node(ui: Ui, fonts: FontSet, ops: array<int>, at: int, node: int,
              paint: func(array<int>, int, int, int, int, int, int, array<int>) : int,
              state: array<int>) : int {
-    let kind: int = ui_kind(ui, node)
+    let kind: int = ui->kind(node)
     let next: int = at
 
     if (kind == UiKind.BUTTON) {
         next = dl_button(ui, fonts, ops, next, node)
     } elif (kind == UiKind.IMAGE) {
         next = dl_emit(ops, next, DlOp.IMAGE,
-            ui_get(ui, node, UiF.X), ui_get(ui, node, UiF.Y),
-            ui_get(ui, node, UiF.W), ui_get(ui, node, UiF.H),
-            ui_get(ui, node, UiF.IMAGE_ID), 0)
+            ui->get(node, UiF.X), ui->get(node, UiF.Y),
+            ui->get(node, UiF.W), ui->get(node, UiF.H),
+            ui->get(node, UiF.IMAGE_ID), 0)
     } elif (kind == UiKind.TEXT) {
         next = dl_text(ui, fonts, ops, next, node)
     } elif (kind == UiKind.SCENE) {
         next = dl_scene(ui, ops, next, node, paint, state)
     } else {
-        next = dl_surface(ui, ops, next, node, ui_get(ui, node, UiF.BG))
+        next = dl_surface(ui, ops, next, node, ui->get(node, UiF.BG))
     }
 
-    let child: int = ui_first_child(ui, node)
+    let child: int = ui->first_child(node)
     while (child >= 0) {
         next = dl_node(ui, fonts, ops, next, child, paint, state)
-        child = ui_next_sibling(ui, child)
+        child = ui->next_sibling(child)
     }
 
     return next
@@ -217,18 +217,18 @@ func dl_node(ui: Ui, fonts: FontSet, ops: array<int>, at: int, node: int,
 func dl_scene(ui: Ui, ops: array<int>, at: int, node: int,
               paint: func(array<int>, int, int, int, int, int, int, array<int>) : int,
               state: array<int>) : int {
-    let next: int = dl_surface(ui, ops, at, node, ui_get(ui, node, UiF.BG))
+    let next: int = dl_surface(ui, ops, at, node, ui->get(node, UiF.BG))
 
-    let x: int = ui_get(ui, node, UiF.X) + ui_get(ui, node, UiF.PAD_L)
-    let y: int = ui_get(ui, node, UiF.Y) + ui_get(ui, node, UiF.PAD_T)
-    let w: int = ui_get(ui, node, UiF.W) - ui_get(ui, node, UiF.PAD_L) - ui_get(ui, node, UiF.PAD_R)
-    let h: int = ui_get(ui, node, UiF.H) - ui_get(ui, node, UiF.PAD_T) - ui_get(ui, node, UiF.PAD_B)
+    let x: int = ui->get(node, UiF.X) + ui->get(node, UiF.PAD_L)
+    let y: int = ui->get(node, UiF.Y) + ui->get(node, UiF.PAD_T)
+    let w: int = ui->get(node, UiF.W) - ui->get(node, UiF.PAD_L) - ui->get(node, UiF.PAD_R)
+    let h: int = ui->get(node, UiF.H) - ui->get(node, UiF.PAD_T) - ui->get(node, UiF.PAD_B)
 
     if (w <= 0 || h <= 0) {
         return next
     }
 
-    return paint(ops, next, ui_get(ui, node, UiF.SCENE_TAG), x, y, w, h, state)
+    return paint(ops, next, ui->get(node, UiF.SCENE_TAG), x, y, w, h, state)
 }
 
 /*
@@ -241,11 +241,11 @@ func dl_scene(ui: Ui, ops: array<int>, at: int, node: int,
 func dl_surface(ui: Ui, ops: array<int>, at: int, node: int, bg: int) : int {
     if (color_is_transparent(bg)) { return at }
 
-    let x: int = ui_get(ui, node, UiF.X)
-    let y: int = ui_get(ui, node, UiF.Y)
-    let w: int = ui_get(ui, node, UiF.W)
-    let h: int = ui_get(ui, node, UiF.H)
-    let radius: int = ui_get(ui, node, UiF.RADIUS)
+    let x: int = ui->get(node, UiF.X)
+    let y: int = ui->get(node, UiF.Y)
+    let w: int = ui->get(node, UiF.W)
+    let h: int = ui->get(node, UiF.H)
+    let radius: int = ui->get(node, UiF.RADIUS)
 
     if (radius > 0) {
         return dl_emit(ops, at, DlOp.RRECT, x, y, w, h, bg, radius)
@@ -263,15 +263,15 @@ func dl_surface(ui: Ui, ops: array<int>, at: int, node: int, bg: int) : int {
  * convention.
  */
 func dl_text(ui: Ui, fonts: FontSet, ops: array<int>, at: int, node: int) : int {
-    let index: int = ui_get(ui, node, UiF.STR)
+    let index: int = ui->get(node, UiF.STR)
 
     if (index < 0) { return at }
 
-    let x: int = ui_get(ui, node, UiF.X) + ui_get(ui, node, UiF.PAD_L)
-    let y: int = ui_get(ui, node, UiF.Y) + ui_get(ui, node, UiF.PAD_T)
+    let x: int = ui->get(node, UiF.X) + ui->get(node, UiF.PAD_L)
+    let y: int = ui->get(node, UiF.Y) + ui->get(node, UiF.PAD_T)
 
     return dl_emit(ops, at, DlOp.TEXT, x, y, index,
-        ui_get(ui, node, UiF.FG), ui_get(ui, node, UiF.FONT), 0)
+        ui->get(node, UiF.FG), ui->get(node, UiF.FONT), 0)
 }
 
 /*
@@ -281,7 +281,7 @@ func dl_text(ui: Ui, fonts: FontSet, ops: array<int>, at: int, node: int) : int 
  * its text is a property of the node, and the display list is where that becomes a position.
  */
 func dl_button(ui: Ui, fonts: FontSet, ops: array<int>, at: int, node: int) : int {
-    let bg: int = ui_get(ui, node, UiF.BG)
+    let bg: int = ui->get(node, UiF.BG)
 
     if (hit_is_active(ui, node)) {
         bg = color_shade(bg, dl_press_shade())
@@ -290,16 +290,16 @@ func dl_button(ui: Ui, fonts: FontSet, ops: array<int>, at: int, node: int) : in
     }
 
     let next: int = dl_surface(ui, ops, at, node, bg)
-    let index: int = ui_get(ui, node, UiF.STR)
+    let index: int = ui->get(node, UiF.STR)
 
     if (index < 0) { return next }
 
-    let font: int = ui_get(ui, node, UiF.FONT)
+    let font: int = ui->get(node, UiF.FONT)
     let textW: int = fonts->measure(font, ui.strs[index])
     let textH: int = fonts->line_height(font)
 
-    let x: int = ui_get(ui, node, UiF.X) + ((ui_get(ui, node, UiF.W) - textW) / 2)
-    let y: int = ui_get(ui, node, UiF.Y) + ((ui_get(ui, node, UiF.H) - textH) / 2)
+    let x: int = ui->get(node, UiF.X) + ((ui->get(node, UiF.W) - textW) / 2)
+    let y: int = ui->get(node, UiF.Y) + ((ui->get(node, UiF.H) - textH) / 2)
 
-    return dl_emit(ops, next, DlOp.TEXT, x, y, index, ui_get(ui, node, UiF.FG), font, 0)
+    return dl_emit(ops, next, DlOp.TEXT, x, y, index, ui->get(node, UiF.FG), font, 0)
 }

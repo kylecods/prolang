@@ -56,7 +56,7 @@ A backend implements no interface and subclasses nothing. It executes a buffer.
 
 ## The widget tree is an int arena
 
-A node is an `int`, and the whole tree is one `array<int>` addressed as `node * ui_stride() +
+A node is an `int`, and the whole tree is one `array<int>` addressed as `node * Ui->stride() +
 field`. Children hang off `FIRST_KID` / `NEXT_SIB`. "No node" is `-1`.
 
 When this was written, the obvious `struct Node { kids: array<Node> }` was not available for three
@@ -97,16 +97,16 @@ than in scalar fields: a scalar would be incremented on a copy and thrown away.
 ## The builder opens and closes
 
 ```prolang
-ui_col(ui, pad: 16, gap: 12)
-    ui_text(ui, "Count: " + n, font: TITLE)
-    ui_row(ui, gap: 8)
-        ui_button(ui, "Increment", action: ACT_INC)
-        ui_button(ui, "Reset",     action: ACT_RESET)
-    ui_end(ui)
-ui_end(ui)
+ui->col(pad: 16, gap: 12)
+    ui->text("Count: " + n, font: TITLE)
+    ui->row(gap: 8)
+        ui->button("Increment", action: ACT_INC)
+        ui->button("Reset", action: ACT_RESET)
+    ui->end()
+ui->end()
 ```
 
-Containers open a scope; `ui_end` closes the innermost. Indentation carries the tree.
+Containers open a scope; `Ui->end` closes the innermost. Indentation carries the tree.
 
 The nested-call form Flutter and JSX use would require an array literal of children passed inline
 as an argument — a path nothing in this repository exercises. This form needs no array literals, no
@@ -114,7 +114,7 @@ nested call expressions and no recursive types, so it works on every backend as 
 stands. A conditional child is an ordinary `if` around a statement rather than something that has
 to produce a list.
 
-Its one hazard is an unbalanced `ui_end`, so that is checked: `ui_end` on an empty stack asserts,
+Its one hazard is an unbalanced `Ui->end`, so that is checked: `Ui->end` on an empty stack asserts,
 and so does presenting a frame with a container still open.
 
 Default and named arguments are what make this readable, and they were added to the compiler for
@@ -124,7 +124,7 @@ it. Without them every widget would take a dozen positional integers.
 
 ## Scenes: content the toolkit knows nothing about
 
-`ui_scene` is the escape hatch — a 3D view, a chart, a game viewport — and it is a first-class
+`Ui->scene` is the escape hatch — a 3D view, a chart, a game viewport — and it is a first-class
 widget rather than something bolted on beside one. It takes `flex`, it sits inside a padded card, it
 moves when the window is resized, and it composites in tree order.
 
@@ -211,7 +211,7 @@ widget report clicks through whatever covers it.
 
 ### Events are integers, not callbacks
 
-`ui_present` returns the action that fired; the frame loop handles it against state it owns.
+The host's `present` returns the action that fired; the frame loop handles it against state it owns.
 
 This is not a limitation being worked around. Function values in ProLang capture nothing — that
 restriction is what lets them compile to a bare function pointer on the C and PSP backends with no
@@ -301,6 +301,6 @@ about the toolkit — and it is what a golden-image test would use.
 - **Scrolling and clipping.** The opcodes exist; no widget emits them.
 - **Text input.** There is no caret, selection or IME. On Windows Forms the escape hatch is a real
   `TextBox` positioned by the layout; the toolkit does not do this yet.
-- **Multi-line and wrapped text.** `ui_text` is one line.
+- **Multi-line and wrapped text.** `Ui->text` is one line.
 - **Focus and keyboard navigation.** `ui/hit` is pointer-only.
 - **Images on the PSP.** There is no path from a bitmap handle to a GU texture.

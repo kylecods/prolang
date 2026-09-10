@@ -55,7 +55,7 @@ Windows Forms and on the PSP.
 
 | Module | |
 |---|---|
-| `ui/widget` | the node arena and the open/close builder: `ui_col`, `ui_row`, `ui_box`, `ui_text`, `ui_button`, `ui_spacer`, `ui_image`, `ui_scene`, `ui_end` |
+| `ui/widget` | the node arena and the open/close builder: `Ui->col`, `Ui->row`, `Ui->box`, `Ui->text`, `Ui->button`, `Ui->spacer`, `Ui->image`, `Ui->scene`, `Ui->end` |
 | `ui/box` | layout — measure bottom-up, place top-down, divide leftover space between `flex:` children |
 | `ui/hit` | hover, press and click, tracked across frames by a widget's id |
 | `ui/draw` | flattens a laid-out tree into a display list: a flat `array<int>` of drawing commands |
@@ -70,15 +70,15 @@ import "ui/host_winforms"
 
 let host: Host = hostw_open("Counter", 480, 300)
 let fonts: FontSet = hostw_font("Segoe UI", 10)
-let ui: Ui = ui_new(256)
+let ui: Ui = Ui->new(256)
 
 while (hostw_running(host)) {
     hostw_begin(host, ui)
 
-    ui_col(ui, pad: 16, gap: 8)
-        ui_text(ui, "Count: " + count[0])
-        ui_button(ui, "Increment", action: 1, bg: 4473924, fg: 0 - 1, pad: 8)
-    ui_end(ui)
+    ui->col(pad: 16, gap: 8)
+        ui->text("Count: " + count[0])
+        ui->button("Increment", action: 1, bg: 4473924, fg: 0 - 1, pad: 8)
+    ui->end()
 
     if (hostw_present(host, ui, fonts) == 1) { count[0] = count[0] + 1 }
 }

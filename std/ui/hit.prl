@@ -46,7 +46,7 @@ func hit_resolve(ui: Ui) : int {
     let hotId: int = 0
 
     if (target >= 0) {
-        hotId = ui_get(ui, target, UiF.ID)
+        hotId = ui->get(target, UiF.ID)
     }
 
     ui.st[UiS.HOT_ID] = hotId
@@ -59,7 +59,7 @@ func hit_resolve(ui: Ui) : int {
     } elif (!down && wasDown) {
         // The release: a click only if it landed on the same widget the press did.
         if (ui.st[UiS.ACTIVE_ID] != 0 && ui.st[UiS.ACTIVE_ID] == hotId && target >= 0) {
-            fired = ui_get(ui, target, UiF.ACTION)
+            fired = ui->get(target, UiF.ACTION)
         }
 
         ui.st[UiS.ACTIVE_ID] = 0
@@ -77,10 +77,10 @@ func hit_resolve(ui: Ui) : int {
  * one answer would mean a click near a button reported the panel behind it.
  */
 func hit_topmost(ui: Ui, px: int, py: int) : int {
-    let node: int = ui_node_count(ui) - 1
+    let node: int = ui->node_count() - 1
 
     while (node >= 0) {
-        if (ui_get(ui, node, UiF.ID) != 0 && box_contains(ui, node, px, py)) {
+        if (ui->get(node, UiF.ID) != 0 && box_contains(ui, node, px, py)) {
             return node
         }
 
@@ -94,7 +94,7 @@ func hit_topmost(ui: Ui, px: int, py: int) : int {
 
 // Whether the cursor is over this widget.
 func hit_is_hot(ui: Ui, node: int) : bool {
-    let id: int = ui_get(ui, node, UiF.ID)
+    let id: int = ui->get(node, UiF.ID)
 
     return id != 0 && ui.st[UiS.HOT_ID] == id
 }
@@ -107,7 +107,7 @@ func hit_is_hot(ui: Ui, node: int) : bool {
  * the release is no longer going to do anything.
  */
 func hit_is_active(ui: Ui, node: int) : bool {
-    let id: int = ui_get(ui, node, UiF.ID)
+    let id: int = ui->get(node, UiF.ID)
 
     return id != 0 && ui.st[UiS.ACTIVE_ID] == id && ui.st[UiS.HOT_ID] == id
 }

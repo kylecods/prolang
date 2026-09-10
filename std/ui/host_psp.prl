@@ -205,7 +205,7 @@ func hostp_begin(host: PspHost, ui: Ui) : void {
         host.st[HostpS.BUTTON_DOWN] = 0
     }
 
-    ui_begin(ui, x, y, down)
+    ui->begin(x, y, down)
 }
 
 /*
@@ -220,7 +220,7 @@ func hostp_present(host: PspHost, ui: Ui, fonts: FontSet, background: int = 0) :
 }
 
 /*
- * The same, with a painter for `ui_scene` nodes.
+ * The same, with a painter for `Ui->scene` nodes.
  *
  * The painter appends display-list records, so a scene reaches the screen through exactly the same
  * loop as a button does — and composites in tree order with the rest of the interface rather than
@@ -229,9 +229,9 @@ func hostp_present(host: PspHost, ui: Ui, fonts: FontSet, background: int = 0) :
 func hostp_present_scene(host: PspHost, ui: Ui, fonts: FontSet,
                          paint: func(array<int>, int, int, int, int, int, int, array<int>) : int,
                          state: array<int>, background: int = 0) : int {
-    assert(ui_is_balanced(ui), "a container was left open — every ui_col/ui_row/ui_box needs a ui_end")
+    assert(ui->is_balanced(), "a container was left open — every Ui->col/Ui->row/Ui->box needs a Ui->end")
 
-    let root: int = ui_root(ui)
+    let root: int = ui->root()
 
     if (root < 0) {
         return 0

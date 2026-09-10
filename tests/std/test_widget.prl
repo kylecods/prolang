@@ -9,72 +9,72 @@ import "testing"
 import "ui/widget"
 
 func test_widget_run() : void {
-    let ui: Ui = ui_new(64)
+    let ui: Ui = Ui->new(64)
 
-    ui_begin(ui, 0, 0, false)
+    ui->begin(0, 0, false)
 
-    let root: int = ui_col(ui, pad: 8, gap: 4)
-        let title: int = ui_text(ui, "Title")
-        let bar: int = ui_row(ui, gap: 2)
-            let a: int = ui_button(ui, "A", action: 11)
-            let b: int = ui_button(ui, "B", action: 22)
-        ui_end(ui)
-    ui_end(ui)
+    let root: int = ui->col(pad: 8, gap: 4)
+        let title: int = ui->text("Title")
+        let bar: int = ui->row(gap: 2)
+            let a: int = ui->button("A", action: 11)
+            let b: int = ui->button("B", action: 22)
+        ui->end()
+    ui->end()
 
     // The first node built with nothing open is the root.
-    t_eq_int("root is the column", ui_root(ui), root)
-    t_eq_int("five nodes", ui_node_count(ui), 5)
-    t_true("balanced", ui_is_balanced(ui))
+    t_eq_int("root is the column", ui->root(), root)
+    t_eq_int("five nodes", ui->node_count(), 5)
+    t_true("balanced", ui->is_balanced())
 
     // Parentage follows the open/close nesting, not the order of allocation.
-    t_eq_int("title's parent", ui_get(ui, title, UiF.PARENT), root)
-    t_eq_int("bar's parent", ui_get(ui, bar, UiF.PARENT), root)
-    t_eq_int("button's parent", ui_get(ui, a, UiF.PARENT), bar)
-    t_eq_int("second button's parent", ui_get(ui, b, UiF.PARENT), bar)
+    t_eq_int("title's parent", ui->get(title, UiF.PARENT), root)
+    t_eq_int("bar's parent", ui->get(bar, UiF.PARENT), root)
+    t_eq_int("button's parent", ui->get(a, UiF.PARENT), bar)
+    t_eq_int("second button's parent", ui->get(b, UiF.PARENT), bar)
 
     // Children come back in the order they were written.
-    t_eq_int("root's first child", ui_first_child(ui, root), title)
-    t_eq_int("title's sibling", ui_next_sibling(ui, title), bar)
-    t_eq_int("bar has no sibling", ui_next_sibling(ui, bar), 0 - 1)
-    t_eq_int("root child count", ui_child_count(ui, root), 2)
-    t_eq_int("bar child count", ui_child_count(ui, bar), 2)
-    t_eq_int("leaf child count", ui_child_count(ui, title), 0)
+    t_eq_int("root's first child", ui->first_child(root), title)
+    t_eq_int("title's sibling", ui->next_sibling(title), bar)
+    t_eq_int("bar has no sibling", ui->next_sibling(bar), 0 - 1)
+    t_eq_int("root child count", ui->child_count(root), 2)
+    t_eq_int("bar child count", ui->child_count(bar), 2)
+    t_eq_int("leaf child count", ui->child_count(title), 0)
 
     // Kinds, and the container/leaf split the layout pass branches on.
-    t_eq_int("column kind", ui_kind(ui, root), UiKind.COL)
-    t_eq_int("row kind", ui_kind(ui, bar), UiKind.ROW)
-    t_eq_int("button kind", ui_kind(ui, a), UiKind.BUTTON)
-    t_true("column is a container", ui_is_container(ui, root))
-    t_true("row is horizontal", ui_is_horizontal(ui, bar))
-    t_false("column is not horizontal", ui_is_horizontal(ui, root))
-    t_false("text is not a container", ui_is_container(ui, title))
+    t_eq_int("column kind", ui->kind(root), UiKind.COL)
+    t_eq_int("row kind", ui->kind(bar), UiKind.ROW)
+    t_eq_int("button kind", ui->kind(a), UiKind.BUTTON)
+    t_true("column is a container", ui->is_container(root))
+    t_true("row is horizontal", ui->is_horizontal(bar))
+    t_false("column is not horizontal", ui->is_horizontal(root))
+    t_false("text is not a container", ui->is_container(title))
 
     // Strings are interned, and read back through the node.
-    t_eq_str("text round-trips", ui_text_of(ui, title), "Title")
-    t_eq_str("label round-trips", ui_text_of(ui, a), "A")
+    t_eq_str("text round-trips", ui->text_of(title), "Title")
+    t_eq_str("label round-trips", ui->text_of(a), "A")
 
     // A button's identity defaults to its action, which is what hit testing tracks across frames.
-    t_eq_int("action recorded", ui_get(ui, a, UiF.ACTION), 11)
-    t_eq_int("id defaults to action", ui_get(ui, a, UiF.ID), 11)
+    t_eq_int("action recorded", ui->get(a, UiF.ACTION), 11)
+    t_eq_int("id defaults to action", ui->get(a, UiF.ID), 11)
 
     // Named arguments reached the right fields.
-    t_eq_int("pad applied", ui_get(ui, root, UiF.PAD_L), 8)
-    t_eq_int("gap applied", ui_get(ui, root, UiF.GAP), 4)
-    t_eq_int("row gap applied", ui_get(ui, bar, UiF.GAP), 2)
+    t_eq_int("pad applied", ui->get(root, UiF.PAD_L), 8)
+    t_eq_int("gap applied", ui->get(root, UiF.GAP), 4)
+    t_eq_int("row gap applied", ui->get(bar, UiF.GAP), 2)
 
     // A default that was never named is still the declared default, not zero-by-accident.
-    t_eq_int("unset width is auto", ui_get(ui, root, UiF.FIXED_W), 0 - 1)
+    t_eq_int("unset width is auto", ui->get(root, UiF.FIXED_W), 0 - 1)
 
     // An explicit id overrides the action, for two buttons that share one.
-    ui_begin(ui, 0, 0, false)
-    let solo: int = ui_button(ui, "X", action: 5, id: 99)
-    t_eq_int("explicit id wins", ui_get(ui, solo, UiF.ID), 99)
-    t_eq_int("action still recorded", ui_get(ui, solo, UiF.ACTION), 5)
+    ui->begin(0, 0, false)
+    let solo: int = ui->button("X", action: 5, id: 99)
+    t_eq_int("explicit id wins", ui->get(solo, UiF.ID), 99)
+    t_eq_int("action still recorded", ui->get(solo, UiF.ACTION), 5)
 
-    // ui_begin resets the arena, so a frame never inherits the last one's nodes.
-    t_eq_int("begin resets the count", ui_node_count(ui), 1)
-    t_eq_int("begin resets the root", ui_root(ui), solo)
+    // Ui->begin resets the arena, so a frame never inherits the last one's nodes.
+    t_eq_int("begin resets the count", ui->node_count(), 1)
+    t_eq_int("begin resets the root", ui->root(), solo)
 
     // Out-of-range access reports zero rather than reading past the arena.
-    t_eq_int("reading a missing node", ui_get(ui, 500, UiF.KIND), 0)
+    t_eq_int("reading a missing node", ui->get(500, UiF.KIND), 0)
 }

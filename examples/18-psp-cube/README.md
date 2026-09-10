@@ -6,7 +6,7 @@
 .\build.ps1 -Psp     # transpile the PSP version to C99
 ```
 
-The point of this example is `ui_scene` — the toolkit's escape hatch for content it knows nothing
+The point of this example is `Ui->scene` — the toolkit's escape hatch for content it knows nothing
 about. A 3D scene, a chart, a game viewport: anything that is not a widget, plugged in as though it
 were one.
 
@@ -31,16 +31,16 @@ worked at all: the display list is executed later, on the UI thread, inside a pa
 In the tree it is an ordinary widget:
 
 ```prolang
-ui_col(ui, pad: 12, gap: 10)
-    ui_text(ui, "X 30   Y 40   Z 0")
+ui->col(pad: 12, gap: 10)
+    ui->text("X 30   Y 40   Z 0")
 
-    ui_scene(ui, tag: 1, flex: 1, pad: 8, radius: 8, bg: theme_surface(theme))
+    ui->scene(tag: 1, flex: 1, pad: 8, radius: 8, bg: theme_surface(theme))
 
-    ui_row(ui, gap: 6)
+    ui->row(gap: 6)
         cube_btn(ui, "X-", CubeAct.ROT_XM, theme)
         ...
-    ui_end(ui)
-ui_end(ui)
+    ui->end()
+ui->end()
 ```
 
 `flex: 1` gives it the leftover space, the card's rounded background is drawn for it, and it follows

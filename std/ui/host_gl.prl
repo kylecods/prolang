@@ -212,8 +212,7 @@ func hostgl_pump(host: GlHost) : void {
 func hostgl_begin(host: GlHost, ui: Ui) : void {
     hostgl_pump(host)
 
-    ui_begin(ui, host.st[HostglS.MOUSE_X], host.st[HostglS.MOUSE_Y],
-        host.st[HostglS.MOUSE_DOWN] == 1)
+    ui->begin(host.st[HostglS.MOUSE_X], host.st[HostglS.MOUSE_Y], host.st[HostglS.MOUSE_DOWN] == 1)
 }
 
 // ── 2D OpenGL Primitives ────────────────────────────────────────────────────
@@ -492,15 +491,15 @@ func hostgl_render_tree_scenes(host: GlHost, ui: Ui, node: int,
         return
     }
 
-    let kind: int = ui_kind(ui, node)
+    let kind: int = ui->kind(node)
     if (kind == UiKind.SCENE) {
         hostgl_render_scene_node(host, ui, node, gl_paint, state)
     }
 
-    let child: int = ui_first_child(ui, node)
+    let child: int = ui->first_child(node)
     while (child >= 0) {
         hostgl_render_tree_scenes(host, ui, child, gl_paint, state)
-        child = ui_next_sibling(ui, child)
+        child = ui->next_sibling(child)
     }
 }
 
@@ -513,14 +512,14 @@ func hostgl_present(host: GlHost, ui: Ui, fonts: FontSet, background: int = 0) :
 }
 
 /*
- * The same as hostgl_present, with a display-list painter function for ui_scene nodes.
+ * The same as hostgl_present, with a display-list painter function for Ui->scene nodes.
  */
 func hostgl_present_scene(host: GlHost, ui: Ui, fonts: FontSet,
                          paint: func(array<int>, int, int, int, int, int, int, array<int>) : int,
                          state: array<int>, background: int = 0) : int {
-    assert(ui_is_balanced(ui), "a container was left open — every ui_col/ui_row/ui_box needs a ui_end")
+    assert(ui->is_balanced(), "a container was left open — every Ui->col/Ui->row/Ui->box needs a Ui->end")
 
-    let root: int = ui_root(ui)
+    let root: int = ui->root()
     if (root < 0) {
         return 0
     }
@@ -537,7 +536,7 @@ func hostgl_present_scene(host: GlHost, ui: Ui, fonts: FontSet,
 }
 
 /*
- * Presents the frame with a direct OpenGL 3D/2D rendering callback for ui_scene / ui_gl_scene nodes.
+ * Presents the frame with a direct OpenGL 3D/2D rendering callback for Ui->scene / Ui->gl_scene nodes.
  *
  * Both the 2D UI widgets and the 3D OpenGL scene are rendered into the back buffer BEFORE
  * a single buffer swap, ensuring completely flicker-free presentation.
@@ -545,9 +544,9 @@ func hostgl_present_scene(host: GlHost, ui: Ui, fonts: FontSet,
 func hostgl_present_gl(host: GlHost, ui: Ui, fonts: FontSet,
                        gl_paint: func(int, int, int, int, int, array<int>) : void,
                        state: array<int>, background: int = 0) : int {
-    assert(ui_is_balanced(ui), "a container was left open — every ui_col/ui_row/ui_box needs a ui_end")
+    assert(ui->is_balanced(), "a container was left open — every Ui->col/Ui->row/Ui->box needs a Ui->end")
 
-    let root: int = ui_root(ui)
+    let root: int = ui->root()
     if (root < 0) {
         return 0
     }
@@ -570,7 +569,7 @@ func hostgl_present_gl(host: GlHost, ui: Ui, fonts: FontSet,
 }
 
 /*
- * Embeds direct OpenGL 3D/2D rendering inside a ui_scene widget.
+ * Embeds direct OpenGL 3D/2D rendering inside a Ui->scene widget.
  *
  * Sets up a scissored viewport at (x, y, w, h), enables GL_DEPTH_TEST, and invokes
  * the custom render function. Automatically restores 2D orthographic projection afterwards.
@@ -597,7 +596,7 @@ func hostgl_render_scene(host: GlHost, x: int, y: int, w: int, h: int,
 }
 
 /*
- * Renders an OpenGL scene directly into the area allocated to a ui_scene or ui_gl_scene node.
+ * Renders an OpenGL scene directly into the area allocated to a Ui->scene or Ui->gl_scene node.
  */
 func hostgl_render_scene_node(host: GlHost, ui: Ui, node: int,
                               render: func(int, int, int, int, int, array<int>) : void,
@@ -606,15 +605,15 @@ func hostgl_render_scene_node(host: GlHost, ui: Ui, node: int,
         return
     }
 
-    let x: int = ui_get(ui, node, UiF.X) + ui_get(ui, node, UiF.PAD_L)
-    let y: int = ui_get(ui, node, UiF.Y) + ui_get(ui, node, UiF.PAD_T)
-    let w: int = ui_get(ui, node, UiF.W) - ui_get(ui, node, UiF.PAD_L) - ui_get(ui, node, UiF.PAD_R)
-    let h: int = ui_get(ui, node, UiF.H) - ui_get(ui, node, UiF.PAD_T) - ui_get(ui, node, UiF.PAD_B)
+    let x: int = ui->get(node, UiF.X) + ui->get(node, UiF.PAD_L)
+    let y: int = ui->get(node, UiF.Y) + ui->get(node, UiF.PAD_T)
+    let w: int = ui->get(node, UiF.W) - ui->get(node, UiF.PAD_L) - ui->get(node, UiF.PAD_R)
+    let h: int = ui->get(node, UiF.H) - ui->get(node, UiF.PAD_T) - ui->get(node, UiF.PAD_B)
 
     if (w <= 0 || h <= 0) {
         return
     }
 
-    let tag: int = ui_get(ui, node, UiF.SCENE_TAG)
+    let tag: int = ui->get(node, UiF.SCENE_TAG)
     hostgl_render_scene(host, x, y, w, h, render, tag, state)
 }

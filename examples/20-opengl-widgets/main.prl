@@ -6,7 +6,7 @@
  *
  * Features:
  *   - Hardware-accelerated UI layout (columns, rows, cards, buttons, text)
- *   - Embedded 3D OpenGL viewport via ui_gl_scene
+ *   - Embedded 3D OpenGL viewport via Ui->gl_scene
  *   - Real-time frame rate counter (std/ui/fps)
  *   - Multi-axis manual rotation & auto-spin mode
  *   - Wireframe mode toggle (gl_polygon_mode)
@@ -169,7 +169,7 @@ func main()
     bolds[1] = 1
 
     let fonts: FontSet = hostgl_fonts(host, families, sizes, bolds)
-    let ui: Ui = ui_new(512)
+    let ui: Ui = Ui->new(512)
     let frames: Fps = Fps->new()
 
     while (hostgl_running(host)) {
@@ -204,47 +204,47 @@ func main()
         }
 
         // ── Widget Tree Construction ─────────────────────────────────────────
-        ui_col(ui, pad: 16, gap: 12, bg: theme_background(theme))
+        ui->col(pad: 16, gap: 12, bg: theme_background(theme))
 
             // Header Bar
-            ui_row(ui, gap: 8)
-                ui_text(ui, "OpenGL 3D Viewport in UI Widgets", font: Font.TITLE, fg: theme_text(theme))
-                ui_spacer(ui, flex: 1)
-                ui_text(ui, frames->text_detailed(), fg: theme_text_dim(theme))
-            ui_end(ui)
+            ui->row(gap: 8)
+                ui->text("OpenGL 3D Viewport in UI Widgets", font: Font.TITLE, fg: theme_text(theme))
+                ui->spacer(flex: 1)
+                ui->text(frames->text_detailed(), fg: theme_text_dim(theme))
+            ui->end()
 
             // Main Content Area: 3D Scene + Control Sidebar
             //
             // A scene has no content of its own, so its measured height is zero. Inside a row the
             // cross axis defaults to CENTER, which would collapse the card to nothing — STRETCH is
             // what makes the card (and its scene) take the row's full height.
-            ui_row(ui, gap: 12, flex: 1, align: UiAlign.STRETCH)
+            ui->row(gap: 12, flex: 1, align: UiAlign.STRETCH)
 
                 // Left: 3D Scene Viewport Card
-                ui_box(ui, pad: 4, radius: 8, flex: 1, bg: theme_surface(theme))
-                    ui_gl_scene(ui, tag: 1, flex: 1, radius: 6)
-                ui_end(ui)
+                ui->box(pad: 4, radius: 8, flex: 1, bg: theme_surface(theme))
+                    ui->gl_scene(tag: 1, flex: 1, radius: 6)
+                ui->end()
 
                 // Right: Control Sidebar Panel
-                ui_box(ui, pad: 12, gap: 8, radius: 8, width: 200, bg: theme_surface(theme))
-                    ui_text(ui, "Rotation", font: Font.TITLE, fg: theme_text(theme))
+                ui->box(pad: 12, gap: 8, radius: 8, width: 200, bg: theme_surface(theme))
+                    ui->text("Rotation", font: Font.TITLE, fg: theme_text(theme))
 
-                    ui_row(ui, gap: 6)
+                    ui->row(gap: 6)
                         app_btn(ui, "X-", Act.ROT_XM, theme)
                         app_btn(ui, "X+", Act.ROT_XP, theme)
-                    ui_end(ui)
+                    ui->end()
 
-                    ui_row(ui, gap: 6)
+                    ui->row(gap: 6)
                         app_btn(ui, "Y-", Act.ROT_YM, theme)
                         app_btn(ui, "Y+", Act.ROT_YP, theme)
-                    ui_end(ui)
+                    ui->end()
 
-                    ui_row(ui, gap: 6)
+                    ui->row(gap: 6)
                         app_btn(ui, "Z-", Act.ROT_ZM, theme)
                         app_btn(ui, "Z+", Act.ROT_ZP, theme)
-                    ui_end(ui)
+                    ui->end()
 
-                    ui_spacer(ui, size: 6, flex: 0)
+                    ui->spacer(size: 6, flex: 0)
 
                     let spinText: string = "Spin: ON"
                     if (state[SceneS.SPINNING] == 0) {
@@ -261,21 +261,20 @@ func main()
                     app_btn(ui, "Reset Angles", Act.RESET, theme)
                     app_btn(ui, "Theme: " + theme_name(theme), Act.THEME, theme)
 
-                    ui_spacer(ui, flex: 1)
+                    ui->spacer(flex: 1)
                     app_btn(ui, "Quit", Act.QUIT, theme)
-                ui_end(ui)
+                ui->end()
 
-            ui_end(ui)
+            ui->end()
 
             // Status Bar
-            ui_row(ui, gap: 8)
-                ui_text(ui, "Angle: (" + string(state[SceneS.ANG_X]) + ", "
+            ui->row(gap: 8)
+                ui->text("Angle: (" + string(state[SceneS.ANG_X]) + ", "
                                        + string(state[SceneS.ANG_Y]) + ", "
-                                       + string(state[SceneS.ANG_Z]) + ") | Drag to rotate",
-                        fg: theme_text_dim(theme))
-            ui_end(ui)
+                                       + string(state[SceneS.ANG_Z]) + ") | Drag to rotate", fg: theme_text_dim(theme))
+            ui->end()
 
-        ui_end(ui)
+        ui->end()
 
         // Present UI widgets & embedded 3D scene in a single atomic flicker-free frame
         let act: int = hostgl_present_gl(host, ui, fonts, draw_cube_scene, state, theme_background(theme))
@@ -310,10 +309,5 @@ func main()
 }
 
 func app_btn(ui: Ui, label: string, action: int, theme: int) : int {
-    return ui_button(ui, label,
-        action: action,
-        bg: theme_surface(theme),
-        fg: theme_text(theme),
-        radius: 6,
-        pad: 8)
+    return ui->button(label, action: action, bg: theme_surface(theme), fg: theme_text(theme), radius: 6, pad: 8)
 }

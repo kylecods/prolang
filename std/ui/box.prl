@@ -55,24 +55,24 @@ func box_layout(ui: Ui, fonts: FontSet, root: int, x: int, y: int, width: int, h
 func box_measure(ui: Ui, fonts: FontSet, node: int) : void {
     let contentW: int = 0
     let contentH: int = 0
-    let kind: int = ui_kind(ui, node)
+    let kind: int = ui->kind(node)
 
     if (kind == UiKind.TEXT || kind == UiKind.BUTTON) {
-        let font: int = ui_get(ui, node, UiF.FONT)
+        let font: int = ui->get(node, UiF.FONT)
 
-        contentW = fonts->measure(font, ui_text_of(ui, node))
+        contentW = fonts->measure(font, ui->text_of(node))
         contentH = fonts->line_height(font)
-    } elif (ui_is_container(ui, node)) {
-        let gap: int = ui_get(ui, node, UiF.GAP)
-        let horizontal: bool = ui_is_horizontal(ui, node)
-        let child: int = ui_first_child(ui, node)
+    } elif (ui->is_container(node)) {
+        let gap: int = ui->get(node, UiF.GAP)
+        let horizontal: bool = ui->is_horizontal(node)
+        let child: int = ui->first_child(node)
         let seen: int = 0
 
         while (child >= 0) {
             box_measure(ui, fonts, child)
 
-            let childW: int = ui_get(ui, child, UiF.W)
-            let childH: int = ui_get(ui, child, UiF.H)
+            let childW: int = ui->get(child, UiF.W)
+            let childH: int = ui->get(child, UiF.H)
 
             if (horizontal) {
                 contentW = contentW + childW
@@ -83,7 +83,7 @@ func box_measure(ui: Ui, fonts: FontSet, node: int) : void {
             }
 
             seen = seen + 1
-            child = ui_next_sibling(ui, child)
+            child = ui->next_sibling(child)
         }
 
         if (seen > 1) {
@@ -97,36 +97,36 @@ func box_measure(ui: Ui, fonts: FontSet, node: int) : void {
 
     // A fixed size wins over the measurement, but padding is still added around content that was
     // measured — so `width:` on a row means the row's outer width, which is what a caller expects.
-    let fixedW: int = ui_get(ui, node, UiF.FIXED_W)
-    let fixedH: int = ui_get(ui, node, UiF.FIXED_H)
+    let fixedW: int = ui->get(node, UiF.FIXED_W)
+    let fixedH: int = ui->get(node, UiF.FIXED_H)
 
-    let naturalW: int = contentW + ui_get(ui, node, UiF.PAD_L) + ui_get(ui, node, UiF.PAD_R)
-    let naturalH: int = contentH + ui_get(ui, node, UiF.PAD_T) + ui_get(ui, node, UiF.PAD_B)
+    let naturalW: int = contentW + ui->get(node, UiF.PAD_L) + ui->get(node, UiF.PAD_R)
+    let naturalH: int = contentH + ui->get(node, UiF.PAD_T) + ui->get(node, UiF.PAD_B)
 
     if (fixedW >= 0) { naturalW = fixedW }
     if (fixedH >= 0) { naturalH = fixedH }
 
-    ui_set(ui, node, UiF.W, naturalW)
-    ui_set(ui, node, UiF.H, naturalH)
+    ui->set(node, UiF.W, naturalW)
+    ui->set(node, UiF.H, naturalH)
 }
 
 // ── Pass two: placement ──────────────────────────────────────────────────────
 
 // Assigns `node` its final rectangle and lays its children out inside it.
 func box_place(ui: Ui, node: int, x: int, y: int, width: int, height: int) : void {
-    ui_set(ui, node, UiF.X, x)
-    ui_set(ui, node, UiF.Y, y)
-    ui_set(ui, node, UiF.W, width)
-    ui_set(ui, node, UiF.H, height)
+    ui->set(node, UiF.X, x)
+    ui->set(node, UiF.Y, y)
+    ui->set(node, UiF.W, width)
+    ui->set(node, UiF.H, height)
 
-    if (!ui_is_container(ui, node)) {
+    if (!ui->is_container(node)) {
         return
     }
 
-    let innerX: int = x + ui_get(ui, node, UiF.PAD_L)
-    let innerY: int = y + ui_get(ui, node, UiF.PAD_T)
-    let innerW: int = width - ui_get(ui, node, UiF.PAD_L) - ui_get(ui, node, UiF.PAD_R)
-    let innerH: int = height - ui_get(ui, node, UiF.PAD_T) - ui_get(ui, node, UiF.PAD_B)
+    let innerX: int = x + ui->get(node, UiF.PAD_L)
+    let innerY: int = y + ui->get(node, UiF.PAD_T)
+    let innerW: int = width - ui->get(node, UiF.PAD_L) - ui->get(node, UiF.PAD_R)
+    let innerH: int = height - ui->get(node, UiF.PAD_T) - ui->get(node, UiF.PAD_B)
 
     if (innerW < 0) { innerW = 0 }
     if (innerH < 0) { innerH = 0 }
@@ -142,15 +142,15 @@ func box_place(ui: Ui, node: int, x: int, y: int, width: int, height: int) : voi
  * stops a fix applied to a row from being forgotten for a column.
  */
 func box_place_children(ui: Ui, node: int, innerX: int, innerY: int, innerW: int, innerH: int) : void {
-    let horizontal: bool = ui_is_horizontal(ui, node)
-    let gap: int = ui_get(ui, node, UiF.GAP)
-    let align: int = ui_get(ui, node, UiF.ALIGN)
-    let justify: int = ui_get(ui, node, UiF.JUSTIFY)
+    let horizontal: bool = ui->is_horizontal(node)
+    let gap: int = ui->get(node, UiF.GAP)
+    let align: int = ui->get(node, UiF.ALIGN)
+    let justify: int = ui->get(node, UiF.JUSTIFY)
 
     let mainSpace: int = innerH
     if (horizontal) { mainSpace = innerW }
 
-    let childCount: int = ui_child_count(ui, node)
+    let childCount: int = ui->child_count(node)
     if (childCount == 0) {
         return
     }
@@ -158,17 +158,17 @@ func box_place_children(ui: Ui, node: int, innerX: int, innerY: int, innerW: int
     // What the children asked for along the main axis, and how much of it is flexible.
     let naturalMain: int = gap * (childCount - 1)
     let flexTotal: int = 0
-    let child: int = ui_first_child(ui, node)
+    let child: int = ui->first_child(node)
 
     while (child >= 0) {
         if (horizontal) {
-            naturalMain = naturalMain + ui_get(ui, child, UiF.W)
+            naturalMain = naturalMain + ui->get(child, UiF.W)
         } else {
-            naturalMain = naturalMain + ui_get(ui, child, UiF.H)
+            naturalMain = naturalMain + ui->get(child, UiF.H)
         }
 
-        flexTotal = flexTotal + ui_get(ui, child, UiF.FLEX)
-        child = ui_next_sibling(ui, child)
+        flexTotal = flexTotal + ui->get(child, UiF.FLEX)
+        child = ui->next_sibling(child)
     }
 
     let leftover: int = mainSpace - naturalMain
@@ -184,21 +184,21 @@ func box_place_children(ui: Ui, node: int, innerX: int, innerY: int, innerW: int
     // The last flexible child takes the remainder, so the children sum to the space exactly.
     let lastFlexChild: int = 0 - 1
     if (flexTotal > 0) {
-        child = ui_first_child(ui, node)
+        child = ui->first_child(node)
         while (child >= 0) {
-            if (ui_get(ui, child, UiF.FLEX) > 0) { lastFlexChild = child }
-            child = ui_next_sibling(ui, child)
+            if (ui->get(child, UiF.FLEX) > 0) { lastFlexChild = child }
+            child = ui->next_sibling(child)
         }
     }
 
     let handedOut: int = 0
 
-    child = ui_first_child(ui, node)
+    child = ui->first_child(node)
     while (child >= 0) {
-        let mainSize: int = ui_get(ui, child, UiF.H)
-        if (horizontal) { mainSize = ui_get(ui, child, UiF.W) }
+        let mainSize: int = ui->get(child, UiF.H)
+        if (horizontal) { mainSize = ui->get(child, UiF.W) }
 
-        let flex: int = ui_get(ui, child, UiF.FLEX)
+        let flex: int = ui->get(child, UiF.FLEX)
 
         if (flex > 0 && flexTotal > 0) {
             let share: int = (leftover * flex) / flexTotal
@@ -215,8 +215,8 @@ func box_place_children(ui: Ui, node: int, innerX: int, innerY: int, innerW: int
         let crossSpace: int = innerH
         if (horizontal == false) { crossSpace = innerW }
 
-        let crossSize: int = ui_get(ui, child, UiF.W)
-        if (horizontal) { crossSize = ui_get(ui, child, UiF.H) }
+        let crossSize: int = ui->get(child, UiF.W)
+        if (horizontal) { crossSize = ui->get(child, UiF.H) }
 
         if (align == UiAlign.STRETCH) {
             crossSize = crossSpace
@@ -235,34 +235,34 @@ func box_place_children(ui: Ui, node: int, innerX: int, innerY: int, innerW: int
         }
 
         pen = pen + mainSize + gap
-        child = ui_next_sibling(ui, child)
+        child = ui->next_sibling(child)
     }
 }
 
 // ── Reading the result ───────────────────────────────────────────────────────
 
 func box_x(ui: Ui, node: int) : int {
-    return ui_get(ui, node, UiF.X)
+    return ui->get(node, UiF.X)
 }
 
 func box_y(ui: Ui, node: int) : int {
-    return ui_get(ui, node, UiF.Y)
+    return ui->get(node, UiF.Y)
 }
 
 func box_w(ui: Ui, node: int) : int {
-    return ui_get(ui, node, UiF.W)
+    return ui->get(node, UiF.W)
 }
 
 func box_h(ui: Ui, node: int) : int {
-    return ui_get(ui, node, UiF.H)
+    return ui->get(node, UiF.H)
 }
 
 // Whether a point falls inside a node's laid-out rectangle.
 func box_contains(ui: Ui, node: int, px: int, py: int) : bool {
-    let x: int = ui_get(ui, node, UiF.X)
-    let y: int = ui_get(ui, node, UiF.Y)
+    let x: int = ui->get(node, UiF.X)
+    let y: int = ui->get(node, UiF.Y)
 
     return px >= x && py >= y
-        && px < (x + ui_get(ui, node, UiF.W))
-        && py < (y + ui_get(ui, node, UiF.H))
+        && px < (x + ui->get(node, UiF.W))
+        && py < (y + ui->get(node, UiF.H))
 }

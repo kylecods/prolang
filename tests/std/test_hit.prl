@@ -2,7 +2,7 @@
  * ui/hit — hover, press and click.
  *
  * A click is a press and a release on the same widget, so every check here drives at least two
- * frames. `ui_begin` takes this frame's pointer state and moves the last one into MOUSE_WAS_DOWN,
+ * frames. `Ui->begin` takes this frame's pointer state and moves the last one into MOUSE_WAS_DOWN,
  * which is what turns a held button into an edge.
  */
 
@@ -27,12 +27,12 @@ func test_hit_fonts() : FontSet {
  * state from one to the next is the widget's id.
  */
 func test_hit_frame(ui: Ui, fonts: FontSet, mouseX: int, mouseY: int, down: bool) : int {
-    ui_begin(ui, mouseX, mouseY, down)
+    ui->begin(mouseX, mouseY, down)
 
-    let root: int = ui_row(ui, gap: 0)
-        ui_button(ui, "ab", action: 101, width: 50, height: 20)
-        ui_button(ui, "cd", action: 202, width: 50, height: 20)
-    ui_end(ui)
+    let root: int = ui->row(gap: 0)
+        ui->button("ab", action: 101, width: 50, height: 20)
+        ui->button("cd", action: 202, width: 50, height: 20)
+    ui->end()
 
     box_layout(ui, fonts, root, 0, 0, 100, 20)
 
@@ -41,7 +41,7 @@ func test_hit_frame(ui: Ui, fonts: FontSet, mouseX: int, mouseY: int, down: bool
 
 func test_hit_run() : void {
     let fonts: FontSet = test_hit_fonts()
-    let ui: Ui = ui_new(32)
+    let ui: Ui = Ui->new(32)
 
     // Hovering the first button makes it hot and fires nothing.
     let fired: int = test_hit_frame(ui, fonts, 10, 10, false)

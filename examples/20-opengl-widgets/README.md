@@ -6,7 +6,7 @@ Hardware-accelerated UI widgets with an embedded interactive 3D OpenGL viewport.
 
 This example demonstrates how ProLang's UI widget toolkit runs on top of the built-in OpenGL backend (`std/ui/host_gl.prl`):
 - **Hardware-accelerated UI widgets**: Buttons, styled cards, columns, rows, spacers, and labels laid out dynamically and rendered via OpenGL.
-- **Embedded 3D Viewport (`ui_gl_scene`)**: An interactive 3D cube rendered inside a UI card with automatic viewport and scissor clipping.
+- **Embedded 3D Viewport (`Ui->gl_scene`)**: An interactive 3D cube rendered inside a UI card with automatic viewport and scissor clipping.
 - **Real-time FPS tracking**: Uses `std/ui/fps` to measure rendering performance.
 - **Interactive Controls**:
   - Buttons for rotating along the X, Y, and Z axes
