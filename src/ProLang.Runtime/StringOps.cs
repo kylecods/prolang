@@ -11,26 +11,24 @@ namespace ProLang.Runtime;
 public static class StringOps
 {
     /// <summary>
-    /// Returns the character at <paramref name="index"/> as a one-character string.
+    /// Returns the character at <paramref name="index"/>.
     /// </summary>
     /// <remarks>
-    /// ProLang has no character type, so indexing a string yields a string. The IL version of
-    /// this boxed the char and went through <c>Convert.ToString(object)</c> to avoid needing the
-    /// char's address for an instance call.
+    /// A UTF-16 code unit, not a rune: a character outside the basic multilingual plane is two
+    /// units and reports each half separately. That matches <c>length()</c> and <c>charCode()</c>,
+    /// which are also unit-based, so the three agree with one another.
     /// </remarks>
     /// <exception cref="ArgumentOutOfRangeException"><paramref name="index"/> is outside the string.</exception>
-    public static string CharAt(string str, int index) => str[index].ToString();
+    public static char CharAt(string str, int index) => str[index];
 
     /// <summary>
     /// Returns the code unit at <paramref name="index"/> as an integer.
     /// </summary>
     /// <remarks>
     /// <para>
-    /// The counterpart to <see cref="CharAt"/>, and the only way a ProLang program can do
-    /// arithmetic on text. Without it, deciding whether a character is a digit means comparing a
-    /// one-character string against ten others, which is why <c>util_parse_int</c> reads the way it
-    /// does; measuring a string against a width table would mean ninety-five such comparisons per
-    /// character.
+    /// The arithmetic counterpart to <see cref="CharAt"/>, which a char now is directly —
+    /// <c>c - '0'</c> works without it. It remains for code written before the char type, and
+    /// because an <c>int</c> is what the C backends' byte-based strings actually yield.
     /// </para>
     /// <para>
     /// A UTF-16 code unit, not a rune: a character outside the basic multilingual plane is two
@@ -76,6 +74,16 @@ public static class StringOps
 
     /// <summary>Formats a boolean as <c>True</c> or <c>False</c>.</summary>
     public static string From(bool value) => value.ToString();
+
+    /// <summary>
+    /// Returns the character as a one-character string.
+    /// </summary>
+    /// <remarks>
+    /// What <c>string(c)</c> and <c>"text" + c</c> compile to. The obvious
+    /// <c>value.ToString()</c> does the same thing; spelled out here so the overload set has
+    /// every primitive and the emitter's table has no gaps.
+    /// </remarks>
+    public static string From(char value) => value.ToString();
 
     /// <summary>Formats a single-precision float.</summary>
     public static string From(float value) => value.ToString();

@@ -732,12 +732,36 @@ ProLang supports **implicit program type detection**:
 | Type | Example | Notes |
 |------|---------|-------|
 | `int` | `42` | 32-bit integer |
+| `char` | `'a'`, `'\n'` | One UTF-16 code unit; converts to and from `int` implicitly |
 | `string` | `"hello"` | Immutable text |
 | `bool` | `true`, `false` | Boolean |
 | `any` | `parseJson(...)` | Dynamic type |
 | `array<T>` | `array<int>` | Generic array |
 | `map<K, V>` | `map<string, any>` | Key-value pairs |
 | Custom `struct` | `struct Person { name: string }` | Aggregate types |
+
+#### Characters
+
+A `char` is one UTF-16 code unit, written between single quotes. It compares directly (`c == 'a'`,
+`c >= '0' && c <= '9'`), converts to and from `int` implicitly, and participates in arithmetic as
+an int (`c - '0'` decodes a digit; `'a' + 1` is an int). `string(c)` gives one-character text, and
+`"text" + c` concatenates.
+
+```prolang
+let c: char = 'a'
+let code: int = c                 // 97
+let decoded: int = '7' - '0'      // 7
+let fromCode: char = 98           // 'b'
+let fromText: char = s.charAt(0)  // charAt returns a char
+```
+
+Escape sequences work in char and string literals alike: `\n`, `\t`, `\r`, `\0`, `\\`, `\'`,
+`\"`. Strings keep the older doubled-quote escape too (`""` inside a string is one quote). A
+backslash followed by anything else is an error naming the sequence, so `\q` is a 'q' plus an
+error rather than a silently different program.
+
+`std/char` carries the ASCII helpers — `char_is_digit`, `char_digit_value`, `char_is_alpha`,
+`char_to_upper`, `char_is_whitespace`, and friends.
 
 ### Functions
 
@@ -987,8 +1011,8 @@ is a worked example: 295 checks across ten modules, run by `dotnet test` through
 ```prolang
 let s = "hello"
 print(s.length())           // 5
-print(s.charAt(0))          // h
-print(s.charCode(0))        // 104 — the only way to do arithmetic on text
+print(s.charAt(0))          // 'h' — a char
+print(s.charCode(0))        // 104 — kept for code written before the char type
 print(s.substring(1, 3))    // el
 print(s.indexOf("l"))       // 2
 ```

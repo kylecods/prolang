@@ -21,6 +21,8 @@ public class TypeSymbol : Symbol
 
     public static readonly TypeSymbol UInt16 = new("uint16");//ushort
 
+    public static readonly TypeSymbol Char = new("char");// a UTF-16 code unit, System.Char
+
     public static readonly TypeSymbol Int16 = new("int16");//short
 
     public static readonly TypeSymbol Int64 = new("int64");//long
@@ -61,6 +63,7 @@ public class TypeSymbol : Symbol
             ["uint8"] = UInt8,
             ["int8"] = Int8,
             ["uint16"] = UInt16,
+            ["char"] = Char,
             ["int16"] = Int16,
             ["uint32"] = UInt32,
             ["uint64"] = UInt64,

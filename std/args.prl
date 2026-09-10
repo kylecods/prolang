@@ -103,27 +103,13 @@ enum ArgKind {
 }
 
 /*
- * The character codes this module dispatches on, as named constants. `charCode` compares a
- * character to its numeric code, so spelling them out is clearer than bare 45 and 61 in the
- * parsing loops.
- */
-enum ArgCh {
-    PLUS = 43,       // +
-    DASH = 45,       // -
-    EQUALS = 61,     // =
-    NINE = 57,       // 9 — the top of the digit range
-    H = 104,         // h — the conventional short help letter
-    ZERO = 48        // 0 — the bottom of the digit range
-}
-
-/*
  * One declared option. Built by arg_flag / arg_option / arg_int / arg_int_range / arg_count,
  * stored in the ArgSpec's backing array, and read by the parser through its slot index.
  */
 struct ArgOpt {
     name: string,            // long form, without the leading dashes
     short_form: string,      // one character, or "" when the option has no short form
-    short_code: int,         // charCode of short_form, or 0 — precomputed so the parse loop never calls charCode on an option
+    short_code: char,        // short_form as a char, or '\0' — precomputed so the parse loop never indexes an option's text
     kind: int,               // one of ArgKind
     help: string,            // the description shown in the options list
     placeholder: string,     // value options only: <PLACEHOLDER> in help, e.g. "FILE" or "N"
@@ -232,13 +218,13 @@ func arg_opt_base(spec: ArgSpec, name: string, short: string, kind: int, help: s
     assert(arg_find(spec, name) < 0, "arg: option '" + name + "' is declared twice")
     if (short.length() > 0) {
         assert(short.length() == 1, "arg: short form of '" + name + "' must be one character")
-        assert(arg_find_short(spec, short.charCode(0)) < 0, "arg: short option '" + short + "' is declared twice")
+        assert(arg_find_short(spec, short.charAt(0)) < 0, "arg: short option '" + short + "' is declared twice")
     }
 
     let opt: ArgOpt = ArgOpt {
         name: name,
         short_form: short,
-        short_code: 0,
+        short_code: '\0',
         kind: kind,
         help: help,
         placeholder: "VALUE",
@@ -252,7 +238,7 @@ func arg_opt_base(spec: ArgSpec, name: string, short: string, kind: int, help: s
         hidden: hidden
     }
     if (short.length() > 0) {
-        opt.short_code = short.charCode(0)
+        opt.short_code = short.charAt(0)
     }
     return arg_add_opt(spec, opt)
 }
@@ -506,20 +492,20 @@ func arg_parse(spec: ArgSpec, args: array<string>) : ArgParsed {
             continue
         }
 
-        // c0 is only read after the empty-token guard, since charCode(0) on "" would crash.
-        let c0: int = tok.charCode(0)
+        // c0 is only read after the empty-token guard, since charAt(0) on "" would crash.
+        let c0: char = tok.charAt(0)
 
         // && does not short-circuit in prolang — both operands always evaluate — so the
         // character read that distinguishes a negative number from an option lives inside a
-        // sequential guard: charCode(1) on a one-character token like "-" would end the
+        // sequential guard: charAt(1) on a one-character token like "-" would end the
         // program rather than skip the check.
         let optionish: bool = false
-        if (c0 == ArgCh.DASH && len > 1) {
+        if (c0 == '-' && len > 1) {
             optionish = !arg_looks_number(tok)
         }
 
         if (optionish) {
-            if (len > 2 && tok.charCode(1) == ArgCh.DASH) {
+            if (len > 2 && tok.charAt(1) == '-') {
                 parsed = arg_parse_long(parsed, tok, k, args)
                 i = parsed.next_idx
                 continue
@@ -591,7 +577,7 @@ func arg_parse(spec: ArgSpec, args: array<string>) : ArgParsed {
  * this, so an author-owned help flag works in both places.
  */
 func arg_ensure_help(spec: ArgSpec) : ArgSpec {
-    if (arg_find(spec, "help") >= 0 || arg_find_short(spec, ArgCh.H) >= 0) {
+    if (arg_find(spec, "help") >= 0 || arg_find_short(spec, 'h') >= 0) {
         return spec
     }
     return arg_flag(spec, "help", short: "h", help: "show this help")
@@ -786,12 +772,11 @@ func arg_parse_short(parsed: ArgParsed, tok: string, args: array<string>, i: int
     let consumed_next: bool = false
 
     while (j < tok.length()) {
-        let c: int = tok.charCode(j)
+        let c: char = tok.charAt(j)
         let slot: int = arg_find_short(parsed.spec, c)
 
         if (slot < 0) {
-            let ch: string = tok.substring(j, j + 1)
-            parsed = arg_error_add(parsed, "unknown option '-" + ch + "'")
+            parsed = arg_error_add(parsed, "unknown option '-" + string(c) + "'")
             break
         }
 
@@ -812,7 +797,7 @@ func arg_parse_short(parsed: ArgParsed, tok: string, args: array<string>, i: int
         if (rest.length() > 0) {
             // Strip a leading '=' so `-o=file` works like `--out=file`. A value that genuinely
             // starts with '=' is not a thing command lines carry.
-            if (rest.charCode(0) == ArgCh.EQUALS) {
+            if (rest.charAt(0) == '=') {
                 rest = rest.substring(1, rest.length())
             }
             parsed = arg_record(parsed, slot, rest)
@@ -863,7 +848,7 @@ func arg_token_is_option(tok: string) : bool {
     if (len < 2) {
         return false
     }
-    if (tok.charCode(0) != ArgCh.DASH) {
+    if (tok.charAt(0) != '-') {
         return false
     }
     return !arg_looks_number(tok)
@@ -871,8 +856,8 @@ func arg_token_is_option(tok: string) : bool {
 
 // True when a dash-prefixed token is a negative number rather than an option.
 func arg_looks_number(tok: string) : bool {
-    let c: int = tok.charCode(1)
-    return c >= ArgCh.ZERO && c <= ArgCh.NINE
+    let c: char = tok.charAt(1)
+    return c >= '0' && c <= '9'
 }
 
 // ────────────────────────────────────────────────────────────────────────────────────────────
@@ -891,11 +876,11 @@ func arg_find(spec: ArgSpec, name: string) : int {
     return 0 - 1
 }
 
-// The slot of the option whose short form has code `code`, or -1.
-func arg_find_short(spec: ArgSpec, code: int) : int {
+// The slot of the option whose short form is the character `c`, or -1.
+func arg_find_short(spec: ArgSpec, c: char) : int {
     let i: int = 0
     while (i < spec.opt_count) {
-        if (spec.options[i].short_code == code && spec.options[i].short_form.length() > 0) {
+        if (spec.options[i].short_code == c && spec.options[i].short_form.length() > 0) {
             return i
         }
         i = i + 1
@@ -1380,11 +1365,11 @@ func arg_parse_int_strict(text: string) : ArgIntResult {
 
     let i: int = 0
     let negative: bool = false
-    let c0: int = text.charCode(0)
-    if (c0 == ArgCh.DASH) {
+    let c0: char = text.charAt(0)
+    if (c0 == '-') {
         negative = true
         i = 1
-    } else if (c0 == ArgCh.PLUS) {
+    } else if (c0 == '+') {
         i = 1
     }
     if (i >= len) {
@@ -1397,14 +1382,14 @@ func arg_parse_int_strict(text: string) : ArgIntResult {
     let total: int = 0
     let min_edge: bool = false
     while (i < len) {
-        let c: int = text.charCode(i)
-        if (c < ArgCh.ZERO || c > ArgCh.NINE) {
+        let c: char = text.charAt(i)
+        if (c < '0' || c > '9') {
             return ArgIntResult { ok: false, value: 0 }
         }
         if (min_edge) {
             return ArgIntResult { ok: false, value: 0 }   // magnitude grew past 2^31
         }
-        let d: int = c - ArgCh.ZERO
+        let d: int = c - '0'
         if (total > 214748364) {
             return ArgIntResult { ok: false, value: 0 }
         }

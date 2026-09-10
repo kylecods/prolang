@@ -132,6 +132,16 @@ internal sealed class BoundBinaryOperator
             new (SyntaxKind.GreaterThanToken,     BoundBinaryOperatorKind.GreaterThan,    TypeSymbol.UInt16, TypeSymbol.Bool),
             new (SyntaxKind.GreaterThanEqualToken,BoundBinaryOperatorKind.GreaterEqual,   TypeSymbol.UInt16, TypeSymbol.Bool),
 
+            // ── char ─────────────────────────────────────────────────────────
+            // Comparisons and equality only. Arithmetic is not table-listed: a char promotes to
+            // int through the C-like rank below, so 'a' + 1 is an int without a (char, int) row.
+            new (SyntaxKind.EqualsEqualsToken,    BoundBinaryOperatorKind.Equals,         TypeSymbol.Char,   TypeSymbol.Bool),
+            new (SyntaxKind.BangEqualsToken,      BoundBinaryOperatorKind.NotEquals,      TypeSymbol.Char,   TypeSymbol.Bool),
+            new (SyntaxKind.LessThanToken,        BoundBinaryOperatorKind.LessThan,       TypeSymbol.Char,   TypeSymbol.Bool),
+            new (SyntaxKind.LessThanEqualToken,   BoundBinaryOperatorKind.LessEqual,      TypeSymbol.Char,   TypeSymbol.Bool),
+            new (SyntaxKind.GreaterThanToken,     BoundBinaryOperatorKind.GreaterThan,    TypeSymbol.Char,   TypeSymbol.Bool),
+            new (SyntaxKind.GreaterThanEqualToken,BoundBinaryOperatorKind.GreaterEqual,   TypeSymbol.Char,   TypeSymbol.Bool),
+
             // ── uint32 ───────────────────────────────────────────────────────
             new (SyntaxKind.PlusToken,            BoundBinaryOperatorKind.Addition,       TypeSymbol.UInt32),
             new (SyntaxKind.MinusToken,           BoundBinaryOperatorKind.Subtraction,    TypeSymbol.UInt32),
@@ -196,6 +206,8 @@ internal sealed class BoundBinaryOperator
             new(SyntaxKind.PlusToken,BoundBinaryOperatorKind.Addition, TypeSymbol.Int, TypeSymbol.String, TypeSymbol.String),
             new(SyntaxKind.PlusToken,BoundBinaryOperatorKind.Addition, TypeSymbol.String, TypeSymbol.Bool, TypeSymbol.String),
             new(SyntaxKind.PlusToken,BoundBinaryOperatorKind.Addition, TypeSymbol.Bool, TypeSymbol.String, TypeSymbol.String),
+            new(SyntaxKind.PlusToken,BoundBinaryOperatorKind.Addition, TypeSymbol.String, TypeSymbol.Char, TypeSymbol.String),
+            new(SyntaxKind.PlusToken,BoundBinaryOperatorKind.Addition, TypeSymbol.Char, TypeSymbol.String, TypeSymbol.String),
 
             // float32 arithmetic
             new (SyntaxKind.PlusToken,            BoundBinaryOperatorKind.Addition,       TypeSymbol.Float32),
@@ -289,8 +301,11 @@ internal sealed class BoundBinaryOperator
 
         // Numeric promotion rank — lower index = narrower type.
         // Follows C integer-promotion rules: any type narrower than int gets promoted to int.
+        // A char sits at the very front: it has no arithmetic of its own, so 'a' + 1 promotes
+        // to int, while 'a' == 'a' binds exactly against the char comparison rows above.
         private static readonly TypeSymbol[] PromotionRank =
         [
+            TypeSymbol.Char,
             TypeSymbol.Int8, TypeSymbol.UInt8,
             TypeSymbol.Int16, TypeSymbol.UInt16,
             TypeSymbol.Int,   TypeSymbol.UInt32,

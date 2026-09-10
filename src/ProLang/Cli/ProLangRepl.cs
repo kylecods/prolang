@@ -26,7 +26,7 @@ internal sealed class ProLangRepl : Repl
             var isKeyword = token.Kind.ToString().EndsWith("Keyword");
             var isNumber = token.Kind == SyntaxKind.NumberToken;
             var isIdentifier = token.Kind == SyntaxKind.IdentifierToken;
-            var isString = token.Kind == SyntaxKind.StringToken;
+            var isString = token.Kind is SyntaxKind.StringToken or SyntaxKind.CharToken;
 
             if (isKeyword)
             {

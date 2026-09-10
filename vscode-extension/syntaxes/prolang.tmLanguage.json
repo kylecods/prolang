@@ -39,9 +39,21 @@
           "end": "\"",
           "patterns": [
             {
-              "comment": "A quotation mark is escaped by doubling it, as the lexer's ReadString does.",
+              "comment": "Escapes: a doubled quote, as the lexer's ReadString always did, and the backslash sequences it now reads.",
               "name": "constant.character.escape.prolang",
-              "match": "\"\""
+              "match": "\"\"|\\\\."
+            }
+          ]
+        },
+        {
+          "name": "string.quoted.single.char.prolang",
+          "begin": "'",
+          "end": "'",
+          "patterns": [
+            {
+              "comment": "A char literal's escapes, as the lexer's ReadEscape reads them.",
+              "name": "constant.character.escape.prolang",
+              "match": "\\\\."
             }
           ]
         }
@@ -105,7 +117,7 @@
         {
           "comment": "Every name in TypeSymbol.Primitives, which is what the binder resolves.",
           "name": "support.type.prolang",
-          "match": "\\b(int|int8|int16|int64|uint8|uint16|uint32|uint64|float|float32|float64|bool|string|void|any|array|map)\\b"
+          "match": "\\b(int|int8|int16|int64|uint8|uint16|uint32|uint64|float|float32|float64|bool|string|char|void|any|array|map)\\b"
         },
         {
           "comment": "A capitalised name in a type position: struct and enum names by convention.",

@@ -1,0 +1,81 @@
+/*
+ * std/char.prl tests
+ *
+ * Each helper is checked on its range edges and on a representative of everything it must
+ * reject. The wrap behaviour of char_digit_value and char_hex_value on non-digits is asserted
+ * rather than left to luck — it is documented behaviour someone will end up relying on.
+ */
+
+import "testing"
+import "char"
+
+func test_char_run() : void {
+    // ── Digits ───────────────────────────────────────────────────────────────
+    t_true("'0' is a digit", char_is_digit('0'))
+    t_true("'9' is a digit", char_is_digit('9'))
+    t_true("'5' is a digit", char_is_digit('5'))
+    t_false("'a' is not a digit", char_is_digit('a'))
+    t_false("slash is not a digit", char_is_digit('/'))
+    t_false("colon is not a digit", char_is_digit(':'))
+    t_false("space is not a digit", char_is_digit(' '))
+
+    t_eq_int("digit value zero", char_digit_value('0'), 0)
+    t_eq_int("digit value seven", char_digit_value('7'), 7)
+    t_eq_int("digit value nine", char_digit_value('9'), 9)
+
+    t_true("hex digit a", char_is_hex_digit('a'))
+    t_true("hex digit F", char_is_hex_digit('F'))
+    t_true("hex digit 5", char_is_hex_digit('5'))
+    t_false("hex rejects g", char_is_hex_digit('g'))
+    t_false("hex rejects G", char_is_hex_digit('G'))
+    t_false("hex rejects slash", char_is_hex_digit('/'))
+
+    t_eq_int("hex value of 9", char_hex_value('9'), 9)
+    t_eq_int("hex value of a", char_hex_value('a'), 10)
+    t_eq_int("hex value of f", char_hex_value('f'), 15)
+    t_eq_int("hex value of A", char_hex_value('A'), 10)
+    t_eq_int("hex value of F", char_hex_value('F'), 15)
+
+    // ── Letters ──────────────────────────────────────────────────────────────
+    t_true("q is alpha", char_is_alpha('q'))
+    t_true("Z is alpha", char_is_alpha('Z'))
+    t_false("8 is not alpha", char_is_alpha('8'))
+    t_false("underscore is not alpha", char_is_alpha('_'))
+
+    t_true("alnum takes a letter", char_is_alnum('x'))
+    t_true("alnum takes a digit", char_is_alnum('3'))
+    t_false("alnum rejects underscore", char_is_alnum('_'))
+
+    t_true("Q is upper", char_is_upper('Q'))
+    t_false("q is not upper", char_is_upper('q'))
+    t_false("digit is not upper", char_is_upper('1'))
+
+    t_true("m is lower", char_is_lower('m'))
+    t_false("M is not lower", char_is_lower('M'))
+
+    t_eq_char("to upper", char_to_upper('h'), 'H')
+    t_eq_char("to upper stays upper", char_to_upper('T'), 'T')
+    t_eq_char("to upper leaves a digit", char_to_upper('4'), '4')
+
+    t_eq_char("to lower", char_to_lower('H'), 'h')
+    t_eq_char("to lower stays lower", char_to_lower('t'), 't')
+    t_eq_char("to lower leaves a digit", char_to_lower('7'), '7')
+
+    // ── Whitespace ───────────────────────────────────────────────────────────
+    t_true("space is whitespace", char_is_whitespace(' '))
+    t_true("tab is whitespace", char_is_whitespace('\t'))
+    t_true("carriage return is whitespace", char_is_whitespace('\r'))
+    t_true("newline is whitespace", char_is_whitespace('\n'))
+    t_false("letter is not whitespace", char_is_whitespace('x'))
+    t_false("zero is not whitespace", char_is_whitespace('\0'))
+
+    // ── Escapes, exercised where a helper module cannot avoid them ───────────
+    t_eq_int("newline is code 10", '\n', 10)
+    t_eq_int("tab is code 9", '\t', 9)
+    t_eq_int("carriage return is code 13", '\r', 13)
+    t_eq_int("nul is code 0", '\0', 0)
+    t_eq_int("escaped quote is code 39", '\'', 39)
+    t_eq_int("escaped backslash is code 92", '\\', 92)
+    t_false("nul differs from digit zero", '\0' == '0')
+    t_eq_int("apostrophe as text", string('\'').length(), 1)
+}

@@ -1,9 +1,8 @@
 import "io"
 
 // Test extractQuotedString function.
-// The delimiter is a bracket rather than a quote because the lexer has no
-// escaped-quote support, and the point of the test is substring extraction,
-// not tokenization.
+// The delimiter is a bracket rather than a quote so the point of the test stays
+// substring extraction, not tokenization.
 
 func extractBracketed(text: string, startPos: int) : string {
     let pos = startPos + 1
@@ -12,11 +11,11 @@ func extractBracketed(text: string, startPos: int) : string {
     while(pos < text.length()) {
         let ch = text.charAt(pos)
 
-        if(ch == "]") {
+        if(ch == ']') {
             return result
         }
 
-        result = result + ch
+        result = result + string(ch)
         pos = pos + 1
     }
 

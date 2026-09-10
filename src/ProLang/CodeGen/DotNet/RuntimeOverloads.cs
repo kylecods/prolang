@@ -61,6 +61,10 @@ internal static class RuntimeOverloads
         if (type == TypeSymbol.Float64 || type == TypeSymbol.Float) return "System.Double";
         if (type == TypeSymbol.String) return "System.String";
 
+        // A char keeps its own overload rather than riding the int one: same stack form, but
+        // Int32.ToString() would print the code point where the character is wanted.
+        if (type == TypeSymbol.Char) return "System.Char";
+
         return null;
     }
 

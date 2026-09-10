@@ -12,5 +12,10 @@ func main()
     print("Substring (0, 5): " + msg.substring(0, 5))
     print("Index of World: " + msg.indexOf("World"))
 
+    // char: a first-class character with literals, comparisons and arithmetic
+    let h: char = msg.charAt(0)
+    print("Char literal: " + string(h) + " code " + string(h - '0' + '0'))
+    print("Is uppercase: " + string(h >= 'A' && h <= 'Z'))
+
     print("OK: String methods work in compiler mode!")
 }

@@ -970,6 +970,11 @@ internal sealed class CEmitter
             case ushort usv:
                 _sb.Append($"(uint16_t){usv}");
                 break;
+            case char chv:
+                // A char is a uint16_t in C: the same width a .NET UTF-16 code unit has, and the
+                // same byte range the C backends' byte-based strings yield from charCode().
+                _sb.Append($"(uint16_t){(int)chv}");
+                break;
             case float fv:
                 _sb.Append($"{fv:G}f");
                 break;
@@ -1037,6 +1042,17 @@ internal sealed class CEmitter
             EmitExpression(expr);
             return;
         }
+
+        // A char becomes the one-character string, not the text of its code point — this is
+        // what "text" + c and print(c) both compile to. The int fallback would print "97".
+        if (expr.Type == TypeSymbol.Char)
+        {
+            _sb.Append("prl_char_to_string(");
+            EmitExpression(expr);
+            _sb.Append(")");
+            return;
+        }
+
         var fn = expr.Type == TypeSymbol.Bool ? "prl_bool_to_string"
                : IsIntegerType(expr.Type) ? "prl_int_to_string"
                : IsFloatType(expr.Type) ? "prl_float_to_string"
@@ -1049,14 +1065,19 @@ internal sealed class CEmitter
         else _sb.Append(")");
     }
 
-    // The binder inserts an implicit conversion/cast to `any` around values passed to
-    // print(), length(), etc. Look through it to reach the underlying typed value, so we
+    // The binder inserts an implicit conversion to `any` around values passed to print(),
+    // length(), etc. Look through that one conversion to reach the underlying typed value, so we
     // don't try to cast a struct (PrlString / typed array) to void*.
+    //
+    // Only conversions whose *target* is `any` qualify. Unwrapping every conversion, as this once
+    // did, also unwrapped the real ones — string(c).length() reached .len on a char and the
+    // generated C did not compile.
     private static BoundExpression UnwrapAny(BoundExpression expr)
     {
         while (true)
         {
-            if (expr is BoundConversionExpression cvt && cvt.Expression.Type != TypeSymbol.Any)
+            if (expr is BoundConversionExpression cvt && cvt.Type == TypeSymbol.Any
+                && cvt.Expression.Type != TypeSymbol.Any)
             {
                 expr = cvt.Expression;
                 continue;
@@ -1136,7 +1157,9 @@ internal sealed class CEmitter
         }
         if (ReferenceEquals(fn, BuiltInFunctions.StringCharAt))
         {
-            _sb.Append("prl_string_char_at(");
+            // charAt returns a char now, so it takes the code-unit path — prl_string_char_at
+            // allocates a one-character string, which a scalar cannot be.
+            _sb.Append("prl_string_char_code(");
             EmitExpression(args[0]); _sb.Append(", ");
             EmitExpression(args[1]); _sb.Append(")");
             return;
@@ -1401,6 +1424,7 @@ internal sealed class CEmitter
             "int64" => "int64_t",
             "uint8" => "uint8_t",
             "uint16" => "uint16_t",
+            "char" => "uint16_t",
             "uint32" => "uint32_t",
             "uint64" => "uint64_t",
             "float32" => "float",
@@ -1431,6 +1455,7 @@ internal sealed class CEmitter
             "int64" => "int64_t",
             "uint8" => "uint8_t",
             "uint16" => "uint16_t",
+            "char" => "uint16_t",
             "uint32" => "uint32_t",
             "uint64" => "uint64_t",
             "float32" => "float",
@@ -1448,7 +1473,7 @@ internal sealed class CEmitter
 
     private static bool IsIntegerType(TypeSymbol t) => t.Name is
         "int" or "int8" or "int16" or "int32" or "int64" or
-        "uint8" or "uint16" or "uint32" or "uint64";
+        "uint8" or "uint16" or "uint32" or "uint64" or "char";
 
     private static bool IsFloatType(TypeSymbol t) => t.Name is "float" or "float32" or "float64";
 

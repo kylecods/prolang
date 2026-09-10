@@ -297,6 +297,9 @@ internal sealed class Lexer
             case '"':
                 ReadString();
                 break;
+            case '\'':
+                ReadCharLiteral();
+                break;
             case '~':
                 _kind = SyntaxKind.TildeToken;
                 _position++;
@@ -379,22 +382,7 @@ internal sealed class Lexer
                 case '"':
                     if (LookAhead == '"')
                     {
-                        if (!overflowed && bufferIndex < stackBufferSize)
-                        {
-                            stackBuffer[bufferIndex++] = Current;
-                        }
-                        else if (!overflowed)
-                        {
-                            overflowed = true;
-                            _stringBuilder.Clear();
-                            _stringBuilder.Append(stackBuffer[..bufferIndex]);
-                            _stringBuilder.Append(Current);
-                            bufferIndex++;
-                        }
-                        else
-                        {
-                            _stringBuilder.Append(Current);
-                        }
+                        AppendStringChar(ref stackBuffer, ref bufferIndex, ref overflowed, '"');
                         _position += 2;
                     }
                     else
@@ -403,23 +391,11 @@ internal sealed class Lexer
                         done = true;
                     }
                     break;
+                case '\\':
+                    AppendStringChar(ref stackBuffer, ref bufferIndex, ref overflowed, ReadEscape());
+                    break;
                 default:
-                    if (!overflowed && bufferIndex < stackBufferSize)
-                    {
-                        stackBuffer[bufferIndex++] = Current;
-                    }
-                    else if (!overflowed)
-                    {
-                        overflowed = true;
-                        _stringBuilder.Clear();
-                        _stringBuilder.Append(stackBuffer[..bufferIndex]);
-                        _stringBuilder.Append(Current);
-                        bufferIndex++;
-                    }
-                    else
-                    {
-                        _stringBuilder.Append(Current);
-                    }
+                    AppendStringChar(ref stackBuffer, ref bufferIndex, ref overflowed, Current);
                     _position++;
                     break;
             }
@@ -427,6 +403,106 @@ internal sealed class Lexer
 
         _kind = SyntaxKind.StringToken;
         _value = overflowed ? _stringBuilder.ToString() : new string(stackBuffer[..bufferIndex]);
+    }
+
+    /// <summary>
+    /// Appends one character of string content, moving from the stack buffer to
+    /// <see cref="_stringBuilder"/> the first time the string outgrows it.
+    /// </summary>
+    /// <remarks>
+    /// A static helper taking the buffer by <c>ref</c> rather than a local function: a
+    /// <see cref="Span{T}"/> is a ref struct and cannot be captured by one.
+    /// </remarks>
+    private void AppendStringChar(ref Span<char> stackBuffer, ref int bufferIndex, ref bool overflowed, char c)
+    {
+        if (!overflowed && bufferIndex < stackBuffer.Length)
+        {
+            stackBuffer[bufferIndex++] = c;
+        }
+        else if (!overflowed)
+        {
+            overflowed = true;
+            _stringBuilder.Clear();
+            _stringBuilder.Append(stackBuffer[..bufferIndex]);
+            _stringBuilder.Append(c);
+            bufferIndex++;
+        }
+        else
+        {
+            _stringBuilder.Append(c);
+        }
+    }
+
+    /// <summary>
+    /// Reads a character literal, positioned on its opening quote.
+    /// </summary>
+    /// <remarks>
+    /// The value is one UTF-16 code unit, which is what <c>charAt()</c> and <c>charCode()</c>
+    /// already speak. Anything but exactly one character between the quotes — empty, several
+    /// characters, or nothing before the end of the line — reports an invalid character literal
+    /// and yields '\0' so the parser can carry on with a well-formed tree.
+    /// </remarks>
+    private void ReadCharLiteral()
+    {
+        _position++;
+
+        char value;
+        if (Current == '\\')
+        {
+            value = ReadEscape();
+        }
+        else
+        {
+            value = Current;
+            _position++;
+        }
+
+        if (Current == '\'')
+        {
+            _position++;
+            _kind = SyntaxKind.CharToken;
+            _value = value;
+        }
+        else
+        {
+            _diagnostics.ReportInvalidCharLiteral(CreateErrorLocation(1));
+            _kind = SyntaxKind.CharToken;
+            _value = '\0';
+        }
+    }
+
+    /// <summary>
+    /// Reads an escape sequence, positioned on its backslash.
+    /// </summary>
+    /// <returns>The character the sequence stands for.</returns>
+    /// <remarks>
+    /// An unknown escape reports a diagnostic and stands for the character after the backslash,
+    /// so <c>\q</c> is a 'q' with an error rather than a silently different program.
+    /// </remarks>
+    private char ReadEscape()
+    {
+        var escapeStart = _position;
+        _position++;
+        var c = Current;
+        _position++;
+
+        return c switch
+        {
+            'n' => '\n',
+            't' => '\t',
+            'r' => '\r',
+            '0' => '\0',
+            '\\' => '\\',
+            '\'' => '\'',
+            '"' => '"',
+            _ => ReportInvalidEscape(escapeStart, c),
+        };
+    }
+
+    private char ReportInvalidEscape(int escapeStart, char c)
+    {
+        _diagnostics.ReportInvalidEscapeSequence(new TextLocation(_text, new TextSpan(escapeStart, 2)), c);
+        return c;
     }
 
     private void ReadWhiteSpace()

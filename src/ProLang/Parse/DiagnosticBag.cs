@@ -108,6 +108,36 @@ public sealed class DiagnosticBag : IEnumerable<Diagnostic>
     }
 
     /// <summary>
+    /// A backslash inside a string or character literal followed by something the language
+    /// does not escape.
+    /// </summary>
+    /// <remarks>
+    /// The sequence still produces a value — the character after the backslash — so a program
+    /// with one compiles once the error is acknowledged rather than deleted. That keeps a typo
+    /// in an escape from being a silent change of meaning.
+    /// </remarks>
+    public void ReportInvalidEscapeSequence(TextLocation location, char character)
+    {
+        Report(location,
+            $"Unknown escape sequence '\\{character}'. Supported: \\n, \\t, \\r, \\0, \\\\, \\', \\\".");
+    }
+
+    /// <summary>
+    /// A single-quote literal holding anything but exactly one character.
+    /// </summary>
+    /// <remarks>
+    /// Covers empty (<c>''</c>), several characters, and an opening quote with no closing one
+    /// before the end of the line — the same situations that would report unterminated or
+    /// empty separately for strings, which a char literal cannot meaningfully be.
+    /// </remarks>
+    public void ReportInvalidCharLiteral(TextLocation location)
+    {
+        Report(location,
+            "A character literal must contain exactly one character between single quotes, "
+            + "e.g. 'a'. For a quote character write '\\'', for a backslash '\\\\'.");
+    }
+
+    /// <summary>
     /// A <c>/*</c> with no <c>*/</c>.
     /// </summary>
     /// <remarks>

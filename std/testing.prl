@@ -73,6 +73,17 @@ func t_eq_str(name: string, actual: string, expected: string) : void {
     t_fail(name, "expected " + expected + " but got " + actual)
 }
 
+/*
+ * Compares two chars, spelling both out in the failure message rather than showing a code point.
+ */
+func t_eq_char(name: string, actual: char, expected: char) : void {
+    if (actual == expected) {
+        t_pass()
+        return
+    }
+    t_fail(name, "expected '" + expected + "' but got '" + actual + "'")
+}
+
 func t_true(name: string, condition: bool) : void {
     t_eq_bool(name, condition, true)
 }

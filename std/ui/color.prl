@@ -105,14 +105,14 @@ func color_shade_channel(value: int, delta: int) : int {
  * The digit table is bound to a local first because prolang only accepts a method call on a
  * name — `"0123..".charAt(n)` on the literal itself is a parse error.
  */
-func color_hex_digit(value: int) : string {
+func color_hex_digit(value: int) : char {
     let digits: string = "0123456789ABCDEF"
     return digits.charAt(value & 15)
 }
 
 // Two hex digits for one 0-255 channel.
 func color_hex_byte(value: int) : string {
-    return color_hex_digit(value >> 4) + color_hex_digit(value)
+    return string(color_hex_digit(value >> 4)) + string(color_hex_digit(value))
 }
 
 /*

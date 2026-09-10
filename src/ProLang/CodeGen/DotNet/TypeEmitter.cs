@@ -258,6 +258,7 @@ internal sealed class TypeEmitter
             "uint16" => _references.GetRequiredType("System.UInt16"),
             "int8" => _references.GetRequiredType("System.SByte"),
             "uint8" => _references.GetRequiredType("System.Byte"),
+            "char" => _references.GetRequiredType("System.Char"),
             "int64" => _references.GetRequiredType("System.Int64"),
             "uint64" => _references.GetRequiredType("System.UInt64"),
             "float32" => _references.GetRequiredType("System.Single"),

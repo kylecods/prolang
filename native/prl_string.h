@@ -70,6 +70,21 @@ static inline INT32 prl_string_index_of(PrlString s, PrlString needle) {
 }
 
 /* ── Conversions to string ── */
+
+/*
+ * The one-character string for a char.
+ *
+ * ProLang chars are UTF-16 code units on .NET and bytes here, as charCode() has always been —
+ * the two agree over ASCII, which is the contract every generated program relies on. Storing
+ * the code unit's low byte keeps that agreement and stays byte-consistent with PrlString.
+ */
+static inline PrlString prl_char_to_string(UINT16 c) {
+    char* buf = (char*)prl_alloc(1);
+    if (!buf) return prl_string_from_lit("");
+    buf[0] = (char)c;
+    return (PrlString){buf, 1};
+}
+
 static inline PrlString prl_int_to_string(INT64 v) {
     char buf[32]; int n = snprintf(buf, sizeof(buf), "%lld", (long long)v);
     char* d = (char*)prl_alloc((UINT64)(n + 1));
@@ -78,8 +93,13 @@ static inline PrlString prl_int_to_string(INT64 v) {
     return (PrlString){d, n};
 }
 
+/*
+ * .NET's bool.ToString() prints "True"/"False", and the C backends are held to the same stdout
+ * the .NET backend produces — the C-backend tests compare both against one golden file. That is
+ * why the casing here is Title case rather than C's usual lowercase.
+ */
 static inline PrlString prl_bool_to_string(bool v) {
-    return prl_string_from_lit(v ? "true" : "false");
+    return prl_string_from_lit(v ? "True" : "False");
 }
 
 static inline PrlString prl_float_to_string(F64 v) {

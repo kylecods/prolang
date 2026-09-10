@@ -78,6 +78,10 @@ func util_pad_left(text: string, width: int) : string {
  *
  * prolang has no string-to-number conversion of any kind — `int(someString)` is a compile error,
  * because the conversion classifier has no rule from string to int — so this is written out.
+ *
+ * Each character is classified by its code: `c >= '0' && c <= '9'` and `c - '0'` for the digit
+ * value. This used to search a ten-character table once per character, which was the only way to
+ * do it before the language had a char type.
  */
 func util_parse_int(text: string, fallback: int) : int {
     let length: int = text.length()
@@ -86,18 +90,17 @@ func util_parse_int(text: string, fallback: int) : int {
         return fallback
     }
 
-    let digits: string = "0123456789"
     let total: int = 0
     let i: int = 0
 
     while (i < length) {
-        let digit: int = digits.indexOf(text.charAt(i))
+        let c: char = text.charAt(i)
 
-        if (digit < 0) {
+        if (c < '0' || c > '9') {
             return fallback
         }
 
-        total = (total * 10) + digit
+        total = (total * 10) + (c - '0')
         i = i + 1
     }
 

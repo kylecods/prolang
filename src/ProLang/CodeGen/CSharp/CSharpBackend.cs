@@ -773,6 +773,7 @@ internal sealed class CSharpBackend
             "uint8" => "byte",
             "int16" => "short",
             "uint16" => "ushort",
+            "char" => "char",
             "int64" => "long",
             "uint64" => "ulong",
             "float32" => "float",

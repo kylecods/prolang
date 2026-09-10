@@ -51,7 +51,8 @@ internal sealed class Conversion
              from == TypeSymbol.Any  || from == TypeSymbol.UInt8 ||
              from == TypeSymbol.Int8 || from == TypeSymbol.UInt16||
              from == TypeSymbol.Int16|| from == TypeSymbol.UInt32||
-             from == TypeSymbol.Int64|| from == TypeSymbol.UInt64))
+             from == TypeSymbol.Int64|| from == TypeSymbol.UInt64 ||
+             from == TypeSymbol.Char))
             return Explicit;
 
         // Implicit signed-integer widenings
@@ -130,7 +131,8 @@ internal sealed class Conversion
 
     private static bool IsInteger(TypeSymbol t) =>
         t == TypeSymbol.Int   || t == TypeSymbol.Int8  || t == TypeSymbol.Int16 || t == TypeSymbol.Int64  ||
-        t == TypeSymbol.UInt8 || t == TypeSymbol.UInt16|| t == TypeSymbol.UInt32|| t == TypeSymbol.UInt64;
+        t == TypeSymbol.UInt8 || t == TypeSymbol.UInt16|| t == TypeSymbol.UInt32|| t == TypeSymbol.UInt64 ||
+        t == TypeSymbol.Char;
 
     private static bool IsFloat(TypeSymbol t) =>
         t == TypeSymbol.Float || t == TypeSymbol.Float32 || t == TypeSymbol.Float64;

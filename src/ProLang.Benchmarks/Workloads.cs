@@ -59,7 +59,7 @@ public static class Workloads
 
         sb.AppendLine("import \"io\"");
         sb.AppendLine();
-        sb.AppendLine("func countChar(text: string, ch: string) : int {");
+        sb.AppendLine("func countChar(text: string, ch: char) : int {");
         sb.AppendLine("    let count: int = 0");
         sb.AppendLine("    let i: int = 0");
         sb.AppendLine("    while(i < text.length()) {");
@@ -75,14 +75,14 @@ public static class Workloads
         for (var i = 0; i < 8; i++)
         {
             sb.AppendLine($"func process{i}(text: string) : int {{");
-            sb.AppendLine("    return countChar(text, \"a\") + countChar(text, \"b\")");
+            sb.AppendLine("    return countChar(text, 'a') + countChar(text, 'b')");
             sb.AppendLine("}");
         }
 
         sb.AppendLine();
         sb.AppendLine("func main() {");
         sb.AppendLine("    let input: string = \"hello world hello\"");
-        sb.AppendLine("    let count: int = countChar(input, \"l\")");
+        sb.AppendLine("    let count: int = countChar(input, 'l')");
         sb.AppendLine("    print(count)");
         sb.AppendLine("}");
 

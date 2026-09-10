@@ -3212,6 +3212,11 @@ internal sealed class Binder
                 return new BoundLiteralExpression((ushort)v);
             }
 
+            if (type == TypeSymbol.Char && v >= 0 && v <= char.MaxValue)
+            {
+                return new BoundLiteralExpression((char)v);
+            }
+
             if (type == TypeSymbol.UInt64 && (ulong)v >= ulong.MinValue && (ulong)v <= ulong.MaxValue) 
             {
                 return new BoundLiteralExpression((ulong)v);

@@ -143,11 +143,25 @@ namespace ProLang.Symbols;
                 case string s:
                     writer.WriteString($"\"{s}\"");
                     break;
+                case char c:
+                    writer.WriteString($"'{EscapeChar(c)}'");
+                    break;
                 default:
                     writer.WriteNumber(value.ToString() ?? string.Empty);
                     break;
             }
         }
+
+        private static string EscapeChar(char c) => c switch
+        {
+            '\'' => "\\'",
+            '\\' => "\\\\",
+            '\n' => "\\n",
+            '\t' => "\\t",
+            '\r' => "\\r",
+            '\0' => "\\0",
+            _ => c.ToString(),
+        };
 
         private static void WriteTypeTo(TypeSymbol symbol, TextWriter writer)
         {

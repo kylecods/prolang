@@ -17,6 +17,7 @@ so an application's own modules and the library's never collide.
 | Module | |
 |---|---|
 | `util` | integer helpers the ~25-function builtin library does not have: `util_abs`, `util_clamp`, `util_floor_div`, `util_pad_left`, `util_parse_int` |
+| `char` | ASCII helpers for the `char` type: `char_is_digit`, `char_digit_value`, `char_is_alpha`, `char_to_upper`, `char_is_whitespace`, and friends |
 | `intstack` | an explicit stack of ints, for algorithms that cannot recurse |
 | `dynarray` | a growable array, generic |
 | `testing` | the test harness: a `TestRun` tally threaded through checks, failed by the `assert` builtin |

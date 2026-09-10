@@ -136,7 +136,7 @@ Only two shapes remain hand-emitted:
 |---|---|
 | `Output` | `Initialize` / `Write` / `Flush` — buffers `print()` and flushes at exit |
 | `ConsoleOps` | Console module, including the output-redirection guards |
-| `StringOps` | `CharAt`, `Substring` — the two whose ProLang semantics differ from .NET's |
+| `StringOps` | `CharAt` / `CharCode` / `Substring` — indexing text is unit-based and substring's end is exclusive — plus the `From` overloads `string(x)` compiles to |
 | `MathOps` | `Random` |
 
 It is read with Cecil for reference resolution and **never loaded into the compiler's process**.

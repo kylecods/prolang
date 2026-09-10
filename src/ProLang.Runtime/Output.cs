@@ -62,6 +62,15 @@ public static class Output
     /// <inheritdoc cref="Write(object?)"/>
     public static void Write(double value) => Buffer.AppendLine(value.ToString());
 
+    /// <summary>
+    /// Appends the character itself, not its code point.
+    /// </summary>
+    /// <remarks>
+    /// A char rides the IL stack in int32 form, so it could take the int overload — but then
+    /// <c>print('a')</c> would output 97, which is never what anyone meant by printing a character.
+    /// </remarks>
+    public static void Write(char value) => Buffer.AppendLine(value.ToString());
+
     /// <summary>Writes everything buffered so far to stdout and empties the buffer.</summary>
     /// <remarks>
     /// Emptying matters: <see cref="ConsoleOps"/> flushes through here before writing directly,

@@ -28,6 +28,7 @@ public sealed class CBackendTests
 {
     public static TheoryData<string> CCompatiblePrograms =>
     [
+        "tests/language/char-literals.prl",
         "tests/language/imp/imp-blocks.prl",
         "tests/language/classes/recursive.prl",
         "tests/language/classes/reference-semantics.prl",

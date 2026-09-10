@@ -41,8 +41,8 @@ func test_color_run() : void {
     t_true("green reads brighter than blue",
                color_luma(color_rgb(0, 255, 0)) > color_luma(color_rgb(0, 0, 255)))
 
-    t_eq_str("hex digit low", color_hex_digit(0), "0")
-    t_eq_str("hex digit high", color_hex_digit(15), "F")
+    t_eq_char("hex digit low", color_hex_digit(0), '0')
+    t_eq_char("hex digit high", color_hex_digit(15), 'F')
     t_eq_str("hex byte pads", color_hex_byte(5), "05")
     t_eq_str("hex byte full", color_hex_byte(255), "FF")
     t_eq_str("hex of red", color_hex(color_rgb(220, 50, 47)), "#DC322F")
