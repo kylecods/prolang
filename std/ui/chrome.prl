@@ -63,7 +63,7 @@ func chrome_palette(canvasId: int, bitmapId: int, strip: Document, cell: int, co
  *
  * Drawn `supersample` times larger and averaged down, which is where the smooth edges come from.
  * Nothing in ui/shape or ui/icons knows this is happening: they write solid pixels, and every
- * intermediate shade in the finished glyph is produced here by doc_downsample_into.
+ * intermediate shade in the finished glyph is produced here by `Document->downsample_into`.
  *
  * Supersampling rather than an anti-aliasing rasteriser because it is a dozen lines that apply to
  * every shape at once, including the places where two of them overlap. A rasteriser that computed
@@ -74,11 +74,11 @@ func chrome_palette(canvasId: int, bitmapId: int, strip: Document, cell: int, co
  * background — hover, pressed, selected — show through the glyph.
  */
 func chrome_icon_bitmap(icon: int, ink: int, accent: int, pixels: int, supersample: int) : int {
-    let oversized: Document = doc_new(pixels * supersample, pixels * supersample, 0)
+    let oversized: Document = Document->new(pixels * supersample, pixels * supersample, 0)
     icon_draw(oversized, icon, ink, accent)
 
-    let glyph: Document = doc_new(pixels, pixels, 0)
-    doc_downsample_into(oversized, glyph, supersample)
+    let glyph: Document = Document->new(pixels, pixels, 0)
+    oversized->downsample_into(glyph, supersample)
 
     let bitmap: int = WinFormsHelper.CreateBitmap(glyph.width, glyph.height)
     WinFormsHelper.SetPixels(bitmap, glyph.pixels, glyph.width, glyph.height)
@@ -178,8 +178,8 @@ func chrome_bitmap_from(doc: Document) : int {
  * here; the smoothing happens on the way out, exactly as it does for a toolbar glyph.
  */
 func chrome_bitmap_downsampled(oversized: Document, pixels: int, supersample: int) : int {
-    let reduced: Document = doc_new(pixels, pixels, 0)
-    doc_downsample_into(oversized, reduced, supersample)
+    let reduced: Document = Document->new(pixels, pixels, 0)
+    oversized->downsample_into(reduced, supersample)
     return chrome_bitmap_from(reduced)
 }
 

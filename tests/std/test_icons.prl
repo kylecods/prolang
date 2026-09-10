@@ -19,7 +19,7 @@ import "ui/color"
 
 // How many pixels of `glyph` are not transparent.
 func test_icons_painted(glyph: Document) : int {
-    return doc_pixel_count(glyph) - doc_count_colour(glyph, 0)
+    return glyph->pixel_count() - glyph->count_colour(0)
 }
 
 /*
@@ -34,10 +34,10 @@ func test_icons_border(glyph: Document) : int {
     let i: int = 0
 
     while (i <= last) {
-        if (doc_get(glyph, i, 0) != 0)    { touched = touched + 1 }
-        if (doc_get(glyph, i, last) != 0) { touched = touched + 1 }
-        if (doc_get(glyph, 0, i) != 0)    { touched = touched + 1 }
-        if (doc_get(glyph, last, i) != 0) { touched = touched + 1 }
+        if (glyph->get(i, 0) != 0)    { touched = touched + 1 }
+        if (glyph->get(i, last) != 0) { touched = touched + 1 }
+        if (glyph->get(0, i) != 0)    { touched = touched + 1 }
+        if (glyph->get(last, i) != 0) { touched = touched + 1 }
         i = i + 1
     }
 
@@ -58,7 +58,7 @@ func test_icons_run() : void {
     t_true("the set has one stroke weight", icon_stroke_width() > 0)
 
     // The unit conversion is what makes the set resolution independent, so it is checked first.
-    let probe: Document = doc_new(96, 96, 0)
+    let probe: Document = Document->new(96, 96, 0)
     t_eq_int("a unit scales with the target", icon_u(probe, 24), 48)
     t_eq_int("the origin stays the origin", icon_u(probe, 0), 0)
     t_eq_int("the far edge stays the far edge", icon_u(probe, icon_grid()), 96)
@@ -74,7 +74,7 @@ func test_icons_run() : void {
 
     let i: int = 0
     while (i < icon_count()) {
-        let glyph: Document = doc_new(size, size, 0)
+        let glyph: Document = Document->new(size, size, 0)
         icon_draw(glyph, i, ink, accent)
 
         let painted: int = test_icons_painted(glyph)
@@ -99,17 +99,17 @@ func test_icons_run() : void {
 
         // Only the two colours it was handed, plus transparency. A stray colour means something
         // was drawn with a hardcoded value that will not follow the theme.
-        if ((doc_count_colour(glyph, ink) + doc_count_colour(glyph, accent) + doc_count_colour(glyph, 0))
+        if ((glyph->count_colour(ink) + glyph->count_colour(accent) + glyph->count_colour(0))
             == area) {
             correctColours = correctColours + 1
         }
 
         // Both colours, not just one. An icon drawn entirely in ink would not respond to a theme's
         // accent, and one drawn entirely in accent would not read as part of the set.
-        if (doc_count_colour(glyph, accent) > 0) {
+        if (glyph->count_colour(accent) > 0) {
             usesAccent = usesAccent + 1
         }
-        if (doc_count_colour(glyph, ink) > 0) {
+        if (glyph->count_colour(ink) > 0) {
             usesInk = usesInk + 1
         }
 
@@ -140,10 +140,10 @@ func test_icons_run() : void {
 
     let s: int = 0
     while (s < icon_count()) {
-        let small: Document = doc_new(size, size, 0)
+        let small: Document = Document->new(size, size, 0)
         icon_draw(small, s, ink, accent)
 
-        let large: Document = doc_new(big, big, 0)
+        let large: Document = Document->new(big, big, 0)
         icon_draw(large, s, ink, accent)
 
         // Compared as parts per thousand of the box, so the two sizes are directly comparable.
@@ -160,7 +160,7 @@ func test_icons_run() : void {
 
     // A glyph an eighth of the size still draws rather than collapsing to nothing, which is what
     // would happen if a unit conversion truncated a whole shape away.
-    let tiny: Document = doc_new(size / 8, size / 8, 0)
+    let tiny: Document = Document->new(size / 8, size / 8, 0)
     icon_draw(tiny, Icon.SAVE, ink, accent)
     t_true("an icon survives a very small target", test_icons_painted(tiny) > 0)
 
@@ -169,15 +169,15 @@ func test_icons_run() : void {
     let duplicateIcons: int = 0
     let x: int = 0
     while (x < icon_count()) {
-        let first: Document = doc_new(size, size, 0)
+        let first: Document = Document->new(size, size, 0)
         icon_draw(first, x, ink, accent)
 
         let y: int = x + 1
         while (y < icon_count()) {
-            let second: Document = doc_new(size, size, 0)
+            let second: Document = Document->new(size, size, 0)
             icon_draw(second, y, ink, accent)
 
-            if (doc_equals(first, second)) {
+            if (first->equals(second)) {
                 duplicateIcons = duplicateIcons + 1
             }
 
@@ -190,15 +190,15 @@ func test_icons_run() : void {
     // The two arrows are mirror images and the pairs of tool icons differ only in their fill, so
     // they are the ones most likely to come out the same. Checked by name rather than trusting the
     // sweep above to have covered them.
-    let undo: Document = doc_new(size, size, 0)
+    let undo: Document = Document->new(size, size, 0)
     icon_draw(undo, Icon.UNDO, ink, accent)
-    let redo: Document = doc_new(size, size, 0)
+    let redo: Document = Document->new(size, size, 0)
     icon_draw(redo, Icon.REDO, ink, accent)
-    t_false("undo and redo differ", doc_equals(undo, redo))
+    t_false("undo and redo differ", undo->equals(redo))
 
-    let hollow: Document = doc_new(size, size, 0)
+    let hollow: Document = Document->new(size, size, 0)
     icon_draw(hollow, Icon.RECT, ink, accent)
-    let solid: Document = doc_new(size, size, 0)
+    let solid: Document = Document->new(size, size, 0)
     icon_draw(solid, Icon.RECT_FILLED, ink, accent)
     t_true("the filled rectangle is the fuller of the two",
                test_icons_painted(solid) > test_icons_painted(hollow))
@@ -206,20 +206,20 @@ func test_icons_run() : void {
     // ── Theming ──────────────────────────────────────────────────────────────
     // Recolouring is what makes a theme switch work: the same icon drawn with different colours
     // must come out different, and must not retain any of the old ones.
-    let blue: Document = doc_new(size, size, 0)
+    let blue: Document = Document->new(size, size, 0)
     icon_draw(blue, Icon.SAVE, ink, accent)
 
-    let red: Document = doc_new(size, size, 0)
+    let red: Document = Document->new(size, size, 0)
     icon_draw(red, Icon.SAVE, color_rgb(0, 0, 0), color_rgb(255, 0, 0))
 
-    t_false("recolouring changes the icon", doc_equals(blue, red))
-    t_eq_int("recolouring leaves no old accent", doc_count_colour(red, accent), 0)
-    t_eq_int("recolouring leaves no old ink", doc_count_colour(red, ink), 0)
+    t_false("recolouring changes the icon", blue->equals(red))
+    t_eq_int("recolouring leaves no old accent", red->count_colour(accent), 0)
+    t_eq_int("recolouring leaves no old ink", red->count_colour(ink), 0)
     t_eq_int("recolouring changes nothing else",
                  test_icons_painted(red), test_icons_painted(blue))
 
     // An unknown icon id draws nothing rather than falling through to some other picture.
-    let unknown: Document = doc_new(size, size, 0)
+    let unknown: Document = Document->new(size, size, 0)
     icon_draw(unknown, 99, ink, accent)
     t_eq_int("unknown icon draws nothing", test_icons_painted(unknown), 0)
 }

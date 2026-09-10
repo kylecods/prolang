@@ -121,7 +121,7 @@ let bitmaps: array<int> = array_new(sizes.length())
 
 let i: int = 0
 while (i < sizes.length()) {
-    let oversized: Document = doc_new(sizes[i] * 4, sizes[i] * 4, 0)
+    let oversized: Document = Document->new(sizes[i] * 4, sizes[i] * 4, 0)
     my_icon_draw(oversized)                                    // your artwork, any ui/shape calls
     bitmaps[i] = chrome_bitmap_downsampled(oversized, sizes[i], 4)
     i = i + 1
@@ -151,7 +151,7 @@ restoring exactly those.
 
 `ui/shape` draws interfaces. It has none of that and wants the opposite: smooth edges at whatever
 size the display happens to be. It writes only solid pixels; smoothness comes from drawing several
-times oversized and averaging down through `doc_downsample_into`, which is why `ui/icons` looks
+times oversized and averaging down through `Document->downsample_into`, which is why `ui/icons` looks
 right at 100%, 150% and 200% from one description.
 
 ## Writing an application against it
@@ -164,10 +164,10 @@ import "ui/color"
 
 func main()
 {
-    let canvas: Document = doc_new(32, 32, 0)
+    let canvas: Document = Document->new(32, 32, 0)
     shape_disc(canvas, 16, 16, 10, color_rgb(255, 0, 0))
 
-    print("painted " + (doc_pixel_count(canvas) - doc_count_colour(canvas, 0)) + " pixels")
+    print("painted " + (canvas->pixel_count() - canvas->count_colour(0)) + " pixels")
 }
 ```
 

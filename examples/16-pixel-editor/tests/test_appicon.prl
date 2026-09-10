@@ -18,7 +18,7 @@ import "ui/color"
 import "ui/theme"
 
 func test_appicon_painted(glyph: Document) : int {
-    return doc_pixel_count(glyph) - doc_count_colour(glyph, 0)
+    return glyph->pixel_count() - glyph->count_colour(0)
 }
 
 func test_appicon_run() : void {
@@ -29,35 +29,35 @@ func test_appicon_run() : void {
     let size: int = 48
     let area: int = size * size
 
-    let icon: Document = doc_new(size, size, 0)
+    let icon: Document = Document->new(size, size, 0)
     appicon_draw(icon, base, body, edge)
 
     // ── A tile, not a glyph ──────────────────────────────────────────────────
     // It brings its own background, because it sits on a desktop or a taskbar that may be any
     // colour. A toolbar glyph is the opposite and must leave the button showing through.
     t_true("the icon fills most of its box", (test_appicon_painted(icon) * 4) > (area * 3))
-    t_true("the middle is painted", doc_get(icon, size / 2, size / 2) != 0)
+    t_true("the middle is painted", icon->get(size / 2, size / 2) != 0)
 
     // Rounded corners: the very corner pixel is outside the tile and stays clear. A square icon
     // reads as a screenshot rather than as an application.
-    t_eq_int("the top-left corner is cut", doc_get(icon, 0, 0), 0)
-    t_eq_int("the top-right corner is cut", doc_get(icon, size - 1, 0), 0)
-    t_eq_int("the bottom-left corner is cut", doc_get(icon, 0, size - 1), 0)
-    t_eq_int("the bottom-right corner is cut", doc_get(icon, size - 1, size - 1), 0)
+    t_eq_int("the top-left corner is cut", icon->get(0, 0), 0)
+    t_eq_int("the top-right corner is cut", icon->get(size - 1, 0), 0)
+    t_eq_int("the bottom-left corner is cut", icon->get(0, size - 1), 0)
+    t_eq_int("the bottom-right corner is cut", icon->get(size - 1, size - 1), 0)
 
     // ── All three colours, and only those ────────────────────────────────────
-    t_true("the tile is drawn", doc_count_colour(icon, base) > 0)
-    t_true("the body of the staircase is drawn", doc_count_colour(icon, body) > 0)
-    t_true("the leading edge is drawn", doc_count_colour(icon, edge) > 0)
+    t_true("the tile is drawn", icon->count_colour(base) > 0)
+    t_true("the body of the staircase is drawn", icon->count_colour(body) > 0)
+    t_true("the leading edge is drawn", icon->count_colour(edge) > 0)
 
     t_eq_int("no colour it was not given",
-                 doc_count_colour(icon, base) + doc_count_colour(icon, body)
-                 + doc_count_colour(icon, edge) + doc_count_colour(icon, 0),
+                 icon->count_colour(base) + icon->count_colour(body)
+                 + icon->count_colour(edge) + icon->count_colour(0),
                  area)
 
     // The edge is the larger of the two block colours: three blocks against two.
     t_true("the edge outweighs the body",
-               doc_count_colour(icon, edge) > doc_count_colour(icon, body))
+               icon->count_colour(edge) > icon->count_colour(body))
 
     // ── The staircase climbs ─────────────────────────────────────────────────
     /*
@@ -66,9 +66,9 @@ func test_appicon_run() : void {
      */
     let half: int = appicon_block() / 2
 
-    let lowLeft: int = doc_get(icon, appicon_step(0) + half, appicon_step(2) + half)
-    let middle: int = doc_get(icon, appicon_step(1) + half, appicon_step(1) + half)
-    let topRight: int = doc_get(icon, appicon_step(2) + half, appicon_step(0) + half)
+    let lowLeft: int = icon->get(appicon_step(0) + half, appicon_step(2) + half)
+    let middle: int = icon->get(appicon_step(1) + half, appicon_step(1) + half)
+    let topRight: int = icon->get(appicon_step(2) + half, appicon_step(0) + half)
 
     t_eq_int("the staircase starts at the bottom left", lowLeft, edge)
     t_eq_int("it steps through the middle", middle, edge)
@@ -77,15 +77,15 @@ func test_appicon_run() : void {
     // And the two cells below the diagonal are the body colour, which is what makes it a stepped
     // edge rather than three loose blocks.
     t_eq_int("the body fills below the first step",
-                 doc_get(icon, appicon_step(1) + half, appicon_step(2) + half), body)
+                 icon->get(appicon_step(1) + half, appicon_step(2) + half), body)
     t_eq_int("the body fills below the second step",
-                 doc_get(icon, appicon_step(2) + half, appicon_step(1) + half), body)
+                 icon->get(appicon_step(2) + half, appicon_step(1) + half), body)
 
     // The cells above the diagonal are the tile, not a block.
     t_eq_int("nothing above the first step",
-                 doc_get(icon, appicon_step(0) + half, appicon_step(1) + half), base)
+                 icon->get(appicon_step(0) + half, appicon_step(1) + half), base)
     t_eq_int("nothing above the second step",
-                 doc_get(icon, appicon_step(1) + half, appicon_step(0) + half), base)
+                 icon->get(appicon_step(1) + half, appicon_step(0) + half), base)
 
     // ── The same picture at every size ───────────────────────────────────────
     /*
@@ -106,7 +106,7 @@ func test_appicon_run() : void {
     let i: int = 0
     while (i < sizes.length()) {
         let side: int = sizes[i]
-        let other: Document = doc_new(side, side, 0)
+        let other: Document = Document->new(side, side, 0)
         appicon_draw(other, base, body, edge)
 
         let share: int = (test_appicon_painted(other) * 1000) / (side * side)
@@ -122,20 +122,20 @@ func test_appicon_run() : void {
     t_eq_int("every size covers the same share", consistent, checked)
 
     // Even at sixteen pixels the staircase is still three distinguishable blocks.
-    let small: Document = doc_new(16, 16, 0)
+    let small: Document = Document->new(16, 16, 0)
     appicon_draw(small, base, body, edge)
-    t_true("the edge survives at sixteen pixels", doc_count_colour(small, edge) > 8)
-    t_true("the body survives at sixteen pixels", doc_count_colour(small, body) > 4)
+    t_true("the edge survives at sixteen pixels", small->count_colour(edge) > 8)
+    t_true("the body survives at sixteen pixels", small->count_colour(body) > 4)
 
     // ── Recolouring ──────────────────────────────────────────────────────────
     // The window icon is redrawn on every theme change, so the colours must actually be used
     // rather than baked in.
-    let paper: Document = doc_new(size, size, 0)
+    let paper: Document = Document->new(size, size, 0)
     appicon_draw(paper,
                  theme_background(Theme.PAPER),
                  theme_text_dim(Theme.PAPER),
                  theme_accent(Theme.PAPER))
 
-    t_false("another theme gives another icon", doc_equals(icon, paper))
-    t_eq_int("no colour from the old theme survives", doc_count_colour(paper, edge), 0)
+    t_false("another theme gives another icon", icon->equals(paper))
+    t_eq_int("no colour from the old theme survives", paper->count_colour(edge), 0)
 }

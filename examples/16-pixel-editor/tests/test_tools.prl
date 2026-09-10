@@ -34,19 +34,19 @@ func test_tools_run() : void {
     t_eq_str("unknown tool is named", tool_name(99), "unknown")
 
     // ── Pencil ───────────────────────────────────────────────────────────────
-    let doc: Document = doc_new(16, 16, paper)
-    let preview: Document = doc_clone(doc)
+    let doc: Document = Document->new(16, 16, paper)
+    let preview: Document = doc->clone()
     let s: Stroke = stroke_new(Tool.PENCIL, ink, 1)
 
     s = tool_press(s, doc, preview, log, 2, 2)
     t_true("press starts a drag", s.active)
-    t_eq_int("press paints immediately", doc_get(doc, 2, 2), ink)
+    t_eq_int("press paints immediately", doc->get(2, 2), ink)
 
     // A drag draws a line from the last position, not a dot at the new one: the mouse reports
     // discrete positions and a fast movement would otherwise leave gaps.
     s = tool_drag(s, doc, preview, log, 6, 2)
-    t_eq_int("drag fills the gap", doc_get(doc, 4, 2), ink)
-    t_eq_int("drag reaches the new point", doc_get(doc, 6, 2), ink)
+    t_eq_int("drag fills the gap", doc->get(4, 2), ink)
+    t_eq_int("drag reaches the new point", doc->get(6, 2), ink)
     t_eq_int("drag records the new position", s.lastX, 6)
     t_false("a drag does not ask for a snapshot", s.commit)
 
@@ -55,31 +55,31 @@ func test_tools_run() : void {
     t_true("release asks for a snapshot", s.commit)
 
     // ── Eraser ───────────────────────────────────────────────────────────────
-    let erased: Document = doc_new(8, 8, ink)
-    let erasedPreview: Document = doc_clone(erased)
+    let erased: Document = Document->new(8, 8, ink)
+    let erasedPreview: Document = erased->clone()
     let e: Stroke = stroke_new(Tool.ERASER, ink, 1)
 
     e = tool_press(e, erased, erasedPreview, log, 3, 3)
-    t_eq_int("eraser clears a pixel", doc_get(erased, 3, 3), 0)
-    t_eq_int("eraser leaves its neighbour", doc_get(erased, 4, 3), ink)
+    t_eq_int("eraser clears a pixel", erased->get(3, 3), 0)
+    t_eq_int("eraser leaves its neighbour", erased->get(4, 3), ink)
 
     // ── Picker ───────────────────────────────────────────────────────────────
-    let sampled: Document = doc_new(8, 8, paper)
-    doc_set(sampled, 5, 5, ink)
+    let sampled: Document = Document->new(8, 8, paper)
+    sampled->set(5, 5, ink)
     let p: Stroke = stroke_new(Tool.PICKER, paper, 1)
 
     p = tool_press(p, sampled, preview, log, 5, 5)
     t_eq_int("picker reports the colour", p.picked, ink)
     t_false("picker starts no drag", p.active)
     t_false("picker changes nothing to undo", p.commit)
-    t_eq_int("picker leaves the image alone", doc_get(sampled, 5, 5), ink)
+    t_eq_int("picker leaves the image alone", sampled->get(5, 5), ink)
 
     // ── Fill ─────────────────────────────────────────────────────────────────
-    let bucket: Document = doc_new(4, 4, paper)
+    let bucket: Document = Document->new(4, 4, paper)
     let f: Stroke = stroke_new(Tool.FILL, ink, 1)
 
     f = tool_press(f, bucket, preview, log, 0, 0)
-    t_eq_int("fill covers the region", doc_count_colour(bucket, ink), 16)
+    t_eq_int("fill covers the region", bucket->count_colour(ink), 16)
     t_true("fill asks for a snapshot", f.commit)
     t_false("fill starts no drag", f.active)
 
@@ -90,37 +90,37 @@ func test_tools_run() : void {
 
     // ── Shape preview ────────────────────────────────────────────────────────
     // The document must not change until release; only the preview does.
-    let shapeDoc: Document = doc_new(16, 16, paper)
-    let shapePreview: Document = doc_clone(shapeDoc)
-    let baseline: Document = doc_clone(shapeDoc)
+    let shapeDoc: Document = Document->new(16, 16, paper)
+    let shapePreview: Document = shapeDoc->clone()
+    let baseline: Document = shapeDoc->clone()
     let line: Stroke = stroke_new(Tool.LINE, ink, 1)
 
     line = tool_press(line, shapeDoc, shapePreview, log, 1, 1)
     t_true("shape press starts a drag", line.active)
-    t_true("shape press leaves the document alone", doc_equals(shapeDoc, baseline))
+    t_true("shape press leaves the document alone", shapeDoc->equals(baseline))
 
     line = tool_drag(line, shapeDoc, shapePreview, log, 10, 1)
-    t_true("shape drag still leaves the document alone", doc_equals(shapeDoc, baseline))
-    t_false("shape drag updates the preview", doc_equals(shapePreview, baseline))
+    t_true("shape drag still leaves the document alone", shapeDoc->equals(baseline))
+    t_false("shape drag updates the preview", shapePreview->equals(baseline))
     t_true("shape drag records what it touched", line.touched > 0)
-    t_eq_int("preview shows the line", doc_get(shapePreview, 5, 1), ink)
+    t_eq_int("preview shows the line", shapePreview->get(5, 1), ink)
 
     // Dragging elsewhere must rewind the previous preview completely, using the touch log. A
     // stale pixel left behind here is the classic rubber-banding bug.
     line = tool_drag(line, shapeDoc, shapePreview, log, 1, 10)
-    t_eq_int("old preview pixel is rewound", doc_get(shapePreview, 5, 1), paper)
-    t_eq_int("new preview pixel is drawn", doc_get(shapePreview, 1, 5), ink)
+    t_eq_int("old preview pixel is rewound", shapePreview->get(5, 1), paper)
+    t_eq_int("new preview pixel is drawn", shapePreview->get(1, 5), ink)
 
     line = tool_release(line, shapeDoc, shapePreview, log, 1, 10)
     t_false("shape release ends the drag", line.active)
     t_true("shape release asks for a snapshot", line.commit)
-    t_eq_int("release commits to the document", doc_get(shapeDoc, 1, 5), ink)
-    t_true("preview matches the document after release", doc_equals(shapePreview, shapeDoc))
+    t_eq_int("release commits to the document", shapeDoc->get(1, 5), ink)
+    t_true("preview matches the document after release", shapePreview->equals(shapeDoc))
 
     // ── Cancelling a shape ───────────────────────────────────────────────────
-    let cancelDoc: Document = doc_new(16, 16, paper)
-    let cancelPreview: Document = doc_clone(cancelDoc)
-    let cancelBase: Document = doc_clone(cancelDoc)
+    let cancelDoc: Document = Document->new(16, 16, paper)
+    let cancelPreview: Document = cancelDoc->clone()
+    let cancelBase: Document = cancelDoc->clone()
     let rect: Stroke = stroke_new(Tool.RECT, ink, 1)
 
     rect = tool_press(rect, cancelDoc, cancelPreview, log, 2, 2)
@@ -129,16 +129,16 @@ func test_tools_run() : void {
 
     t_false("cancel ends the drag", rect.active)
     t_false("cancel does not ask for a snapshot", rect.commit)
-    t_true("cancel rewinds the preview", doc_equals(cancelPreview, cancelBase))
-    t_true("cancel leaves the document alone", doc_equals(cancelDoc, cancelBase))
+    t_true("cancel rewinds the preview", cancelPreview->equals(cancelBase))
+    t_true("cancel leaves the document alone", cancelDoc->equals(cancelBase))
 
     // A drag or release without a press must do nothing.
     let idle: Stroke = stroke_new(Tool.PENCIL, ink, 1)
-    let idleDoc: Document = doc_new(8, 8, paper)
-    let idleBase: Document = doc_clone(idleDoc)
+    let idleDoc: Document = Document->new(8, 8, paper)
+    let idleBase: Document = idleDoc->clone()
 
     idle = tool_drag(idle, idleDoc, preview, log, 4, 4)
-    t_true("drag without press does nothing", doc_equals(idleDoc, idleBase))
+    t_true("drag without press does nothing", idleDoc->equals(idleBase))
     idle = tool_release(idle, idleDoc, preview, log, 4, 4)
     t_false("release without press asks for nothing", idle.commit)
 

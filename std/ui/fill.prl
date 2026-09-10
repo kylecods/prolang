@@ -25,11 +25,11 @@ import "intstack"
  * Returns the number of pixels changed, which the tests assert on and the status bar reports.
  */
 func fill_flood(doc: Document, x: int, y: int, newColour: int) : int {
-    if (!doc_in_bounds(doc, x, y)) {
+    if (!doc->in_bounds(x, y)) {
         return 0
     }
 
-    let target: int = doc_get(doc, x, y)
+    let target: int = doc->get(x, y)
 
     // Without this the fill would never terminate: recolouring to the colour already there
     // leaves every neighbour still matching, so nothing is ever excluded.
@@ -40,7 +40,7 @@ func fill_flood(doc: Document, x: int, y: int, newColour: int) : int {
     let width: int = doc.width
     let height: int = doc.height
 
-    let stack: IntStack = IntStack->new(doc_pixel_count(doc))
+    let stack: IntStack = IntStack->new(doc->pixel_count())
 
     doc.pixels[(y * width) + x] = newColour
     stack = stack->push((y * width) + x)
@@ -96,7 +96,7 @@ func fill_replace_all(doc: Document, target: int, newColour: int) : int {
         return 0
     }
 
-    let count: int = doc_pixel_count(doc)
+    let count: int = doc->pixel_count()
     let changed: int = 0
     let i: int = 0
 

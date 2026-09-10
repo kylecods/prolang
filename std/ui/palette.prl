@@ -139,7 +139,7 @@ func palette_outline_for(swatch: int) : int {
 func palette_draw(strip: Document, cell: int, columns: int, selected: int) : void {
     let log: array<int> = array_new(0)
 
-    doc_fill(strip, color_rgb(40, 40, 44))
+    strip->fill(color_rgb(40, 40, 44))
 
     let i: int = 0
     while (i < palette_count()) {

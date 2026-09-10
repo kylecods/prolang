@@ -18,7 +18,7 @@ func test_history_run() : void {
     let d: int = color_rgb(4, 0, 0)
 
     // ── Basic undo and redo ──────────────────────────────────────────────────
-    let doc: Document = doc_new(2, 2, a)
+    let doc: Document = Document->new(2, 2, a)
     let h: History = History->new(2, 2, 8)
 
     h = h->reset(doc)
@@ -27,7 +27,7 @@ func test_history_run() : void {
     t_false("nothing to undo yet", h->can_undo())
     t_false("nothing to redo yet", h->can_redo())
 
-    doc_fill(doc, b)
+    doc->fill(b)
     h = h->commit(doc)
     t_eq_int("commit adds a snapshot", h->count(), 2)
     t_eq_int("commit advances the cursor", h->cursor(), 1)
@@ -35,12 +35,12 @@ func test_history_run() : void {
     t_false("cannot redo after a commit", h->can_redo())
 
     h = h->undo(doc)
-    t_eq_int("undo restores the previous image", doc_get(doc, 0, 0), a)
+    t_eq_int("undo restores the previous image", doc->get(0, 0), a)
     t_eq_int("undo moves the cursor back", h->cursor(), 0)
     t_true("can redo after an undo", h->can_redo())
 
     h = h->redo(doc)
-    t_eq_int("redo restores the later image", doc_get(doc, 0, 0), b)
+    t_eq_int("redo restores the later image", doc->get(0, 0), b)
     t_eq_int("redo moves the cursor forward", h->cursor(), 1)
 
     // Undo and redo past the ends do nothing rather than wrapping.
@@ -50,17 +50,17 @@ func test_history_run() : void {
     h = h->undo(doc)
     h = h->undo(doc)
     t_eq_int("undo past the start is a no-op", h->cursor(), 0)
-    t_eq_int("image is still the first snapshot", doc_get(doc, 0, 0), a)
+    t_eq_int("image is still the first snapshot", doc->get(0, 0), a)
 
     // ── Committing after an undo discards the redo tail ──────────────────────
     // A new edit has to branch from the state you undid back to, not be appended after the
     // future you abandoned.
-    let branchDoc: Document = doc_new(2, 2, a)
+    let branchDoc: Document = Document->new(2, 2, a)
     let branch: History = History->new(2, 2, 8)->reset(branchDoc)
 
-    doc_fill(branchDoc, b)
+    branchDoc->fill(b)
     branch = branch->commit(branchDoc)
-    doc_fill(branchDoc, c)
+    branchDoc->fill(c)
     branch = branch->commit(branchDoc)
     t_eq_int("three snapshots recorded", branch->count(), 3)
 
@@ -68,7 +68,7 @@ func test_history_run() : void {
     t_eq_int("undone to the middle", branchDoc.pixels[0], b)
     t_true("redo is available before branching", branch->can_redo())
 
-    doc_fill(branchDoc, d)
+    branchDoc->fill(d)
     branch = branch->commit(branchDoc)
 
     // The `c` snapshot is gone. Truncating with `count = cursor` instead of `cursor + 1` would
@@ -82,17 +82,17 @@ func test_history_run() : void {
 
     // ── The ring drops the oldest entry when it is full ──────────────────────
     // Three slots hold the reset plus two commits; the fourth commit must evict.
-    let ringDoc: Document = doc_new(2, 2, a)
+    let ringDoc: Document = Document->new(2, 2, a)
     let ring: History = History->new(2, 2, 3)->reset(ringDoc)
 
-    doc_fill(ringDoc, b)
+    ringDoc->fill(b)
     ring = ring->commit(ringDoc)
-    doc_fill(ringDoc, c)
+    ringDoc->fill(c)
     ring = ring->commit(ringDoc)
     t_eq_int("ring is full", ring->count(), 3)
     t_eq_int("cursor at the tip of a full ring", ring->cursor(), 2)
 
-    doc_fill(ringDoc, d)
+    ringDoc->fill(d)
     ring = ring->commit(ringDoc)
     t_eq_int("ring stays at capacity", ring->count(), 3)
     t_eq_int("cursor stays at the tip", ring->cursor(), 2)

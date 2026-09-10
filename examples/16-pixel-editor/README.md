@@ -31,7 +31,7 @@ scheme it cannot see. These follow the theme because they are drawn from its col
 follow the display because they have no fixed size.
 
 **Smooth edges without an anti-aliasing rasteriser.** `shape.prl` only ever writes solid pixels.
-Each icon is drawn four times oversized and averaged down by `doc_downsample_into`, so every
+Each icon is drawn four times oversized and averaged down by `Document->downsample_into`, so every
 intermediate shade in the finished glyph comes from coverage rather than from any drawing code
 knowing about it. Supersampling is a dozen lines and applies to every shape at once, including
 where two of them overlap — a rasteriser computing coverage per shape would have to decide what
@@ -178,7 +178,7 @@ push a flattened record onto a queue and `app_run` pulls from it. What would be 
 inside a function changes nothing for the caller — every mutator returns a new struct instead.
 
 The exception is what makes the whole thing work: an `array<T>` field *is* a reference to a real
-CLR array, so `doc_set` writing through a `Document` parameter is visible to the caller. All the
+CLR array, so `Document->set` writing through a `Document` parameter is visible to the caller. All the
 mutable state lives in those buffers.
 
 **No `array<array<int>>`.** It does not parse — `>>` lexes as a single shift token. The undo

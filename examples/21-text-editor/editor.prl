@@ -298,10 +298,10 @@ func ed_icon_supersample() : int {
 func ed_icon_texture(act: int, ink: int, accent: int) : int {
     let size: int = ed_icon_pixel_size()
     let factor: int = ed_icon_supersample()
-    let big: Document = doc_new(size * factor, size * factor, 0)
+    let big: Document = Document->new(size * factor, size * factor, 0)
     ed_icon_draw(big, act, ink, accent)
-    let small: Document = doc_new(size, size, 0)
-    doc_downsample_into(big, small, factor)
+    let small: Document = Document->new(size, size, 0)
+    big->downsample_into(small, factor)
 
     let pixels: array<int> = array_new(size * size)
     let i: int = 0
@@ -309,7 +309,7 @@ func ed_icon_texture(act: int, ink: int, accent: int) : int {
     while (y < size) {
         let x: int = 0
         while (x < size) {
-            let c: int = doc_get(small, x, y)
+            let c: int = small->get(x, y)
             pixels[i] = color_argb(color_a(c), color_b(c), color_g(c), color_r(c))
             i = i + 1
             x = x + 1

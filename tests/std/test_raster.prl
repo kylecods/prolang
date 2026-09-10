@@ -13,11 +13,11 @@ func test_raster_run() : void {
     let log: array<int> = array_new(4096)
 
     // ── plot and the touch log ───────────────────────────────────────────────
-    let doc: Document = doc_new(8, 8, 0)
+    let doc: Document = Document->new(8, 8, 0)
 
     let n: int = raster_plot(doc, 2, 3, ink, log, 0)
     t_eq_int("plot returns an incremented count", n, 1)
-    t_eq_int("plot writes the pixel", doc_get(doc, 2, 3), ink)
+    t_eq_int("plot writes the pixel", doc->get(2, 3), ink)
     t_eq_int("plot logs the flat index", log[0], (3 * 8) + 2)
 
     // Out-of-bounds pixels are neither drawn nor logged — restoring one later would write
@@ -29,103 +29,103 @@ func test_raster_run() : void {
     let noLog: array<int> = array_new(0)
     let n3: int = raster_plot(doc, 4, 4, ink, noLog, 0)
     t_eq_int("plot with no log returns the count unchanged", n3, 0)
-    t_eq_int("plot with no log still draws", doc_get(doc, 4, 4), ink)
+    t_eq_int("plot with no log still draws", doc->get(4, 4), ink)
 
     // ── restore ──────────────────────────────────────────────────────────────
     // This is the preview mechanism: draw into a copy, then rewind exactly what was drawn.
-    let base: Document = doc_new(8, 8, other)
-    let preview: Document = doc_clone(base)
+    let base: Document = Document->new(8, 8, other)
+    let preview: Document = base->clone()
 
     let drawn: int = raster_line(preview, 0, 0, 7, 7, 1, ink, log, 0)
     t_true("line drew something", drawn > 0)
-    t_false("preview differs from base", doc_equals(preview, base))
+    t_false("preview differs from base", preview->equals(base))
 
     raster_restore(preview, base, log, drawn)
-    t_true("restore rewinds the preview exactly", doc_equals(preview, base))
+    t_true("restore rewinds the preview exactly", preview->equals(base))
 
     // ── brush ────────────────────────────────────────────────────────────────
-    let brushDoc: Document = doc_new(8, 8, 0)
+    let brushDoc: Document = Document->new(8, 8, 0)
 
     raster_brush(brushDoc, 4, 4, 1, ink, log, 0)
-    t_eq_int("size 1 brush is one pixel", doc_count_colour(brushDoc, ink), 1)
+    t_eq_int("size 1 brush is one pixel", brushDoc->count_colour(ink), 1)
 
-    doc_clear(brushDoc)
+    brushDoc->clear()
     raster_brush(brushDoc, 4, 4, 3, ink, log, 0)
-    t_eq_int("size 3 brush is nine pixels", doc_count_colour(brushDoc, ink), 9)
-    t_eq_int("size 3 brush is centred", doc_get(brushDoc, 3, 3), ink)
-    t_eq_int("size 3 brush reaches its corner", doc_get(brushDoc, 5, 5), ink)
-    t_eq_int("size 3 brush stops there", doc_get(brushDoc, 6, 6), 0)
+    t_eq_int("size 3 brush is nine pixels", brushDoc->count_colour(ink), 9)
+    t_eq_int("size 3 brush is centred", brushDoc->get(3, 3), ink)
+    t_eq_int("size 3 brush reaches its corner", brushDoc->get(5, 5), ink)
+    t_eq_int("size 3 brush stops there", brushDoc->get(6, 6), 0)
 
     // A brush at the edge is clipped, not wrapped.
-    doc_clear(brushDoc)
+    brushDoc->clear()
     raster_brush(brushDoc, 0, 0, 3, ink, log, 0)
-    t_eq_int("brush at the corner is clipped", doc_count_colour(brushDoc, ink), 4)
+    t_eq_int("brush at the corner is clipped", brushDoc->count_colour(ink), 4)
 
     // A size below 1 is treated as 1 rather than drawing nothing.
-    doc_clear(brushDoc)
+    brushDoc->clear()
     raster_brush(brushDoc, 4, 4, 0, ink, log, 0)
-    t_eq_int("size 0 brush draws one pixel", doc_count_colour(brushDoc, ink), 1)
+    t_eq_int("size 0 brush draws one pixel", brushDoc->count_colour(ink), 1)
 
     // ── lines ────────────────────────────────────────────────────────────────
-    let lineDoc: Document = doc_new(8, 8, 0)
+    let lineDoc: Document = Document->new(8, 8, 0)
 
     raster_line(lineDoc, 0, 0, 7, 0, 1, ink, log, 0)
-    t_eq_int("horizontal line length", doc_count_colour(lineDoc, ink), 8)
+    t_eq_int("horizontal line length", lineDoc->count_colour(ink), 8)
 
-    doc_clear(lineDoc)
+    lineDoc->clear()
     raster_line(lineDoc, 0, 0, 0, 7, 1, ink, log, 0)
-    t_eq_int("vertical line length", doc_count_colour(lineDoc, ink), 8)
+    t_eq_int("vertical line length", lineDoc->count_colour(ink), 8)
 
-    doc_clear(lineDoc)
+    lineDoc->clear()
     raster_line(lineDoc, 0, 0, 7, 7, 1, ink, log, 0)
-    t_eq_int("diagonal line length", doc_count_colour(lineDoc, ink), 8)
-    t_eq_int("diagonal hits the middle", doc_get(lineDoc, 4, 4), ink)
+    t_eq_int("diagonal line length", lineDoc->count_colour(ink), 8)
+    t_eq_int("diagonal hits the middle", lineDoc->get(4, 4), ink)
 
     // A degenerate line still marks its single pixel; the loop must run at least once.
-    doc_clear(lineDoc)
+    lineDoc->clear()
     raster_line(lineDoc, 3, 3, 3, 3, 1, ink, log, 0)
-    t_eq_int("zero-length line is one pixel", doc_count_colour(lineDoc, ink), 1)
+    t_eq_int("zero-length line is one pixel", lineDoc->count_colour(ink), 1)
 
     // Bresenham must be symmetric: drawing a line backwards paints the same pixels.
-    let forward: Document = doc_new(16, 16, 0)
-    let backward: Document = doc_new(16, 16, 0)
+    let forward: Document = Document->new(16, 16, 0)
+    let backward: Document = Document->new(16, 16, 0)
     raster_line(forward, 1, 2, 13, 9, 1, ink, log, 0)
     raster_line(backward, 13, 9, 1, 2, 1, ink, log, 0)
-    t_true("line is direction independent", doc_equals(forward, backward))
+    t_true("line is direction independent", forward->equals(backward))
 
     // ── rectangles ───────────────────────────────────────────────────────────
-    let rectDoc: Document = doc_new(8, 8, 0)
+    let rectDoc: Document = Document->new(8, 8, 0)
 
     // A 4x4 outline is its perimeter: 4*4 - 4 corners counted twice = 12.
     raster_rect(rectDoc, 0, 0, 3, 3, 1, ink, log, 0)
-    t_eq_int("rect outline is the perimeter", doc_count_colour(rectDoc, ink), 12)
-    t_eq_int("rect outline is hollow", doc_get(rectDoc, 1, 1), 0)
+    t_eq_int("rect outline is the perimeter", rectDoc->count_colour(ink), 12)
+    t_eq_int("rect outline is hollow", rectDoc->get(1, 1), 0)
 
-    doc_clear(rectDoc)
+    rectDoc->clear()
     raster_rect_filled(rectDoc, 0, 0, 3, 3, ink, log, 0)
-    t_eq_int("filled rect covers its area", doc_count_colour(rectDoc, ink), 16)
-    t_eq_int("filled rect has no hole", doc_get(rectDoc, 1, 1), ink)
+    t_eq_int("filled rect covers its area", rectDoc->count_colour(ink), 16)
+    t_eq_int("filled rect has no hole", rectDoc->get(1, 1), ink)
 
     // Corners are normalised, so dragging in any direction gives the same rectangle.
-    let dragged: Document = doc_new(8, 8, 0)
+    let dragged: Document = Document->new(8, 8, 0)
     raster_rect_filled(dragged, 3, 3, 0, 0, ink, log, 0)
-    t_eq_int("reversed corners give the same rect", doc_count_colour(dragged, ink), 16)
+    t_eq_int("reversed corners give the same rect", dragged->count_colour(ink), 16)
 
     // ── ellipses ─────────────────────────────────────────────────────────────
-    let ellipseDoc: Document = doc_new(16, 16, 0)
+    let ellipseDoc: Document = Document->new(16, 16, 0)
 
     raster_ellipse(ellipseDoc, 2, 2, 12, 12, 1, ink, log, 0)
-    t_true("ellipse outline draws something", doc_count_colour(ellipseDoc, ink) > 0)
-    t_eq_int("ellipse outline is hollow", doc_get(ellipseDoc, 7, 7), 0)
+    t_true("ellipse outline draws something", ellipseDoc->count_colour(ink) > 0)
+    t_eq_int("ellipse outline is hollow", ellipseDoc->get(7, 7), 0)
 
-    doc_clear(ellipseDoc)
+    ellipseDoc->clear()
     let filled: int = raster_ellipse_filled(ellipseDoc, 2, 2, 12, 12, ink, log, 0)
     t_true("filled ellipse draws more than its outline", filled > 40)
-    t_eq_int("filled ellipse has a solid centre", doc_get(ellipseDoc, 7, 7), ink)
-    t_eq_int("filled ellipse leaves its corner", doc_get(ellipseDoc, 2, 2), 0)
+    t_eq_int("filled ellipse has a solid centre", ellipseDoc->get(7, 7), ink)
+    t_eq_int("filled ellipse leaves its corner", ellipseDoc->get(2, 2), 0)
 
     // A drag with no height would divide by a zero radius; it falls back to a line instead.
-    doc_clear(ellipseDoc)
+    ellipseDoc->clear()
     raster_ellipse(ellipseDoc, 0, 5, 7, 5, 1, ink, log, 0)
-    t_true("flat ellipse degrades to a line", doc_count_colour(ellipseDoc, ink) > 0)
+    t_true("flat ellipse degrades to a line", ellipseDoc->count_colour(ink) > 0)
 }
