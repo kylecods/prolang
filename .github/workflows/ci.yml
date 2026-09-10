@@ -40,8 +40,24 @@ jobs:
 
       # The other backends share the bound program with the MSIL emitter, so a change to the
       # pipeline can break them without any .NET test noticing.
-      - name: Verify the C99 backend
+      #
+      # These two steps only check that transpiling does not crash. What actually compiles the
+      # generated C with a real compiler, runs it, and diffs its output against the same
+      # Expected/*.out golden the .NET backend asserts against is CBackendTests, in the test step
+      # above — a linux runner has gcc, so those cases run rather than skipping. That is what
+      # catches C that does not compile, which nothing here ever did: `prl_array_new_<Struct>` was
+      # emitted undefined for years, and native/strings.h called GCC builtins that MSVC has no
+      # symbol for.
+      - name: Verify the C99 backend transpiles
         run: dotnet run --project src/ProLang/ProLang.csproj -c Release --no-build -- examples/02-operators/02_operators.prl --emit-c
 
-      - name: Verify the PSP backend
+      - name: Verify the PSP backend transpiles
         run: dotnet run --project src/ProLang/ProLang.csproj -c Release --no-build -- examples/03-control-flow/03_control_flow.prl --emit-psp
+
+      # Belt and braces for the C path: compile one transpiled program by hand, so a failure here
+      # points at the C toolchain rather than at a test.
+      - name: Compile the transpiled C
+        run: |
+          dotnet run --project src/ProLang/ProLang.csproj -c Release --no-build -- tests/language/classes/recursive.prl --emit-c
+          gcc -std=c99 -w .prolang/artifacts/recursive.c -o /tmp/recursive
+          /tmp/recursive

@@ -24,7 +24,7 @@ import "util"
  * pixels are dropped and not recorded — restoring one later would write outside the buffer.
  */
 func raster_plot(doc: Document, x: int, y: int, colour: int, touched: array<int>, count: int) : int {
-    let index: int = doc_index(doc, x, y)
+    let index: int = doc->index(x, y)
 
     if (index < 0) {
         return count
@@ -52,7 +52,7 @@ func raster_restore(target: Document, source: Document, touched: array<int>, cou
     while (i < limit) {
         let index: int = touched[i]
 
-        if (index >= 0 && index < doc_pixel_count(target)) {
+        if (index >= 0 && index < target->pixel_count()) {
             target.pixels[index] = source.pixels[index]
         }
 

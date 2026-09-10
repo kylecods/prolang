@@ -3,7 +3,7 @@
  *
  * ── The clock is a parameter, not a call ─────────────────────────────────────
  *
- * `fps_sample` is handed the time; only `fps_tick` reads the clock. That split is the same one
+ * `sample` is handed the time; only `tick` reads the clock. That split is the same one
  * `ui/font` makes with text metrics, and for the same reason: the arithmetic — averaging over a
  * window, spotting the worst frame, dividing without tripping over a zero — is the part that can be
  * wrong, and it is testable only if it does not reach for a clock of its own.
@@ -25,12 +25,6 @@
 
 import "console"
 
-// How long each measurement window lasts. Half a second is long enough for the number to be steady
-// and short enough to respond when something changes.
-func fps_window_ms() : int {
-    return 500
-}
-
 /*
  * Slots in the counter's state.
  *
@@ -49,108 +43,116 @@ enum FpsS {
     PEAK            // worst frame in the window last published
 }
 
-func fps_slots() : int {
-    return 8
-}
-
 struct Fps {
     st: array<int>
 }
 
-func fps_new() : Fps {
-    return Fps { st: array_new(fps_slots()) }
-}
-
-/*
- * Records a frame that finished at `now`.
- *
- * The first call only establishes a starting point: there is no interval before it, and counting it
- * as a frame would make the first window report one frame too many.
- */
-func fps_sample(fps: Fps, now: int) : void {
-    if (fps.st[FpsS.STARTED] == 0) {
-        fps.st[FpsS.STARTED] = 1
-        fps.st[FpsS.WINDOW_START] = now
-        fps.st[FpsS.LAST_TIME] = now
-        fps.st[FpsS.FRAMES] = 0
-        fps.st[FpsS.PEAK_ACC] = 0
-
-        return
+imp Fps {
+    // How long each measurement window lasts. Half a second is long enough for the number to be steady
+    // and short enough to respond when something changes.
+    func window_ms() : int {
+        return 500
     }
 
-    // Subtraction rather than comparison, so a clock that has wrapped past its 32-bit end still
-    // yields the right interval — two's complement makes the difference come out correctly for any
-    // interval shorter than the wrap period.
-    let frameMs: int = now - fps.st[FpsS.LAST_TIME]
-
-    fps.st[FpsS.LAST_TIME] = now
-    fps.st[FpsS.FRAME_MS] = frameMs
-    fps.st[FpsS.FRAMES] = fps.st[FpsS.FRAMES] + 1
-
-    if (frameMs > fps.st[FpsS.PEAK_ACC]) {
-        fps.st[FpsS.PEAK_ACC] = frameMs
+    func slots() : int {
+        return 8
     }
 
-    let elapsed: int = now - fps.st[FpsS.WINDOW_START]
-
-    if (elapsed < fps_window_ms()) {
-        return
+    func new() : Fps {
+        return Fps { st: array_new(Fps->slots()) }
     }
 
-    // Rounded rather than truncated: at a steady 60 the elapsed time is rarely an exact multiple of
-    // the frame time, and truncating leaves the counter reading 59 almost all the time.
-    fps.st[FpsS.VALUE] = ((fps.st[FpsS.FRAMES] * 1000) + (elapsed / 2)) / elapsed
-    fps.st[FpsS.PEAK] = fps.st[FpsS.PEAK_ACC]
+    /*
+     * Records a frame that finished at `now`.
+     *
+     * The first call only establishes a starting point: there is no interval before it, and counting it
+     * as a frame would make the first window report one frame too many.
+     */
+    func sample(self: Fps, now: int) : void {
+        if (self.st[FpsS.STARTED] == 0) {
+            self.st[FpsS.STARTED] = 1
+            self.st[FpsS.WINDOW_START] = now
+            self.st[FpsS.LAST_TIME] = now
+            self.st[FpsS.FRAMES] = 0
+            self.st[FpsS.PEAK_ACC] = 0
 
-    fps.st[FpsS.FRAMES] = 0
-    fps.st[FpsS.PEAK_ACC] = 0
-    fps.st[FpsS.WINDOW_START] = now
-}
+            return
+        }
 
-// Records a frame that finished now. The only part of this module that touches a clock.
-func fps_tick(fps: Fps) : void {
-    fps_sample(fps, time_millis())
-}
+        // Subtraction rather than comparison, so a clock that has wrapped past its 32-bit end still
+        // yields the right interval — two's complement makes the difference come out correctly for any
+        // interval shorter than the wrap period.
+        let frameMs: int = now - self.st[FpsS.LAST_TIME]
 
-// Frames per second, or 0 before the first window has closed.
-func fps_value(fps: Fps) : int {
-    return fps.st[FpsS.VALUE]
-}
+        self.st[FpsS.LAST_TIME] = now
+        self.st[FpsS.FRAME_MS] = frameMs
+        self.st[FpsS.FRAMES] = self.st[FpsS.FRAMES] + 1
 
-// Whether a rate has been measured yet. False for the first half-second of a program.
-func fps_ready(fps: Fps) : bool {
-    return fps.st[FpsS.VALUE] > 0
-}
+        if (frameMs > self.st[FpsS.PEAK_ACC]) {
+            self.st[FpsS.PEAK_ACC] = frameMs
+        }
 
-// How long the most recent frame took, in milliseconds.
-func fps_frame_ms(fps: Fps) : int {
-    return fps.st[FpsS.FRAME_MS]
-}
+        let elapsed: int = now - self.st[FpsS.WINDOW_START]
 
-// The worst frame of the last completed window — the stutter an average would hide.
-func fps_peak_ms(fps: Fps) : int {
-    return fps.st[FpsS.PEAK]
-}
+        if (elapsed < Fps->window_ms()) {
+            return
+        }
 
-/*
- * The counter as a line of text, ready for `ui_text`.
- *
- * Reads "--" rather than "0" until a window has closed, because a program that has just started has
- * not measured nothing, it has not measured yet.
- */
-func fps_text(fps: Fps) : string {
-    if (!fps_ready(fps)) {
-        return "-- fps"
+        // Rounded rather than truncated: at a steady 60 the elapsed time is rarely an exact multiple of
+        // the frame time, and truncating leaves the counter reading 59 almost all the time.
+        self.st[FpsS.VALUE] = ((self.st[FpsS.FRAMES] * 1000) + (elapsed / 2)) / elapsed
+        self.st[FpsS.PEAK] = self.st[FpsS.PEAK_ACC]
+
+        self.st[FpsS.FRAMES] = 0
+        self.st[FpsS.PEAK_ACC] = 0
+        self.st[FpsS.WINDOW_START] = now
     }
 
-    return "" + fps_value(fps) + " fps"
-}
-
-// The same with the worst frame alongside it, which is what shows a stutter.
-func fps_text_detailed(fps: Fps) : string {
-    if (!fps_ready(fps)) {
-        return "-- fps"
+    // Records a frame that finished now. The only part of this module that touches a clock.
+    func tick(self: Fps) : void {
+        self->sample(time_millis())
     }
 
-    return "" + fps_value(fps) + " fps   peak " + fps_peak_ms(fps) + " ms"
+    // Frames per second, or 0 before the first window has closed.
+    func value(self: Fps) : int {
+        return self.st[FpsS.VALUE]
+    }
+
+    // Whether a rate has been measured yet. False for the first half-second of a program.
+    func ready(self: Fps) : bool {
+        return self.st[FpsS.VALUE] > 0
+    }
+
+    // How long the most recent frame took, in milliseconds.
+    func frame_ms(self: Fps) : int {
+        return self.st[FpsS.FRAME_MS]
+    }
+
+    // The worst frame of the last completed window — the stutter an average would hide.
+    func peak_ms(self: Fps) : int {
+        return self.st[FpsS.PEAK]
+    }
+
+    /*
+     * The counter as a line of text, ready for `Ui->text`.
+     *
+     * Reads "--" rather than "0" until a window has closed, because a program that has just started has
+     * not measured nothing, it has not measured yet.
+     */
+    func text(self: Fps) : string {
+        if (!self->ready()) {
+            return "-- fps"
+        }
+
+        return "" + self->value() + " fps"
+    }
+
+    // The same with the worst frame alongside it, which is what shows a stutter.
+    func text_detailed(self: Fps) : string {
+        if (!self->ready()) {
+            return "-- fps"
+        }
+
+        return "" + self->value() + " fps   peak " + self->peak_ms() + " ms"
+    }
 }

@@ -132,7 +132,7 @@ internal static class FoldingHandler
 
         foreach (var declaration in analysis.SyntaxTree.Root.Declarations)
         {
-            if (declaration is not (FunctionDeclarationSyntax or StructDeclarationSyntax or EnumDeclarationSyntax))
+            if (declaration is not (FunctionDeclarationSyntax or StructDeclarationSyntax or EnumDeclarationSyntax or ImpDeclarationSyntax))
                 continue;
 
             var startLine = text.GetLineIndex(declaration.Span.Start);

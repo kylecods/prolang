@@ -57,6 +57,28 @@ internal static class SymbolHandlers
                     });
                     break;
 
+                case ImpDeclarationSyntax imp:
+                    symbols.Add(new Protocol.DocumentSymbol
+                    {
+                        Name = imp.Identifier.Text,
+                        Detail = "imp",
+                        Kind = SymbolKinds.Struct,
+                        Range = LspConversions.ToRange(text, imp.Span),
+                        SelectionRange = LspConversions.ToRange(text, imp.Identifier.Span),
+
+                        // Nested for the same reason a struct's fields are: the outline should show
+                        // which type a member belongs to, not a flat list of bare names.
+                        Children = imp.Functions.Select(member => new Protocol.DocumentSymbol
+                        {
+                            Name = member.Identifier.Text,
+                            Detail = Signature(member),
+                            Kind = SymbolKinds.Method,
+                            Range = LspConversions.ToRange(text, member.Span),
+                            SelectionRange = LspConversions.ToRange(text, member.Identifier.Span),
+                        }).ToList(),
+                    });
+                    break;
+
                 case EnumDeclarationSyntax enumeration:
                     symbols.Add(new Protocol.DocumentSymbol
                     {

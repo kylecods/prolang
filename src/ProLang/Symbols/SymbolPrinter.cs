@@ -172,7 +172,9 @@ namespace ProLang.Symbols;
 
         private static void WriteStructTo(StructSymbol symbol, TextWriter writer)
         {
-            writer.WriteKeyword("struct ");
+            // The keyword is the only cue that tells a reader whether assigning this type copies it
+            // or aliases it, so hover has to show the one that was written.
+            writer.WriteKeyword(symbol.IsReferenceType ? "class " : "struct ");
             writer.WriteIdentifier(symbol.Name);
 
             var typeParameters = symbol.IsGeneric

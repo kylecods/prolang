@@ -42,11 +42,28 @@ internal static class MsilDisassembler
 
             var programType = module.Types.FirstOrDefault(t => t.Name == "Program");
 
+            // Emitted reference types. Listed separately and by more than their fields: whether one
+            // is a class at all lives in its base type, and it is unusable without a constructor, so
+            // a listing that showed neither would let both regress without a snapshot moving.
+            var classes = module.Types
+                .Where(t => !t.IsValueType && t.Name != "<Module>" && t != programType && !t.IsInterface)
+                .Where(t => t.BaseType != null && t.BaseType.FullName == "System.Object")
+                .OrderBy(t => t.Name)
+                .ToList();
+
             if (structs.Count > 0)
             {
                 output.WriteLine("// ── Value types (structs) ─────────────────────────────");
                 foreach (var s in structs)
                     WriteValueType(s, output);
+                output.WriteLine();
+            }
+
+            if (classes.Count > 0)
+            {
+                output.WriteLine("// ── Reference types (classes) ─────────────────────────");
+                foreach (var c in classes)
+                    WriteReferenceType(c, output);
                 output.WriteLine();
             }
 
@@ -76,6 +93,27 @@ internal static class MsilDisassembler
         {
             output.WriteLine($"    Field: {MapTypeName(field.FieldType.FullName),-12} {field.Name}");
         }
+        output.WriteLine();
+    }
+
+    private static void WriteReferenceType(TypeDefinition type, TextWriter output)
+    {
+        var modifiers = type.IsSealed ? "sealed " : string.Empty;
+        // The base type is spelled out rather than mapped: MapTypeName renders System.Object as
+        // ProLang's `any`, which is right in a signature and misleading in a class header.
+        output.WriteLine($"{modifiers}class {type.Name} extends {type.BaseType.FullName}");
+
+        foreach (var field in type.Fields)
+        {
+            output.WriteLine($"    Field: {MapTypeName(field.FieldType.FullName),-12} {field.Name}");
+        }
+
+        foreach (var method in type.Methods)
+        {
+            var parameters = string.Join(", ", method.Parameters.Select(p => MapTypeName(p.ParameterType.FullName)));
+            output.WriteLine($"    Method: {method.Name}({parameters})");
+        }
+
         output.WriteLine();
     }
 

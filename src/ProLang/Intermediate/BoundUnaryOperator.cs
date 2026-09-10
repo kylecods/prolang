@@ -28,7 +28,19 @@ internal sealed class BoundUnaryOperator
         new (SyntaxKind.BangToken, BoundUnaryOperatorKind.LogicalNegation, TypeSymbol.Bool),
         new (SyntaxKind.PlusToken, BoundUnaryOperatorKind.Identity, TypeSymbol.Int),
         new (SyntaxKind.MinusToken, BoundUnaryOperatorKind.Negation, TypeSymbol.Int),
-        new(SyntaxKind.TildeToken, BoundUnaryOperatorKind.OnesComplement,TypeSymbol.Int)
+        new (SyntaxKind.TildeToken, BoundUnaryOperatorKind.OnesComplement, TypeSymbol.Int),
+
+        new (SyntaxKind.PlusToken, BoundUnaryOperatorKind.Identity, TypeSymbol.Int64),
+        new (SyntaxKind.MinusToken, BoundUnaryOperatorKind.Negation, TypeSymbol.Int64),
+
+        new (SyntaxKind.PlusToken, BoundUnaryOperatorKind.Identity, TypeSymbol.Float32),
+        new (SyntaxKind.MinusToken, BoundUnaryOperatorKind.Negation, TypeSymbol.Float32),
+
+        new (SyntaxKind.PlusToken, BoundUnaryOperatorKind.Identity, TypeSymbol.Float64),
+        new (SyntaxKind.MinusToken, BoundUnaryOperatorKind.Negation, TypeSymbol.Float64),
+
+        new (SyntaxKind.PlusToken, BoundUnaryOperatorKind.Identity, TypeSymbol.Float),
+        new (SyntaxKind.MinusToken, BoundUnaryOperatorKind.Negation, TypeSymbol.Float),
     ];
 
     public static BoundUnaryOperator? Bind(SyntaxKind syntaxKind, TypeSymbol operandType)

@@ -7,7 +7,7 @@
  * actually hollow, and a shape given its corners the other way round comes out the same.
  *
  * Exact pixel counts are fair game because nothing here anti-aliases. Every function writes solid
- * pixels; the intermediate shades in a finished glyph are produced later by doc_downsample_into.
+ * pixels; the intermediate shades in a finished glyph are produced later by `Document->downsample_into`.
  */
 
 import "testing"
@@ -48,27 +48,27 @@ func test_shape_run() : void {
     t_eq_int("isqrt is the floor everywhere below 400", wrong, 0)
 
     // ── Rectangles ───────────────────────────────────────────────────────────
-    let box: Document = doc_new(16, 16, 0)
+    let box: Document = Document->new(16, 16, 0)
     shape_fill_rect(box, 2, 3, 5, 6, ink)
-    t_eq_int("fill_rect covers its corners inclusively", doc_count_colour(box, ink), 16)
+    t_eq_int("fill_rect covers its corners inclusively", box->count_colour(ink), 16)
 
-    let reversed: Document = doc_new(16, 16, 0)
+    let reversed: Document = Document->new(16, 16, 0)
     shape_fill_rect(reversed, 5, 6, 2, 3, ink)
-    t_true("fill_rect ignores corner order", doc_equals(box, reversed))
+    t_true("fill_rect ignores corner order", box->equals(reversed))
 
     // Clipping is what lets every other function skip a bounds test in its inner loop.
-    let clipped: Document = doc_new(8, 8, 0)
+    let clipped: Document = Document->new(8, 8, 0)
     shape_fill_rect(clipped, 0 - 4, 0 - 4, 3, 3, ink)
-    t_eq_int("fill_rect clips to the document", doc_count_colour(clipped, ink), 16)
+    t_eq_int("fill_rect clips to the document", clipped->count_colour(ink), 16)
 
     // ── Discs and rings ──────────────────────────────────────────────────────
-    let disc: Document = doc_new(21, 21, 0)
+    let disc: Document = Document->new(21, 21, 0)
     shape_disc(disc, 10, 10, 6, ink)
 
-    t_eq_int("a disc paints its centre", doc_get(disc, 10, 10), ink)
-    t_eq_int("a disc reaches its radius", doc_get(disc, 16, 10), ink)
-    t_eq_int("a disc stops past its radius", doc_get(disc, 17, 10), 0)
-    t_eq_int("a disc is round, not square", doc_get(disc, 15, 15), 0)
+    t_eq_int("a disc paints its centre", disc->get(10, 10), ink)
+    t_eq_int("a disc reaches its radius", disc->get(16, 10), ink)
+    t_eq_int("a disc stops past its radius", disc->get(17, 10), 0)
+    t_eq_int("a disc is round, not square", disc->get(15, 15), 0)
 
     // A shape drawn about a centre must be the same in all four directions, or a glyph built from
     // several of them comes out subtly lopsided.
@@ -77,10 +77,10 @@ func test_shape_run() : void {
     while (dy <= 8) {
         let dx: int = 0 - 8
         while (dx <= 8) {
-            if (doc_get(disc, 10 + dx, 10 + dy) != doc_get(disc, 10 - dx, 10 + dy)) {
+            if (disc->get(10 + dx, 10 + dy) != disc->get(10 - dx, 10 + dy)) {
                 asymmetric = asymmetric + 1
             }
-            if (doc_get(disc, 10 + dx, 10 + dy) != doc_get(disc, 10 + dx, 10 - dy)) {
+            if (disc->get(10 + dx, 10 + dy) != disc->get(10 + dx, 10 - dy)) {
                 asymmetric = asymmetric + 1
             }
             dx = dx + 1
@@ -89,125 +89,125 @@ func test_shape_run() : void {
     }
     t_eq_int("a disc is symmetric in both axes", asymmetric, 0)
 
-    let ring: Document = doc_new(21, 21, 0)
+    let ring: Document = Document->new(21, 21, 0)
     shape_ring(ring, 10, 10, 6, 4, ink)
-    t_eq_int("a ring is hollow", doc_get(ring, 10, 10), 0)
-    t_eq_int("a ring paints its outer edge", doc_get(ring, 16, 10), ink)
-    t_eq_int("a ring paints its inner edge", doc_get(ring, 14, 10), ink)
+    t_eq_int("a ring is hollow", ring->get(10, 10), 0)
+    t_eq_int("a ring paints its outer edge", ring->get(16, 10), ink)
+    t_eq_int("a ring paints its inner edge", ring->get(14, 10), ink)
     t_true("a ring is thinner than a disc",
-               doc_count_colour(ring, ink) < doc_count_colour(disc, ink))
+               ring->count_colour(ink) < disc->count_colour(ink))
 
     // ── Arcs ─────────────────────────────────────────────────────────────────
     // Quadrant bits are 1 top-left, 2 top-right, 4 bottom-right, 8 bottom-left.
-    let whole: Document = doc_new(21, 21, 0)
+    let whole: Document = Document->new(21, 21, 0)
     shape_arc(whole, 10, 10, 6, 4, 15, ink)
-    t_true("all four quadrants is a ring", doc_equals(whole, ring))
+    t_true("all four quadrants is a ring", whole->equals(ring))
 
-    let upper: Document = doc_new(21, 21, 0)
+    let upper: Document = Document->new(21, 21, 0)
     shape_arc(upper, 10, 10, 6, 4, 3, ink)
-    t_eq_int("the top half keeps the top", doc_get(upper, 10, 5), ink)
-    t_eq_int("the top half drops the bottom", doc_get(upper, 10, 15), 0)
+    t_eq_int("the top half keeps the top", upper->get(10, 5), ink)
+    t_eq_int("the top half drops the bottom", upper->get(10, 15), 0)
 
-    let right: Document = doc_new(21, 21, 0)
+    let right: Document = Document->new(21, 21, 0)
     shape_arc(right, 10, 10, 6, 4, 6, ink)
-    t_eq_int("the right half keeps the right", doc_get(right, 15, 10), ink)
-    t_eq_int("the right half drops the left", doc_get(right, 5, 10), 0)
+    t_eq_int("the right half keeps the right", right->get(15, 10), ink)
+    t_eq_int("the right half drops the left", right->get(5, 10), 0)
 
     // The four quadrants partition the ring exactly: no pixel is in two of them and none is in
     // none of them. An arc that dropped a pixel on a boundary would leave a seam.
-    let lower: Document = doc_new(21, 21, 0)
+    let lower: Document = Document->new(21, 21, 0)
     shape_arc(lower, 10, 10, 6, 4, 12, ink)
     t_eq_int("the halves partition the ring",
-                 doc_count_colour(upper, ink) + doc_count_colour(lower, ink),
-                 doc_count_colour(ring, ink))
+                 upper->count_colour(ink) + lower->count_colour(ink),
+                 ring->count_colour(ink))
 
     // ── Strokes ──────────────────────────────────────────────────────────────
-    let horizontal: Document = doc_new(24, 24, 0)
+    let horizontal: Document = Document->new(24, 24, 0)
     shape_stroke(horizontal, 6, 12, 17, 12, 4, ink)
-    t_eq_int("a stroke covers its own line", doc_get(horizontal, 12, 12), ink)
-    t_eq_int("a stroke has width", doc_get(horizontal, 12, 14), ink)
-    t_eq_int("a stroke is not infinitely wide", doc_get(horizontal, 12, 16), 0)
+    t_eq_int("a stroke covers its own line", horizontal->get(12, 12), ink)
+    t_eq_int("a stroke has width", horizontal->get(12, 14), ink)
+    t_eq_int("a stroke is not infinitely wide", horizontal->get(12, 16), 0)
 
     // Round caps: the shape continues past the endpoint, which is what makes two strokes meeting
     // at an angle join without a notch.
-    t_eq_int("a stroke has a round cap", doc_get(horizontal, 4, 12), ink)
-    t_eq_int("the cap is round, not square", doc_get(horizontal, 4, 14), 0)
+    t_eq_int("a stroke has a round cap", horizontal->get(4, 12), ink)
+    t_eq_int("the cap is round, not square", horizontal->get(4, 14), 0)
 
     // Distance to a segment does not depend on which end you measure from, so a stroke drawn
     // backwards must be the identical set of pixels.
-    let backward: Document = doc_new(24, 24, 0)
+    let backward: Document = Document->new(24, 24, 0)
     shape_stroke(backward, 17, 12, 6, 12, 4, ink)
-    t_true("a stroke is the same drawn backwards", doc_equals(horizontal, backward))
+    t_true("a stroke is the same drawn backwards", horizontal->equals(backward))
 
-    let diagonal: Document = doc_new(24, 24, 0)
+    let diagonal: Document = Document->new(24, 24, 0)
     shape_stroke(diagonal, 4, 4, 19, 19, 4, ink)
-    let diagonalBack: Document = doc_new(24, 24, 0)
+    let diagonalBack: Document = Document->new(24, 24, 0)
     shape_stroke(diagonalBack, 19, 19, 4, 4, 4, ink)
-    t_true("a diagonal stroke is the same backwards", doc_equals(diagonal, diagonalBack))
+    t_true("a diagonal stroke is the same backwards", diagonal->equals(diagonalBack))
 
     // A stroke with both ends in the same place is its own cap.
-    let dot: Document = doc_new(24, 24, 0)
+    let dot: Document = Document->new(24, 24, 0)
     shape_stroke(dot, 12, 12, 12, 12, 6, ink)
-    let asDisc: Document = doc_new(24, 24, 0)
+    let asDisc: Document = Document->new(24, 24, 0)
     shape_disc(asDisc, 12, 12, 3, ink)
-    t_true("a zero-length stroke is a disc", doc_equals(dot, asDisc))
+    t_true("a zero-length stroke is a disc", dot->equals(asDisc))
 
     // Zero width still draws: a hairline is more useful than nothing, and a caller that computed
     // a width from a small scaling factor should not silently lose the line.
-    let hairline: Document = doc_new(24, 24, 0)
+    let hairline: Document = Document->new(24, 24, 0)
     shape_stroke(hairline, 4, 12, 19, 12, 0, ink)
-    t_true("a zero-width stroke still draws", doc_count_colour(hairline, ink) > 0)
+    t_true("a zero-width stroke still draws", hairline->count_colour(ink) > 0)
 
     // ── Polygons ─────────────────────────────────────────────────────────────
-    let triangle: Document = doc_new(20, 20, 0)
+    let triangle: Document = Document->new(20, 20, 0)
     shape_triangle(triangle, 2, 2, 17, 2, 2, 17, ink)
-    t_eq_int("a triangle paints inside", doc_get(triangle, 4, 4), ink)
-    t_eq_int("a triangle paints its corners", doc_get(triangle, 2, 2), ink)
-    t_eq_int("a triangle leaves the far corner", doc_get(triangle, 16, 16), 0)
+    t_eq_int("a triangle paints inside", triangle->get(4, 4), ink)
+    t_eq_int("a triangle paints its corners", triangle->get(2, 2), ink)
+    t_eq_int("a triangle leaves the far corner", triangle->get(16, 16), 0)
 
     // Winding order must not matter, or a mirrored icon reusing the same call with two points
     // swapped would come out empty rather than mirrored.
-    let wound: Document = doc_new(20, 20, 0)
+    let wound: Document = Document->new(20, 20, 0)
     shape_triangle(wound, 2, 17, 17, 2, 2, 2, ink)
-    t_true("a triangle ignores winding order", doc_equals(triangle, wound))
+    t_true("a triangle ignores winding order", triangle->equals(wound))
 
     // A quadrilateral is two triangles, and the seam between them must not show.
-    let quad: Document = doc_new(20, 20, 0)
+    let quad: Document = Document->new(20, 20, 0)
     shape_quad(quad, 3, 3, 16, 3, 16, 16, 3, 16, ink)
-    let asRect: Document = doc_new(20, 20, 0)
+    let asRect: Document = Document->new(20, 20, 0)
     shape_fill_rect(asRect, 3, 3, 16, 16, ink)
-    t_true("an axis-aligned quad is a rectangle", doc_equals(quad, asRect))
+    t_true("an axis-aligned quad is a rectangle", quad->equals(asRect))
 
     // ── Rounded rectangles ───────────────────────────────────────────────────
     t_eq_int("a corner radius is capped at half the shorter side",
                  shape_corner_radius(0, 0, 20, 8, 9), 4)
     t_eq_int("a negative corner radius is none", shape_corner_radius(0, 0, 20, 20, 0 - 3), 0)
 
-    let rounded: Document = doc_new(24, 24, 0)
+    let rounded: Document = Document->new(24, 24, 0)
     shape_round_rect_filled(rounded, 2, 2, 21, 21, 5, ink)
-    t_eq_int("a rounded rectangle fills its middle", doc_get(rounded, 12, 12), ink)
-    t_eq_int("a rounded rectangle cuts its corner", doc_get(rounded, 2, 2), 0)
-    t_eq_int("a rounded rectangle keeps its edge midpoint", doc_get(rounded, 2, 12), ink)
+    t_eq_int("a rounded rectangle fills its middle", rounded->get(12, 12), ink)
+    t_eq_int("a rounded rectangle cuts its corner", rounded->get(2, 2), 0)
+    t_eq_int("a rounded rectangle keeps its edge midpoint", rounded->get(2, 12), ink)
 
-    let square: Document = doc_new(24, 24, 0)
+    let square: Document = Document->new(24, 24, 0)
     shape_round_rect_filled(square, 2, 2, 21, 21, 0, ink)
-    let plain: Document = doc_new(24, 24, 0)
+    let plain: Document = Document->new(24, 24, 0)
     shape_fill_rect(plain, 2, 2, 21, 21, ink)
-    t_true("radius zero is an ordinary rectangle", doc_equals(square, plain))
+    t_true("radius zero is an ordinary rectangle", square->equals(plain))
 
-    let outline: Document = doc_new(24, 24, 0)
+    let outline: Document = Document->new(24, 24, 0)
     shape_round_rect(outline, 2, 2, 21, 21, 5, 3, ink)
-    t_eq_int("an outline is hollow", doc_get(outline, 12, 12), 0)
-    t_eq_int("an outline draws its edge", doc_get(outline, 2, 12), ink)
+    t_eq_int("an outline is hollow", outline->get(12, 12), 0)
+    t_eq_int("an outline draws its edge", outline->get(2, 12), ink)
 
     // The border goes inward, so the outline never exceeds the bounds it was given. Sizing an
     // icon to its own bounding box depends on that.
-    t_eq_int("an outline stays inside its bounds", doc_get(outline, 1, 12), 0)
+    t_eq_int("an outline stays inside its bounds", outline->get(1, 12), 0)
     t_true("an outline is thinner than a fill",
-               doc_count_colour(outline, ink) < doc_count_colour(rounded, ink))
+               outline->count_colour(ink) < rounded->count_colour(ink))
 
     // Its stroke is the given width: three pixels inward from the edge is still border, four is
     // not.
-    t_eq_int("an outline is as thick as asked", doc_get(outline, 4, 12), ink)
-    t_eq_int("an outline is no thicker", doc_get(outline, 5, 12), 0)
+    t_eq_int("an outline is as thick as asked", outline->get(4, 12), ink)
+    t_eq_int("an outline is no thicker", outline->get(5, 12), 0)
 }

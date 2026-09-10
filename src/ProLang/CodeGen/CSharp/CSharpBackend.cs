@@ -113,7 +113,7 @@ internal sealed class CSharpBackend
     {
         foreach (var structType in CollectStructTypes())
         {
-            Line($"internal struct {Identifier(structType.Name)}");
+            Line($"internal {(structType.IsReferenceType ? "sealed class" : "struct")} {Identifier(structType.Name)}");
             Line("{");
             _indent++;
 
@@ -329,6 +329,7 @@ internal sealed class CSharpBackend
         node switch
         {
             BoundLiteralExpression literal => Literal(literal),
+            BoundNullExpression => "null",
             BoundVariableExpression variable => LocalName(variable.Variable),
             BoundAssignmentExpression assignment =>
                 $"({LocalName(assignment.Variable)} = {Coerce(assignment.Expression, assignment.Variable.Type)})",

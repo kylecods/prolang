@@ -155,4 +155,19 @@
     <Exec Command="dotnet build &quot;$(_WFHProj)&quot; -c $(Configuration) -o &quot;$(_WFHLibDir)&quot; --nologo -v q" />
   </Target>
 
+  <!--
+    On Windows, build GLHelper after the main ProLang build and drop
+    GLHelper.dll into the compiler output's lib/ subdirectory.
+    This lets prolang source files use  import "gl"  or  import "GLHelper"
+    without specifying an explicit DLL path.
+  -->
+  <Target Name="BuildGLHelper" AfterTargets="Build" Condition="'$(OS)' == 'Windows_NT'">
+    <PropertyGroup>
+      <_GLHProj>$(MSBuildThisFileDirectory)..\..\std\GLHelper\GLHelper.csproj</_GLHProj>
+      <_GLHLibDir>$(OutDir)lib</_GLHLibDir>
+    </PropertyGroup>
+    <MakeDir Directories="$(_GLHLibDir)" />
+    <Exec Command="dotnet build &quot;$(_GLHProj)&quot; -c $(Configuration) -o &quot;$(_GLHLibDir)&quot; --nologo -v q" />
+  </Target>
+
 </Project>

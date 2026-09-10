@@ -1,0 +1,393 @@
+/*
+ * Text editor — syntax highlighting (syntax.prl)
+ *
+ * A single-line tokenizer for prolang, pure and covered by tests/test_syntax.prl.
+ *
+ * It is a scanner, not the compiler's lexer: it exists to colour text, so it errs toward the
+ * colour that looks right rather than the diagnostic that is correct. A number with junk stuck to
+ * it is still a number; an unterminated string still colours to the end of the line. What it does
+ * carry across lines is the one piece of state that must be right for the *next* line to colour
+ * correctly: whether a block comment is open.
+ *
+ * That state flows through `syn_line`'s third argument — an out-slot, because two return values
+ * are not a thing the language has. The editor keeps one slot per line in an array and rebuilds it
+ * from the top whenever the text changes, so a `/*` typed anywhere re-colours everything below it.
+ *
+ * Everything becomes a list of spans: `Tok { start, len, kind }`. The renderer slices the line per
+ * span and draws each slice in `syn_color`'s colour for its kind, which is what per-character
+ * colouring over a display list of whole-string TEXT records looks like.
+ */
+
+import "dynarray"
+import "ui/color"
+import "ui/theme"
+
+enum TokKind {
+    SPACE,
+    COMMENT,
+    STRING,
+    NUMBER,
+    KEYWORD,
+    TYPE,
+    IDENT,
+    FUNC,
+    OPER,
+    PUNCT
+}
+
+struct Tok {
+    start: int,
+    len: int,
+    kind: int
+}
+
+// ── Classification tables ────────────────────────────────────────────────────
+
+// The language's keywords, exactly as src/ProLang/Syntax/SyntaxFacts.cs lists them.
+func syn_is_keyword(word: string) : bool {
+    if (word == "let") { return true }
+    if (word == "true") { return true }
+    if (word == "false") { return true }
+    if (word == "null") { return true }
+    if (word == "if") { return true }
+    if (word == "elif") { return true }
+    if (word == "else") { return true }
+    if (word == "while") { return true }
+    if (word == "for") { return true }
+    if (word == "to") { return true }
+    if (word == "func") { return true }
+    if (word == "break") { return true }
+    if (word == "continue") { return true }
+    if (word == "return") { return true }
+    if (word == "import") { return true }
+    if (word == "struct") { return true }
+    if (word == "as") { return true }
+    if (word == "enum") { return true }
+    if (word == "global") { return true }
+    if (word == "script") { return true }
+    return false
+}
+
+// The builtin type names, which are identifiers to the lexer but read as types to a person.
+func syn_is_type(word: string) : bool {
+    if (word == "int") { return true }
+    if (word == "int8") { return true }
+    if (word == "int16") { return true }
+    if (word == "int32") { return true }
+    if (word == "int64") { return true }
+    if (word == "uint8") { return true }
+    if (word == "uint16") { return true }
+    if (word == "uint32") { return true }
+    if (word == "uint64") { return true }
+    if (word == "float32") { return true }
+    if (word == "float64") { return true }
+    if (word == "bool") { return true }
+    if (word == "string") { return true }
+    if (word == "any") { return true }
+    if (word == "array") { return true }
+    if (word == "map") { return true }
+    if (word == "void") { return true }
+    return false
+}
+
+func syn_is_digit(c: int) : bool {
+    return c >= 48 && c <= 57
+}
+
+func syn_is_ident_start(c: int) : bool {
+    if (c >= 65 && c <= 90) { return true }
+    if (c >= 97 && c <= 122) { return true }
+    return c == 95
+}
+
+func syn_is_ident_part(c: int) : bool {
+    if (syn_is_ident_start(c)) { return true }
+    return syn_is_digit(c)
+}
+
+/*
+ * The end of the identifier starting at `from` — the scan runs to the first character that cannot
+ * be part of a name. Written as its own function because && does not short-circuit here, so a
+ * bounds test in the same condition as a charCode would read past the end.
+ */
+func syn_scan_ident(line: string, from: int) : int {
+    let n: int = line.length()
+    let run: int = from
+    while (run < n) {
+        if (syn_is_ident_part(line.charCode(run))) {
+            run = run + 1
+        } else {
+            return run
+        }
+    }
+    return run
+}
+
+// The characters drawn as operators rather than punctuation. + - * / % = < > ! & | ^ ~ :
+func syn_is_oper(c: int) : bool {
+    if (c == 43) { return true }
+    if (c == 45) { return true }
+    if (c == 42) { return true }
+    if (c == 47) { return true }
+    if (c == 37) { return true }
+    if (c == 61) { return true }
+    if (c == 60) { return true }
+    if (c == 62) { return true }
+    if (c == 33) { return true }
+    if (c == 38) { return true }
+    if (c == 124) { return true }
+    if (c == 94) { return true }
+    if (c == 126) { return true }
+    if (c == 58) { return true }
+    return false
+}
+
+// ── Scanning ─────────────────────────────────────────────────────────────────
+
+/*
+ * The first `*` followed by `/` at or after `from`, or -1 — where an open block comment ends.
+ */
+func syn_find_close(line: string, from: int) : int {
+    let n: int = line.length()
+    let i: int = from
+    while (i < n - 1) {
+        if (line.charCode(i) == 42 && line.charCode(i + 1) == 47) {
+            return i
+        }
+        i = i + 1
+    }
+    return 0 - 1
+}
+
+/*
+ * Tokenizes one line.
+ *
+ * `inBlock` is 1 when a block comment is open coming into this line. `outState[0]` receives 1 when
+ * one is open leaving it — hand it straight back in for the next line. The returned spans are
+ * ordered, non-overlapping and cover the line; whitespace is spanned as SPACE so the renderer can
+ * skip it.
+ */
+func syn_line(line: string, inBlock: int, outState: array<int>) : DynArray<Tok> {
+    let toks: DynArray<Tok> = dynarray_new<Tok>(16)
+    let n: int = line.length()
+    let i: int = 0
+    let block: int = inBlock
+
+    while (i < n) {
+        // Inside a block comment: everything up to the next close is one span.
+        if (block == 1) {
+            let closeB: int = syn_find_close(line, i)
+            if (closeB < 0) {
+                toks = dynarray_push<Tok>(toks, Tok { start: i, len: n - i, kind: TokKind.COMMENT })
+                i = n
+            } else {
+                toks = dynarray_push<Tok>(toks, Tok { start: i, len: closeB + 2 - i, kind: TokKind.COMMENT })
+                i = closeB + 2
+                block = 0
+            }
+            continue
+        }
+
+        let c: int = line.charCode(i)
+
+        // Whitespace runs.
+        if (c == 32 || c == 9) {
+            let ws: int = i
+            while (ws < n) {
+                let wch: int = line.charCode(ws)
+                if (wch != 32 && wch != 9) {
+                    break
+                }
+                ws = ws + 1
+            }
+            toks = dynarray_push<Tok>(toks, Tok { start: i, len: ws - i, kind: TokKind.SPACE })
+            i = ws
+            continue
+        }
+
+        // Comments. Both kinds start with '/', and the second character only exists when there is
+        // one — && does not short-circuit in this language, so the lookahead has to be nested.
+        if (c == 47) {
+            if (i + 1 < n) {
+                let next: int = line.charCode(i + 1)
+
+                if (next == 47) {
+                    toks = dynarray_push<Tok>(toks, Tok { start: i, len: n - i, kind: TokKind.COMMENT })
+                    i = n
+                    continue
+                }
+
+                // Block comment: to the close on this line, or the line ends and the state carries.
+                if (next == 42) {
+                    let closeC: int = syn_find_close(line, i + 2)
+                    if (closeC < 0) {
+                        toks = dynarray_push<Tok>(toks, Tok { start: i, len: n - i, kind: TokKind.COMMENT })
+                        i = n
+                        block = 1
+                    } else {
+                        toks = dynarray_push<Tok>(toks, Tok { start: i, len: closeC + 2 - i, kind: TokKind.COMMENT })
+                        i = closeC + 2
+                    }
+                    continue
+                }
+            }
+        }
+
+        // String literal. The only escape the language has is a doubled quote, which does not end
+        // the string; anything else does, and an unterminated string colours to the end of line.
+        if (c == 34) {
+            let j: int = i + 1
+            let closed: bool = false
+            while (j < n) {
+                if (line.charCode(j) == 34) {
+                    let doubled: bool = false
+                    if (j + 1 < n) {
+                        if (line.charCode(j + 1) == 34) { doubled = true }
+                    }
+                    if (doubled) {
+                        j = j + 2
+                    } else {
+                        closed = true
+                        break
+                    }
+                } else {
+                    j = j + 1
+                }
+            }
+            if (closed) {
+                toks = dynarray_push<Tok>(toks, Tok { start: i, len: j + 1 - i, kind: TokKind.STRING })
+                i = j + 1
+            } else {
+                toks = dynarray_push<Tok>(toks, Tok { start: i, len: n - i, kind: TokKind.STRING })
+                i = n
+            }
+            continue
+        }
+
+        // Number: a digit, or a dot followed by one (so `1.5` is a number and `x.y` is not).
+        // Everything up to the next character that cannot belong — letters for the 0x / 0b / 0o
+        // prefixes and the float32 / float64 suffixes, dots for decimals — joins the span.
+        // The lookahead is nested rather than &&-chained: && does not short-circuit here, so a
+        // flat chain would read past the end of the line every time a number was already found.
+        let numStart: bool = syn_is_digit(c)
+        if (!numStart) {
+            if (c == 46) {
+                if (i + 1 < n) {
+                    if (syn_is_digit(line.charCode(i + 1))) {
+                        numStart = true
+                    }
+                }
+            }
+        }
+        if (numStart) {
+            let nrun: int = i
+            while (nrun < n) {
+                let d: int = line.charCode(nrun)
+                if (syn_is_digit(d)) {
+                    nrun = nrun + 1
+                } elif (d >= 97 && d <= 102) {
+                    nrun = nrun + 1
+                } elif (d >= 65 && d <= 70) {
+                    nrun = nrun + 1
+                } elif (d == 120 || d == 88 || d == 98 || d == 66 || d == 111 || d == 79 || d == 46) {
+                    nrun = nrun + 1
+                } else {
+                    break
+                }
+            }
+            toks = dynarray_push<Tok>(toks, Tok { start: i, len: nrun - i, kind: TokKind.NUMBER })
+            i = nrun
+            continue
+        }
+
+        // Identifier, keyword, type name, or a call.
+        if (syn_is_ident_start(c)) {
+            let irun: int = syn_scan_ident(line, i)
+            let word: string = line.substring(i, irun)
+            let kind: int = TokKind.IDENT
+            if (syn_is_keyword(word)) {
+                kind = TokKind.KEYWORD
+            } elif (syn_is_type(word)) {
+                kind = TokKind.TYPE
+            } else {
+                // A name followed by '(' is a call — skip the spaces in between first.
+                let k: int = irun
+                let looking: bool = true
+                while (looking) {
+                    if (k < n) {
+                        let sc: int = line.charCode(k)
+                        if (sc == 32 || sc == 9) {
+                            k = k + 1
+                        } else {
+                            looking = false
+                        }
+                    } else {
+                        looking = false
+                    }
+                }
+                if (k < n) {
+                    if (line.charCode(k) == 40) {
+                        kind = TokKind.FUNC
+                    }
+                }
+            }
+            toks = dynarray_push<Tok>(toks, Tok { start: i, len: irun - i, kind: kind })
+            i = irun
+            continue
+        }
+
+        // Everything left: one operator or punctuation character per span.
+        let pkind: int = TokKind.PUNCT
+        if (syn_is_oper(c)) {
+            pkind = TokKind.OPER
+        }
+        toks = dynarray_push<Tok>(toks, Tok { start: i, len: 1, kind: pkind })
+        i = i + 1
+    }
+
+    outState[0] = block
+    return toks
+}
+
+// ── Colour ───────────────────────────────────────────────────────────────────
+
+/*
+ * The colour of a token kind under a theme.
+ *
+ * Dark themes get one palette and light themes another, keyed off `theme_is_dark` rather than
+ * listed per theme — the same trick ui/theme uses for its roles. Identifier and punctuation stay
+ * in the theme's own text colours so the code never fights the chrome around it.
+ */
+func syn_color(kind: int, theme: int) : int {
+    let dark: bool = color_luma(theme_surface(theme)) < 128
+
+    if (kind == TokKind.COMMENT) {
+        if (dark) { return color_rgb(106, 115, 128) }
+        return color_rgb(120, 124, 130)
+    }
+    if (kind == TokKind.STRING) {
+        if (dark) { return color_rgb(224, 156, 101) }
+        return color_rgb(163, 21, 21)
+    }
+    if (kind == TokKind.NUMBER) {
+        if (dark) { return color_rgb(152, 195, 121) }
+        return color_rgb(9, 134, 88)
+    }
+    if (kind == TokKind.KEYWORD) {
+        if (dark) { return color_rgb(198, 120, 221) }
+        return color_rgb(175, 0, 219)
+    }
+    if (kind == TokKind.TYPE) {
+        if (dark) { return color_rgb(97, 191, 183) }
+        return color_rgb(0, 128, 128)
+    }
+    if (kind == TokKind.FUNC) {
+        if (dark) { return color_rgb(94, 158, 255) }
+        return color_rgb(121, 94, 22)
+    }
+    if (kind == TokKind.OPER) {
+        if (dark) { return color_rgb(224, 108, 117) }
+        return color_rgb(160, 40, 40)
+    }
+    return 0
+}

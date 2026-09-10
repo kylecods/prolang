@@ -10,88 +10,88 @@ func test_document_run() : void {
     let red: int = color_rgb(255, 0, 0)
     let blue: int = color_rgb(0, 0, 255)
 
-    let doc: Document = doc_new(4, 3, 0)
+    let doc: Document = Document->new(4, 3, 0)
 
     t_eq_int("width", doc.width, 4)
     t_eq_int("height", doc.height, 3)
-    t_eq_int("pixel count", doc_pixel_count(doc), 12)
-    t_eq_int("starts transparent", doc_count_colour(doc, 0), 12)
+    t_eq_int("pixel count", doc->pixel_count(), 12)
+    t_eq_int("starts transparent", doc->count_colour(0), 12)
 
     // Row-major: index is y * width + x.
-    t_eq_int("index origin", doc_index(doc, 0, 0), 0)
-    t_eq_int("index second row", doc_index(doc, 0, 1), 4)
-    t_eq_int("index last", doc_index(doc, 3, 2), 11)
+    t_eq_int("index origin", doc->index(0, 0), 0)
+    t_eq_int("index second row", doc->index(0, 1), 4)
+    t_eq_int("index last", doc->index(3, 2), 11)
 
-    t_true("origin in bounds", doc_in_bounds(doc, 0, 0))
-    t_true("far corner in bounds", doc_in_bounds(doc, 3, 2))
-    t_false("negative x out of bounds", doc_in_bounds(doc, 0 - 1, 0))
-    t_false("negative y out of bounds", doc_in_bounds(doc, 0, 0 - 1))
-    t_false("past width out of bounds", doc_in_bounds(doc, 4, 0))
-    t_false("past height out of bounds", doc_in_bounds(doc, 0, 3))
-    t_eq_int("index out of bounds", doc_index(doc, 4, 0), 0 - 1)
+    t_true("origin in bounds", doc->in_bounds(0, 0))
+    t_true("far corner in bounds", doc->in_bounds(3, 2))
+    t_false("negative x out of bounds", doc->in_bounds(0 - 1, 0))
+    t_false("negative y out of bounds", doc->in_bounds(0, 0 - 1))
+    t_false("past width out of bounds", doc->in_bounds(4, 0))
+    t_false("past height out of bounds", doc->in_bounds(0, 3))
+    t_eq_int("index out of bounds", doc->index(4, 0), 0 - 1)
 
-    doc_set(doc, 1, 1, red)
-    t_eq_int("set then get", doc_get(doc, 1, 1), red)
-    t_eq_int("neighbour untouched", doc_get(doc, 2, 1), 0)
+    doc->set(1, 1, red)
+    t_eq_int("set then get", doc->get(1, 1), red)
+    t_eq_int("neighbour untouched", doc->get(2, 1), 0)
 
     // Out-of-bounds access is defined rather than fatal, so the rasterisers and the flood fill
     // do not each need their own edge tests. prolang cannot catch an exception.
-    doc_set(doc, 99, 99, blue)
-    t_eq_int("out of bounds set is ignored", doc_count_colour(doc, blue), 0)
-    t_eq_int("out of bounds get is transparent", doc_get(doc, 99, 99), 0)
+    doc->set(99, 99, blue)
+    t_eq_int("out of bounds set is ignored", doc->count_colour(blue), 0)
+    t_eq_int("out of bounds get is transparent", doc->get(99, 99), 0)
 
-    doc_fill(doc, blue)
-    t_eq_int("fill covers everything", doc_count_colour(doc, blue), 12)
+    doc->fill(blue)
+    t_eq_int("fill covers everything", doc->count_colour(blue), 12)
 
-    doc_clear(doc)
-    t_eq_int("clear makes it transparent", doc_count_colour(doc, 0), 12)
+    doc->clear()
+    t_eq_int("clear makes it transparent", doc->count_colour(0), 12)
 
     // A Document is a value type, so passing one copies its three fields — but `pixels` is a
     // reference to a real CLR array, which is why writes through a parameter are visible here.
     // The whole design depends on this.
-    let mutated: Document = doc_new(2, 2, 0)
+    let mutated: Document = Document->new(2, 2, 0)
     test_document_write_through(mutated, red)
-    t_eq_int("callee writes are visible", doc_get(mutated, 0, 0), red)
+    t_eq_int("callee writes are visible", mutated->get(0, 0), red)
 
     // A clone must not share that array.
-    let source: Document = doc_new(3, 3, red)
-    let copy: Document = doc_clone(source)
-    t_true("clone equals source", doc_equals(source, copy))
+    let source: Document = Document->new(3, 3, red)
+    let copy: Document = source->clone()
+    t_true("clone equals source", source->equals(copy))
 
-    doc_set(copy, 0, 0, blue)
-    t_eq_int("clone has its own buffer", doc_get(source, 0, 0), red)
-    t_false("clone no longer equals source", doc_equals(source, copy))
+    copy->set(0, 0, blue)
+    t_eq_int("clone has its own buffer", source->get(0, 0), red)
+    t_false("clone no longer equals source", source->equals(copy))
 
-    t_false("different sizes are unequal", doc_equals(doc_new(2, 2, 0), doc_new(3, 3, 0)))
+    t_false("different sizes are unequal", Document->new(2, 2, 0)->equals(Document->new(3, 3, 0)))
 
     // Mismatched sizes copy the overlapping corner instead of failing, so opening an image of a
     // different size degrades predictably.
-    let small: Document = doc_new(2, 2, red)
-    let large: Document = doc_new(4, 4, 0)
-    doc_copy_into(small, large)
-    t_eq_int("copy_into copies overlap", doc_count_colour(large, red), 4)
-    t_eq_int("copy_into leaves the rest", doc_get(large, 3, 3), 0)
+    let small: Document = Document->new(2, 2, red)
+    let large: Document = Document->new(4, 4, 0)
+    small->copy_into(large)
+    t_eq_int("copy_into copies overlap", large->count_colour(red), 4)
+    t_eq_int("copy_into leaves the rest", large->get(3, 3), 0)
 
     // ── Downsampling ─────────────────────────────────────────────────────────
     // The toolbar icons are drawn oversized and reduced through this, so it is what turns a hard
     // edge into a run of alphas. Everything about it that can be checked exactly is checked here.
 
     // A block of one colour averages to itself, not to something a shade off.
-    let flat: Document = doc_new(8, 8, red)
-    let reduced: Document = doc_new(2, 2, 0)
-    doc_downsample_into(flat, reduced, 4)
-    t_eq_int("a solid block keeps its colour", doc_count_colour(reduced, red), 4)
+    let flat: Document = Document->new(8, 8, red)
+    let reduced: Document = Document->new(2, 2, 0)
+    flat->downsample_into(reduced, 4)
+    t_eq_int("a solid block keeps its colour", reduced->count_colour(red), 4)
 
     // Half covered gives half the alpha and none of the transparent pixels' colour. Averaging the
     // channels of a transparent pixel along with the rest is what puts a dark halo around a glyph.
-    let half: Document = doc_new(2, 2, 0)
-    doc_set(half, 0, 0, red)
-    doc_set(half, 1, 0, red)
+    let half: Document = Document->new(2, 2, 0)
+    half->set(0, 0, red)
+    half->set(1, 0, red)
 
-    let averaged: Document = doc_new(1, 1, 0)
-    doc_downsample_into(half, averaged, 2)
+    let averaged: Document = Document->new(1, 1, 0)
+    half->downsample_into(averaged, 2)
 
-    let blend: int = doc_get(averaged, 0, 0)
+    let blend: int = averaged->get(0, 0)
     t_eq_int("half coverage halves the alpha", color_a(blend), 127)
     t_eq_int("half coverage keeps the red", color_r(blend), 255)
     t_eq_int("half coverage does not darken", color_g(blend), 0)
@@ -99,36 +99,36 @@ func test_document_run() : void {
 
     // Nothing covered stays fully transparent rather than becoming transparent black with a
     // colour attached, which would show up the moment the pixel was composited over anything.
-    let empty: Document = doc_new(4, 4, 0)
-    let stillEmpty: Document = doc_new(2, 2, red)
-    doc_downsample_into(empty, stillEmpty, 2)
-    t_eq_int("empty blocks reduce to nothing", doc_count_colour(stillEmpty, 0), 4)
+    let empty: Document = Document->new(4, 4, 0)
+    let stillEmpty: Document = Document->new(2, 2, red)
+    empty->downsample_into(stillEmpty, 2)
+    t_eq_int("empty blocks reduce to nothing", stillEmpty->count_colour(0), 4)
 
     // Two colours in equal measure meet in the middle.
-    let mixed: Document = doc_new(2, 2, red)
-    doc_set(mixed, 0, 0, blue)
-    doc_set(mixed, 1, 0, blue)
+    let mixed: Document = Document->new(2, 2, red)
+    mixed->set(0, 0, blue)
+    mixed->set(1, 0, blue)
 
-    let mixedOut: Document = doc_new(1, 1, 0)
-    doc_downsample_into(mixed, mixedOut, 2)
-    let mix: int = doc_get(mixedOut, 0, 0)
+    let mixedOut: Document = Document->new(1, 1, 0)
+    mixed->downsample_into(mixedOut, 2)
+    let mix: int = mixedOut->get(0, 0)
     t_eq_int("a full block stays opaque", color_a(mix), 255)
     t_eq_int("two colours meet in the middle", color_r(mix), 127)
     t_eq_int("the other channel meets too", color_b(mix), 127)
 
     // A factor of one is a copy, and a factor below one is refused rather than corrupting the
-    // target — the same rule doc_scale_into follows.
-    let identity: Document = doc_new(3, 3, red)
-    let copied: Document = doc_new(3, 3, 0)
-    doc_downsample_into(identity, copied, 1)
-    t_true("downsampling by one is a copy", doc_equals(identity, copied))
+    // target — the same rule `Document->scale_into` follows.
+    let identity: Document = Document->new(3, 3, red)
+    let copied: Document = Document->new(3, 3, 0)
+    identity->downsample_into(copied, 1)
+    t_true("downsampling by one is a copy", identity->equals(copied))
 
-    let untouched: Document = doc_new(3, 3, blue)
-    doc_downsample_into(identity, untouched, 0)
-    t_eq_int("a factor below one is ignored", doc_count_colour(untouched, blue), 9)
+    let untouched: Document = Document->new(3, 3, blue)
+    identity->downsample_into(untouched, 0)
+    t_eq_int("a factor below one is ignored", untouched->count_colour(blue), 9)
 }
 
 // Writes through a Document parameter, to prove the change reaches the caller.
 func test_document_write_through(doc: Document, colour: int) : void {
-    doc_set(doc, 0, 0, colour)
+    doc->set(0, 0, colour)
 }

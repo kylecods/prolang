@@ -234,6 +234,7 @@ internal static class SymbolKinds
     public const int EnumMember = 22;
     public const int Struct = 23;
     public const int Field = 8;
+    public const int Method = 6;
 }
 
 internal sealed class DocumentSymbol

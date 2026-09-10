@@ -142,14 +142,14 @@ func hostw_open(title: string, width: int, height: int, background: int = 0, max
  */
 func hostw_fonts(families: array<string>, sizes: array<int>, bolds: array<int>) : FontSet {
     let count: int = families.length()
-    let fonts: FontSet = font_new(count)
+    let fonts: FontSet = FontSet->new(count)
 
     let i: int = 0
     while (i < count) {
         let bold: bool = bolds[i] != 0
         let registered: int = WinFormsHelper.SurfaceAddFont(families[i], sizes[i], bold)
 
-        WinFormsHelper.SurfaceMeasureFont(registered, fonts.widths, i * font_glyphs(),
+        WinFormsHelper.SurfaceMeasureFont(registered, fonts.widths, i * FontSet->glyphs(),
             fonts.metrics, i * 2)
 
         i = i + 1
@@ -160,7 +160,7 @@ func hostw_fonts(families: array<string>, sizes: array<int>, bolds: array<int>) 
 
 // A single font, for programs that want one and do not want to build arrays to say so.
 func hostw_font(family: string = "Segoe UI", size: int = 10, bold: bool = false) : FontSet {
-    let fonts: FontSet = font_new(1)
+    let fonts: FontSet = FontSet->new(1)
     let registered: int = WinFormsHelper.SurfaceAddFont(family, size, bold)
 
     WinFormsHelper.SurfaceMeasureFont(registered, fonts.widths, 0, fonts.metrics, 0)
@@ -254,8 +254,7 @@ func hostw_pump(host: Host, timeoutMs: int = 16) : void {
 func hostw_begin(host: Host, ui: Ui, timeoutMs: int = 16) : void {
     hostw_pump(host, timeoutMs)
 
-    ui_begin(ui, host.st[HostwS.MOUSE_X], host.st[HostwS.MOUSE_Y],
-        host.st[HostwS.MOUSE_DOWN] == 1)
+    ui->begin(host.st[HostwS.MOUSE_X], host.st[HostwS.MOUSE_Y], host.st[HostwS.MOUSE_DOWN] == 1)
 }
 
 /*
@@ -270,7 +269,7 @@ func hostw_present(host: Host, ui: Ui, fonts: FontSet) : int {
 }
 
 /*
- * The same, with a painter for `ui_scene` nodes.
+ * The same, with a painter for `Ui->scene` nodes.
  *
  * The painter appends display-list records rather than drawing, so this host needs no extra code
  * for it — and could not have taken a drawing callback anyway, since the list is executed later on
@@ -279,9 +278,9 @@ func hostw_present(host: Host, ui: Ui, fonts: FontSet) : int {
 func hostw_present_scene(host: Host, ui: Ui, fonts: FontSet,
                          paint: func(array<int>, int, int, int, int, int, int, array<int>) : int,
                          state: array<int>) : int {
-    assert(ui_is_balanced(ui), "a container was left open — every ui_col/ui_row/ui_box needs a ui_end")
+    assert(ui->is_balanced(), "a container was left open — every Ui->col/Ui->row/Ui->box needs a Ui->end")
 
-    let root: int = ui_root(ui)
+    let root: int = ui->root()
 
     if (root < 0) {
         return 0

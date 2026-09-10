@@ -33,242 +33,244 @@ struct Document {
     height: int;
 }
 
-// ── Construction ─────────────────────────────────────────────────────────────
+imp Document {
+    // ── Construction ─────────────────────────────────────────────────────────────
 
-/*
- * A new document, every pixel set to `fill`.
- *
- * array_new zeroes its buffer, which is transparent black — so an explicit fill pass is only
- * needed when `fill` is something else, and skipping it is a measurable saving on a large canvas.
- */
-func doc_new(width: int, height: int, fill: int) : Document {
-    let pixels: array<int> = array_new(width * height)
-    let doc: Document = Document { pixels: pixels, width: width, height: height }
+    /*
+     * A new document, every pixel set to `fill`.
+     *
+     * array_new zeroes its buffer, which is transparent black — so an explicit fill pass is only
+     * needed when `fill` is something else, and skipping it is a measurable saving on a large canvas.
+     */
+    func new(width: int, height: int, fill: int) : Document {
+        let pixels: array<int> = array_new(width * height)
+        let doc: Document = Document { pixels: pixels, width: width, height: height }
 
-    if (fill != 0) {
-        doc_fill(doc, fill)
-    }
-
-    return doc
-}
-
-/*
- * An independent copy. The new document's buffer is separate, which is what makes it usable as
- * an undo snapshot or a shape-tool preview.
- */
-func doc_clone(doc: Document) : Document {
-    let copy: Document = doc_new(doc.width, doc.height, 0)
-    doc_copy_into(doc, copy)
-    return copy
-}
-
-// ── Bounds ───────────────────────────────────────────────────────────────────
-
-func doc_in_bounds(doc: Document, x: int, y: int) : bool {
-    return x >= 0 && y >= 0 && x < doc.width && y < doc.height
-}
-
-// Flat buffer offset of a pixel, or -1 when it is outside the image.
-func doc_index(doc: Document, x: int, y: int) : int {
-    if (!doc_in_bounds(doc, x, y)) {
-        return 0 - 1
-    }
-    return (y * doc.width) + x
-}
-
-func doc_pixel_count(doc: Document) : int {
-    return doc.width * doc.height
-}
-
-// ── Access ───────────────────────────────────────────────────────────────────
-
-/*
- * The colour at a pixel, or fully transparent for coordinates outside the image.
- *
- * Returning a value rather than failing keeps every caller that samples a neighbourhood — the
- * flood fill, the shape rasterisers — free of edge tests it would otherwise repeat.
- */
-func doc_get(doc: Document, x: int, y: int) : int {
-    let index: int = doc_index(doc, x, y)
-    if (index < 0) {
-        return 0
-    }
-    return doc.pixels[index]
-}
-
-// Sets one pixel. Out-of-bounds coordinates are ignored, for the same reason doc_get tolerates them.
-func doc_set(doc: Document, x: int, y: int, colour: int) : void {
-    let index: int = doc_index(doc, x, y)
-    if (index >= 0) {
-        doc.pixels[index] = colour
-    }
-}
-
-// ── Bulk operations ──────────────────────────────────────────────────────────
-
-func doc_fill(doc: Document, colour: int) : void {
-    let count: int = doc_pixel_count(doc)
-    let i: int = 0
-    while (i < count) {
-        doc.pixels[i] = colour
-        i = i + 1
-    }
-}
-
-func doc_clear(doc: Document) : void {
-    doc_fill(doc, 0)
-}
-
-/*
- * Copies pixels from one document into another of the same size.
- *
- * Sizes that disagree copy the overlapping top-left region rather than failing, so that opening
- * an image of a different size into an existing canvas degrades predictably.
- */
-func doc_copy_into(source: Document, target: Document) : void {
-    let rows: int = min(source.height, target.height)
-    let cols: int = min(source.width, target.width)
-
-    let y: int = 0
-    while (y < rows) {
-        let x: int = 0
-        while (x < cols) {
-            target.pixels[(y * target.width) + x] = source.pixels[(y * source.width) + x]
-            x = x + 1
+        if (fill != 0) {
+            doc->fill(fill)
         }
-        y = y + 1
-    }
-}
 
-/*
- * Copies `source` into `target` with each pixel repeated `factor` times in both directions.
- *
- * Nearest-neighbour by construction — every output pixel is exactly one input pixel, never a
- * blend — which is what keeps a scaled-up icon looking drawn rather than resampled. The toolbar
- * icons are authored at 16x16 and shown at twice that.
- */
-func doc_scale_into(source: Document, target: Document, factor: int) : void {
-    if (factor < 1) {
-        return
+        return doc
     }
 
-    let rows: int = min(source.height, target.height / factor)
-    let cols: int = min(source.width, target.width / factor)
+    /*
+     * An independent copy. The new document's buffer is separate, which is what makes it usable as
+     * an undo snapshot or a shape-tool preview.
+     */
+    func clone(self: Document) : Document {
+        let copy: Document = Document->new(self.width, self.height, 0)
+        self->copy_into(copy)
+        return copy
+    }
 
-    let y: int = 0
-    while (y < rows) {
-        let x: int = 0
-        while (x < cols) {
-            let colour: int = source.pixels[(y * source.width) + x]
+    // ── Bounds ───────────────────────────────────────────────────────────────────
 
-            let dy: int = 0
-            while (dy < factor) {
-                let dx: int = 0
-                while (dx < factor) {
-                    target.pixels[(((y * factor) + dy) * target.width) + (x * factor) + dx] = colour
-                    dx = dx + 1
-                }
-                dy = dy + 1
+    func in_bounds(self: Document, x: int, y: int) : bool {
+        return x >= 0 && y >= 0 && x < self.width && y < self.height
+    }
+
+    // Flat buffer offset of a pixel, or -1 when it is outside the image.
+    func index(self: Document, x: int, y: int) : int {
+        if (!self->in_bounds(x, y)) {
+            return 0 - 1
+        }
+        return (y * self.width) + x
+    }
+
+    func pixel_count(self: Document) : int {
+        return self.width * self.height
+    }
+
+    // ── Access ───────────────────────────────────────────────────────────────────
+
+    /*
+     * The colour at a pixel, or fully transparent for coordinates outside the image.
+     *
+     * Returning a value rather than failing keeps every caller that samples a neighbourhood — the
+     * flood fill, the shape rasterisers — free of edge tests it would otherwise repeat.
+     */
+    func get(self: Document, x: int, y: int) : int {
+        let index: int = self->index(x, y)
+        if (index < 0) {
+            return 0
+        }
+        return self.pixels[index]
+    }
+
+    // Sets one pixel. Out-of-bounds coordinates are ignored, for the same reason `Document->get` tolerates them.
+    func set(self: Document, x: int, y: int, colour: int) : void {
+        let index: int = self->index(x, y)
+        if (index >= 0) {
+            self.pixels[index] = colour
+        }
+    }
+
+    // ── Bulk operations ──────────────────────────────────────────────────────────
+
+    func fill(self: Document, colour: int) : void {
+        let count: int = self->pixel_count()
+        let i: int = 0
+        while (i < count) {
+            self.pixels[i] = colour
+            i = i + 1
+        }
+    }
+
+    func clear(self: Document) : void {
+        self->fill(0)
+    }
+
+    /*
+     * Copies pixels from one document into another of the same size.
+     *
+     * Sizes that disagree copy the overlapping top-left region rather than failing, so that opening
+     * an image of a different size into an existing canvas degrades predictably.
+     */
+    func copy_into(self: Document, target: Document) : void {
+        let rows: int = min(self.height, target.height)
+        let cols: int = min(self.width, target.width)
+
+        let y: int = 0
+        while (y < rows) {
+            let x: int = 0
+            while (x < cols) {
+                target.pixels[(y * target.width) + x] = self.pixels[(y * self.width) + x]
+                x = x + 1
             }
-
-            x = x + 1
+            y = y + 1
         }
-        y = y + 1
-    }
-}
-
-/*
- * Copies `source` into `target` with each `factor` x `factor` block averaged into one pixel.
- *
- * The other half of doc_scale_into, and the reason the toolbar icons have smooth edges. prolang
- * has no anti-aliasing anywhere and shape.prl deliberately writes only solid pixels, so an icon is
- * drawn several times larger than it will be shown and reduced here — supersampling, which turns
- * a hard edge into a run of intermediate alphas without any of the drawing code knowing about it.
- *
- * Colours are averaged weighted by alpha, and alpha is averaged on its own. Averaging the channels
- * of a transparent pixel along with the rest is the classic mistake: the fully transparent pixels
- * outside a glyph are transparent *black*, and letting their zeroed channels into the mean draws
- * a dark halo around every edge, which is exactly what a resampled icon should not have.
- */
-func doc_downsample_into(source: Document, target: Document, factor: int) : void {
-    if (factor < 1) {
-        return
     }
 
-    let rows: int = min(target.height, source.height / factor)
-    let cols: int = min(target.width, source.width / factor)
-    let samples: int = factor * factor
+    /*
+     * Copies `source` into `target` with each pixel repeated `factor` times in both directions.
+     *
+     * Nearest-neighbour by construction — every output pixel is exactly one input pixel, never a
+     * blend — which is what keeps a scaled-up icon looking drawn rather than resampled. The toolbar
+     * icons are authored at 16x16 and shown at twice that.
+     */
+    func scale_into(self: Document, target: Document, factor: int) : void {
+        if (factor < 1) {
+            return
+        }
 
-    let y: int = 0
-    while (y < rows) {
-        let x: int = 0
-        while (x < cols) {
-            let alpha: int = 0
-            let red: int = 0
-            let green: int = 0
-            let blue: int = 0
+        let rows: int = min(self.height, target.height / factor)
+        let cols: int = min(self.width, target.width / factor)
 
-            let dy: int = 0
-            while (dy < factor) {
-                let row: int = ((((y * factor) + dy) * source.width) + (x * factor))
-                let dx: int = 0
+        let y: int = 0
+        while (y < rows) {
+            let x: int = 0
+            while (x < cols) {
+                let colour: int = self.pixels[(y * self.width) + x]
 
-                while (dx < factor) {
-                    let sample: int = source.pixels[row + dx]
-                    let a: int = color_a(sample)
-
-                    alpha = alpha + a
-                    red = red + (color_r(sample) * a)
-                    green = green + (color_g(sample) * a)
-                    blue = blue + (color_b(sample) * a)
-
-                    dx = dx + 1
+                let dy: int = 0
+                while (dy < factor) {
+                    let dx: int = 0
+                    while (dx < factor) {
+                        target.pixels[(((y * factor) + dy) * target.width) + (x * factor) + dx] = colour
+                        dx = dx + 1
+                    }
+                    dy = dy + 1
                 }
 
-                dy = dy + 1
+                x = x + 1
             }
-
-            let blended: int = 0
-
-            if (alpha > 0) {
-                blended = color_argb(alpha / samples, red / alpha, green / alpha, blue / alpha)
-            }
-
-            target.pixels[(y * target.width) + x] = blended
-            x = x + 1
+            y = y + 1
         }
-        y = y + 1
-    }
-}
-
-// True when both documents have the same dimensions and identical pixels. Used by the tests.
-func doc_equals(a: Document, b: Document) : bool {
-    if (a.width != b.width || a.height != b.height) {
-        return false
     }
 
-    let count: int = doc_pixel_count(a)
-    let i: int = 0
-    while (i < count) {
-        if (a.pixels[i] != b.pixels[i]) {
+    /*
+     * Copies `source` into `target` with each `factor` x `factor` block averaged into one pixel.
+     *
+     * The other half of `Document->scale_into`, and the reason the toolbar icons have smooth edges. prolang
+     * has no anti-aliasing anywhere and shape.prl deliberately writes only solid pixels, so an icon is
+     * drawn several times larger than it will be shown and reduced here — supersampling, which turns
+     * a hard edge into a run of intermediate alphas without any of the drawing code knowing about it.
+     *
+     * Colours are averaged weighted by alpha, and alpha is averaged on its own. Averaging the channels
+     * of a transparent pixel along with the rest is the classic mistake: the fully transparent pixels
+     * outside a glyph are transparent *black*, and letting their zeroed channels into the mean draws
+     * a dark halo around every edge, which is exactly what a resampled icon should not have.
+     */
+    func downsample_into(self: Document, target: Document, factor: int) : void {
+        if (factor < 1) {
+            return
+        }
+
+        let rows: int = min(target.height, self.height / factor)
+        let cols: int = min(target.width, self.width / factor)
+        let samples: int = factor * factor
+
+        let y: int = 0
+        while (y < rows) {
+            let x: int = 0
+            while (x < cols) {
+                let alpha: int = 0
+                let red: int = 0
+                let green: int = 0
+                let blue: int = 0
+
+                let dy: int = 0
+                while (dy < factor) {
+                    let row: int = ((((y * factor) + dy) * self.width) + (x * factor))
+                    let dx: int = 0
+
+                    while (dx < factor) {
+                        let sample: int = self.pixels[row + dx]
+                        let a: int = color_a(sample)
+
+                        alpha = alpha + a
+                        red = red + (color_r(sample) * a)
+                        green = green + (color_g(sample) * a)
+                        blue = blue + (color_b(sample) * a)
+
+                        dx = dx + 1
+                    }
+
+                    dy = dy + 1
+                }
+
+                let blended: int = 0
+
+                if (alpha > 0) {
+                    blended = color_argb(alpha / samples, red / alpha, green / alpha, blue / alpha)
+                }
+
+                target.pixels[(y * target.width) + x] = blended
+                x = x + 1
+            }
+            y = y + 1
+        }
+    }
+
+    // True when both documents have the same dimensions and identical pixels. Used by the tests.
+    func equals(self: Document, b: Document) : bool {
+        if (self.width != b.width || self.height != b.height) {
             return false
         }
-        i = i + 1
-    }
 
-    return true
-}
-
-// How many pixels hold `colour`. Used by the tests to check fills without comparing whole buffers.
-func doc_count_colour(doc: Document, colour: int) : int {
-    let count: int = doc_pixel_count(doc)
-    let found: int = 0
-    let i: int = 0
-    while (i < count) {
-        if (doc.pixels[i] == colour) {
-            found = found + 1
+        let count: int = self->pixel_count()
+        let i: int = 0
+        while (i < count) {
+            if (self.pixels[i] != b.pixels[i]) {
+                return false
+            }
+            i = i + 1
         }
-        i = i + 1
+
+        return true
     }
-    return found
+
+    // How many pixels hold `colour`. Used by the tests to check fills without comparing whole buffers.
+    func count_colour(self: Document, colour: int) : int {
+        let count: int = self->pixel_count()
+        let found: int = 0
+        let i: int = 0
+        while (i < count) {
+            if (self.pixels[i] == colour) {
+                found = found + 1
+            }
+            i = i + 1
+        }
+        return found
+    }
 }

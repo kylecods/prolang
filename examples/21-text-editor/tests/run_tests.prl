@@ -1,0 +1,49 @@
+/*
+ * Text editor — test suite
+ *
+ * The three pure modules the editor is built from: the key map, the buffer, the tokenizer. The
+ * application itself is a window loop and cannot run under a test harness, but everything that
+ * makes it an editor can.
+ *
+ * Run it with:
+ *
+ *   dotnet run --project src/ProLang/ProLang.csproj -- \
+ *     examples/21-text-editor/tests/run_tests.prl -o bin/editor-tests.dll
+ *   dotnet bin/editor-tests.dll
+ *
+ * It is the one file here classified `Runnable` in
+ * src/ProLang.Tests/Infrastructure/TestCorpus.cs, so `dotnet test` compiles it, runs it, and
+ * compares its output against a golden file. t_report's `assert` breaks the zero-exit-code and
+ * empty-stderr contract when a check fails.
+ *
+ * Nothing reachable from here imports "gl" or "winforms", deliberately: the whole import graph is
+ * compiled into one assembly, and a platform reference would stop it being runnable under test.
+ */
+
+import "io"
+import "testing"
+import "test_keys.prl"
+import "test_buffer.prl"
+import "test_syntax.prl"
+
+func main()
+{
+    print("text editor test suite")
+    print("")
+
+    t_reset()
+
+    t_begin_module()
+    test_keys_run()
+    t_end_module("keys")
+
+    t_begin_module()
+    test_buffer_run()
+    t_end_module("buffer")
+
+    t_begin_module()
+    test_syntax_run()
+    t_end_module("syntax")
+
+    t_report()
+}

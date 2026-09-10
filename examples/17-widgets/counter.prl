@@ -74,42 +74,40 @@ func main()
     bolds[1] = 1
 
     let fonts: FontSet = hostw_fonts(families, sizes, bolds)
-    let ui: Ui = ui_new(256)
+    let ui: Ui = Ui->new(256)
 
     while (hostw_running(host)) {
         let theme: int = activeTheme
 
         hostw_begin(host, ui)
 
-        ui_col(ui, pad: 20, gap: 16, bg: theme_background(theme))
+        ui->col(pad: 20, gap: 16, bg: theme_background(theme))
 
-            ui_text(ui, "Counter", font: Font.TITLE, fg: theme_text(theme))
+            ui->text("Counter", font: Font.TITLE, fg: theme_text(theme))
 
             // The number, on its own card, filling whatever room is left over.
-            ui_box(ui, pad: 20, radius: 8, flex: 1,
-                   bg: theme_surface(theme), align: UiAlign.CENTER, justify: UiAlign.CENTER)
-                ui_text(ui, "" + count, font: Font.TITLE, fg: theme_accent(theme))
-            ui_end(ui)
+            ui->box(pad: 20, radius: 8, flex: 1, bg: theme_surface(theme), align: UiAlign.CENTER, justify: UiAlign.CENTER)
+                ui->text("" + count, font: Font.TITLE, fg: theme_accent(theme))
+            ui->end()
 
             // No height: the row takes it from the tallest button, which takes it from its label
             // and padding. Naming a height here would be a number to keep in step with the font.
-            ui_row(ui, gap: 8)
+            ui->row(gap: 8)
                 counter_button(ui, "Decrement", Act.DECREMENT, theme)
                 counter_button(ui, "Increment", Act.INCREMENT, theme)
                 counter_button(ui, "Reset", Act.RESET, theme)
 
                 // A flexible spacer is how something is pushed to the far end of a row: it takes
                 // the leftover space, so everything after it ends up hard against the right edge.
-                ui_spacer(ui, flex: 1)
+                ui->spacer(flex: 1)
 
                 counter_button(ui, "Theme", Act.THEME, theme)
                 counter_button(ui, "Quit", Act.QUIT, theme)
-            ui_end(ui)
+            ui->end()
 
-            ui_text(ui, theme_name(theme) + "   " + hostw_scale(host) + "%",
-                    fg: theme_text_dim(theme))
+            ui->text(theme_name(theme) + "   " + hostw_scale(host) + "%", fg: theme_text_dim(theme))
 
-        ui_end(ui)
+        ui->end()
 
         let act: int = hostw_present(host, ui, fonts)
 
@@ -135,10 +133,5 @@ func main()
  * them is calling them.
  */
 func counter_button(ui: Ui, label: string, action: int, theme: int) : int {
-    return ui_button(ui, label,
-        action: action,
-        bg: theme_surface(theme),
-        fg: theme_text(theme),
-        radius: 6,
-        pad: 10)
+    return ui->button(label, action: action, bg: theme_surface(theme), fg: theme_text(theme), radius: 6, pad: 10)
 }

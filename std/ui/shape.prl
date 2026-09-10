@@ -11,7 +11,7 @@
  * whatever size the display happens to be, with no visible stair-stepping.
  *
  * There is no anti-aliasing here either. Every function writes solid pixels. Smooth edges come
- * from drawing several times larger than needed and averaging down through doc_downsample_into,
+ * from drawing several times larger than needed and averaging down through `Document->downsample_into`,
  * which is why the tests below can compare exact pixel counts: at this level a pixel is in the
  * shape or it is not.
  *

@@ -1,0 +1,123 @@
+/*
+ * ProLang OpenGL Cube Example
+ *
+ * Demonstrates hardware-accelerated 3D rendering with OpenGL in ProLang:
+ *   - Native OpenGL window creation and context setup
+ *   - Depth buffer testing (GL_DEPTH_TEST)
+ *   - Perspective projection setup (gl_perspective)
+ *   - Modelview matrix translation and 3-axis rotation (gl_rotatef, gl_translatef)
+ *   - 3D colored geometry rendering with immediate mode quads (gl_begin, gl_vertex3f, gl_color3f)
+ *   - Double-buffered frame presentation (gl_swap_buffers)
+ *   - Keyboard event handling (ESC to exit)
+ */
+
+import "io"
+import "gl"
+
+func main() {
+    print("Initializing OpenGL 3D Cube...")
+
+    let win: int = gl_create_window("OpenGL 3D Cube - ProLang", 800, 600)
+    gl_enable(GL.DEPTH_TEST)
+    gl_clear_color(0.10f, 0.12f, 0.16f, 1.0f)
+
+    let angleX: float32 = 0.0f
+    let angleY: float32 = 0.0f
+    let angleZ: float32 = 0.0f
+
+    print("OpenGL window opened. Press ESC to close.")
+
+    while (!gl_window_should_close(win)) {
+        gl_poll_events()
+
+        if (gl_key_pressed(GL.KEY_ESCAPE)) {
+            gl_close_window(win)
+        }
+
+        let w: int = gl_get_window_width(win)
+        let h: int = gl_get_window_height(win)
+        if (h <= 0) {
+            h = 1
+        }
+        if (w <= 0) {
+            w = 1
+        }
+
+        gl_viewport(0, 0, w, h)
+        gl_clear(GL.COLOR_BUFFER_BIT | GL.DEPTH_BUFFER_BIT)
+
+        // Set up perspective projection matrix
+        gl_matrix_mode(GL.PROJECTION)
+        gl_load_identity()
+        let wf: float64 = w
+        let hf: float64 = h
+        let aspect: float64 = wf / hf
+        gl_perspective(45.0, aspect, 0.1, 100.0)
+
+        // Set up modelview camera matrix
+        gl_matrix_mode(GL.MODELVIEW)
+        gl_load_identity()
+        gl_translatef(0.0f, 0.0f, -5.0f)
+
+        // Rotate cube across all three axes
+        gl_rotatef(angleX, 1.0f, 0.0f, 0.0f)
+        gl_rotatef(angleY, 0.0f, 1.0f, 0.0f)
+        gl_rotatef(angleZ, 0.0f, 0.0f, 1.0f)
+
+        // Draw 6 faces of the 3D cube
+        gl_begin(GL.QUADS)
+
+        // Front Face - Coral Red
+        gl_color3f(0.95f, 0.28f, 0.28f)
+        gl_vertex3f(-1.0f, -1.0f,  1.0f)
+        gl_vertex3f( 1.0f, -1.0f,  1.0f)
+        gl_vertex3f( 1.0f,  1.0f,  1.0f)
+        gl_vertex3f(-1.0f,  1.0f,  1.0f)
+
+        // Back Face - Emerald Green
+        gl_color3f(0.20f, 0.85f, 0.45f)
+        gl_vertex3f(-1.0f, -1.0f, -1.0f)
+        gl_vertex3f(-1.0f,  1.0f, -1.0f)
+        gl_vertex3f( 1.0f,  1.0f, -1.0f)
+        gl_vertex3f( 1.0f, -1.0f, -1.0f)
+
+        // Top Face - Royal Blue
+        gl_color3f(0.25f, 0.55f, 0.95f)
+        gl_vertex3f(-1.0f,  1.0f, -1.0f)
+        gl_vertex3f(-1.0f,  1.0f,  1.0f)
+        gl_vertex3f( 1.0f,  1.0f,  1.0f)
+        gl_vertex3f( 1.0f,  1.0f, -1.0f)
+
+        // Bottom Face - Gold / Amber
+        gl_color3f(0.95f, 0.80f, 0.20f)
+        gl_vertex3f(-1.0f, -1.0f, -1.0f)
+        gl_vertex3f( 1.0f, -1.0f, -1.0f)
+        gl_vertex3f( 1.0f, -1.0f,  1.0f)
+        gl_vertex3f(-1.0f, -1.0f,  1.0f)
+
+        // Right Face - Magenta / Purple
+        gl_color3f(0.85f, 0.25f, 0.85f)
+        gl_vertex3f( 1.0f, -1.0f, -1.0f)
+        gl_vertex3f( 1.0f,  1.0f, -1.0f)
+        gl_vertex3f( 1.0f,  1.0f,  1.0f)
+        gl_vertex3f( 1.0f, -1.0f,  1.0f)
+
+        // Left Face - Cyan / Turquoise
+        gl_color3f(0.18f, 0.85f, 0.88f)
+        gl_vertex3f(-1.0f, -1.0f, -1.0f)
+        gl_vertex3f(-1.0f, -1.0f,  1.0f)
+        gl_vertex3f(-1.0f,  1.0f,  1.0f)
+        gl_vertex3f(-1.0f,  1.0f, -1.0f)
+
+        gl_end()
+
+        gl_swap_buffers(win)
+
+        angleX = angleX + 0.6f
+        angleY = angleY + 0.8f
+        angleZ = angleZ + 0.4f
+    }
+
+    gl_close_window(win)
+    print("OpenGL application exited successfully.")
+}

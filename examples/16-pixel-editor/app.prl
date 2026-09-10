@@ -199,17 +199,16 @@ func app_run() : void
     WinFormsHelper.EndLayout(form)
 
     // ── Model ────────────────────────────────────────────────────────────────
-    let doc: Document = doc_new(app_default_width(), app_default_height(), color_rgb(255, 255, 255))
-    let preview: Document = doc_clone(doc)
-    let swatches: Document = doc_new(stripW, stripH, 0)
+    let doc: Document = Document->new(app_default_width(), app_default_height(), color_rgb(255, 255, 255))
+    let preview: Document = doc->clone()
+    let swatches: Document = Document->new(stripW, stripH, 0)
 
     // Sized to the whole image so a shape covering the canvas can still be rewound exactly.
-    let touched: array<int> = array_new(doc_pixel_count(doc))
+    let touched: array<int> = array_new(doc->pixel_count())
 
-    let history: History = hist_reset(hist_new(doc.width, doc.height, app_undo_slots()), doc)
+    let history: History = History->new(doc.width, doc.height, app_undo_slots())->reset(doc)
     let stroke: Stroke = stroke_new(Tool.PENCIL, palette_colour(0), 1)
-    let view: View = view_centre(view_new(view_fit_zoom(doc.width, doc.height, canvasW, canvasH)),
-                                 doc.width, doc.height, canvasW, canvasH)
+    let view: View = View->new(View->fit_zoom(doc.width, doc.height, canvasW, canvasH))->centre(doc.width, doc.height, canvasW, canvasH)
 
     let image: int = WinFormsHelper.CreateBitmap(doc.width, doc.height)
     let stripImage: int = WinFormsHelper.CreateBitmap(stripW, stripH)
@@ -277,7 +276,7 @@ func app_run() : void
                 app_place_controls(scale, form, topBar, leftBar, canvas, swatch, strip, status,
                                    buttons, dividers, ev[0], ev[1], canvasW, canvasH, stripW, stripH)
 
-                view = view_centre(view, doc.width, doc.height, canvasW, canvasH)
+                view = view->centre(doc.width, doc.height, canvasW, canvasH)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             }
         } elif (kind == Ev.MOUSE_DOWN) {
@@ -290,8 +289,8 @@ func app_run() : void
                     WinFormsHelper.SetBackColor(swatch, stroke.colour)
                 }
             } else {
-                let x: int = view_to_image_x(view, ev[0])
-                let y: int = view_to_image_y(view, ev[1])
+                let x: int = view->to_image_x(ev[0])
+                let y: int = view->to_image_y(ev[1])
 
                 // Right-clicking erases, which is what every editor does and saves a trip to
                 // the toolbar for the commonest correction.
@@ -317,7 +316,7 @@ func app_run() : void
                 }
 
                 if (held.commit) {
-                    history = hist_commit(history, doc)
+                    history = history->commit(doc)
                     dirty = true
                 }
 
@@ -327,8 +326,8 @@ func app_run() : void
             }
         } elif (kind == Ev.MOUSE_MOVE) {
             if (ev[7] != strip) {
-                cursorX = view_to_image_x(view, ev[0])
-                cursorY = view_to_image_y(view, ev[1])
+                cursorX = view->to_image_x(ev[0])
+                cursorY = view->to_image_y(ev[1])
 
                 if (stroke.active) {
                     stroke = tool_drag(stroke, doc, preview, touched, cursorX, cursorY)
@@ -337,13 +336,13 @@ func app_run() : void
             }
         } elif (kind == Ev.MOUSE_UP) {
             if (stroke.active) {
-                let x: int = view_to_image_x(view, ev[0])
-                let y: int = view_to_image_y(view, ev[1])
+                let x: int = view->to_image_x(ev[0])
+                let y: int = view->to_image_y(ev[1])
 
                 stroke = tool_release(stroke, doc, preview, touched, x, y)
 
                 if (stroke.commit) {
-                    history = hist_commit(history, doc)
+                    history = history->commit(doc)
                     dirty = true
                 }
 
@@ -359,8 +358,8 @@ func app_run() : void
             cursorX = 0 - 1
             cursorY = 0 - 1
         } elif (kind == Ev.WHEEL) {
-            view = view_zoom_to(view, app_wheel_zoom(view, ev[4]), ev[0], ev[1])
-            view = view_clamp_pan(view, doc.width, doc.height, canvasW, canvasH)
+            view = view->zoom_to(app_wheel_zoom(view, ev[4]), ev[0], ev[1])
+            view = view->clamp_pan(doc.width, doc.height, canvasW, canvasH)
             render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
         } elif (kind == Ev.KEY_DOWN) {
             let tool: int = app_tool_for_key(ev[3])
@@ -380,20 +379,20 @@ func app_run() : void
                 chrome_palette(strip, stripImage, swatches, cell, columns, selected)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (ev[3] == Key.Z && (ev[5] & Mod.CONTROL) != 0) {
-                history = hist_undo(history, doc)
-                doc_copy_into(doc, preview)
+                history = history->undo(doc)
+                doc->copy_into(preview)
                 dirty = true
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (ev[3] == Key.Y && (ev[5] & Mod.CONTROL) != 0) {
-                history = hist_redo(history, doc)
-                doc_copy_into(doc, preview)
+                history = history->redo(doc)
+                doc->copy_into(preview)
                 dirty = true
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (ev[3] == Key.PLUS) {
-                view = view_zoom_in(view, canvasW / 2, canvasH / 2)
+                view = view->zoom_in(canvasW / 2, canvasH / 2)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (ev[3] == Key.MINUS) {
-                view = view_zoom_out(view, canvasW / 2, canvasH / 2)
+                view = view->zoom_out(canvasW / 2, canvasH / 2)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             }
         } elif (kind == Ev.COMMAND) {
@@ -409,30 +408,29 @@ func app_run() : void
                 chrome_palette(strip, stripImage, swatches, cell, columns, selected)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.UNDO) {
-                history = hist_undo(history, doc)
-                doc_copy_into(doc, preview)
+                history = history->undo(doc)
+                doc->copy_into(preview)
                 dirty = true
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.REDO) {
-                history = hist_redo(history, doc)
-                doc_copy_into(doc, preview)
+                history = history->redo(doc)
+                doc->copy_into(preview)
                 dirty = true
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.CLEAR) {
-                doc_fill(doc, color_rgb(255, 255, 255))
-                doc_copy_into(doc, preview)
-                history = hist_commit(history, doc)
+                doc->fill(color_rgb(255, 255, 255))
+                doc->copy_into(preview)
+                history = history->commit(doc)
                 dirty = true
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.ZOOM_IN) {
-                view = view_zoom_in(view, canvasW / 2, canvasH / 2)
+                view = view->zoom_in(canvasW / 2, canvasH / 2)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.ZOOM_OUT) {
-                view = view_zoom_out(view, canvasW / 2, canvasH / 2)
+                view = view->zoom_out(canvasW / 2, canvasH / 2)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.ZOOM_FIT) {
-                view = view_centre(view_new(view_fit_zoom(doc.width, doc.height, canvasW, canvasH)),
-                                   doc.width, doc.height, canvasW, canvasH)
+                view = View->new(View->fit_zoom(doc.width, doc.height, canvasW, canvasH))->centre(doc.width, doc.height, canvasW, canvasH)
                 render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
             } elif (tag == Cmd.SIZE_UP) {
                 stroke = stroke_with_size(stroke, stroke.size + 1)
@@ -442,7 +440,7 @@ func app_run() : void
                 dirty = app_save(doc, image)
             } elif (tag == Cmd.NEW || tag == Cmd.OPEN) {
                 if (app_may_discard(dirty)) {
-                    let replacement: Document = doc_new(1, 1, 0)
+                    let replacement: Document = Document->new(1, 1, 0)
 
                     if (tag == Cmd.NEW) {
                         replacement = app_new_document()
@@ -452,15 +450,15 @@ func app_run() : void
 
                     // A different size invalidates every buffer sized from the old one.
                     doc = replacement
-                    preview = doc_clone(doc)
+                    preview = doc->clone()
 
                     // Bound to a typed local first: array_new returns an untyped `array`, and it
                     // is the declaration's type annotation that pins the element type. A bare
                     // reassignment has nothing to infer from and fails to convert.
-                    let resized: array<int> = array_new(doc_pixel_count(doc))
+                    let resized: array<int> = array_new(doc->pixel_count())
                     touched = resized
 
-                    history = hist_reset(hist_new(doc.width, doc.height, app_undo_slots()), doc)
+                    history = History->new(doc.width, doc.height, app_undo_slots())->reset(doc)
                     stroke = stroke_with_tool(stroke, stroke.tool)
                     dirty = false
 
@@ -468,8 +466,7 @@ func app_run() : void
                     image = WinFormsHelper.CreateBitmap(doc.width, doc.height)
                     WinFormsHelper.CanvasSetBitmap(canvas, image)
 
-                    view = view_centre(view_new(view_fit_zoom(doc.width, doc.height, canvasW, canvasH)),
-                                       doc.width, doc.height, canvasW, canvasH)
+                    view = View->new(View->fit_zoom(doc.width, doc.height, canvasW, canvasH))->centre(doc.width, doc.height, canvasW, canvasH)
                     render_canvas(canvas, image, doc, preview, stroke, view, activeTheme)
                 }
             }
@@ -703,7 +700,7 @@ func app_apply_window_icon(form: int, activeTheme: int) : void {
 
     let i: int = 0
     while (i < sizes.length()) {
-        let oversized: Document = doc_new(sizes[i] * scale, sizes[i] * scale, 0)
+        let oversized: Document = Document->new(sizes[i] * scale, sizes[i] * scale, 0)
 
         appicon_draw(oversized,
                      theme_background(activeTheme),
@@ -787,7 +784,7 @@ func app_new_document() : Document {
     let width: int = WinFormsHelper.InputInt("Width in pixels:", "New image", app_default_width(), 1, 512)
     let height: int = WinFormsHelper.InputInt("Height in pixels:", "New image", app_default_height(), 1, 512)
 
-    return doc_new(width, height, color_rgb(255, 255, 255))
+    return Document->new(width, height, color_rgb(255, 255, 255))
 }
 
 /*
@@ -810,7 +807,7 @@ func app_open_document(current: Document) : Document {
 
     let width: int = WinFormsHelper.GetBitmapWidth(loaded)
     let height: int = WinFormsHelper.GetBitmapHeight(loaded)
-    let opened: Document = doc_new(width, height, 0)
+    let opened: Document = Document->new(width, height, 0)
 
     // The shim fills the buffer this program allocated, so the pixels never cross the boundary
     // as a return value.

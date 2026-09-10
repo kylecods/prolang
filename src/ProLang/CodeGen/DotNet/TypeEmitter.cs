@@ -1,4 +1,5 @@
 using Mono.Cecil;
+using Mono.Cecil.Cil;
 using Mono.Cecil.Rocks;
 using ProLang.Symbols;
 
@@ -68,11 +69,19 @@ internal sealed class TypeEmitter
         _structTypes.TryGetValue(name, out definition!);
 
     /// <summary>
-    /// Emits a value type for <paramref name="structSymbol"/> and adds it to the module.
+    /// Emits a type definition for <paramref name="structSymbol"/> and adds it to the module.
     /// </summary>
     /// <remarks>
-    /// <c>SequentialLayout</c> matches what a ProLang struct means: a plain aggregate of fields in
-    /// declaration order, with no identity of its own.
+    /// <para>
+    /// A <c>struct</c> becomes a value type. <c>SequentialLayout</c> matches what that means: a plain
+    /// aggregate of fields in declaration order, with no identity of its own.
+    /// </para>
+    /// <para>
+    /// A <c>class</c> becomes a reference type over <c>System.Object</c>, and drops
+    /// <c>SequentialLayout</c> — pinning field order would block the runtime from packing reference
+    /// fields, and "no identity of its own" is exactly what a class is not. Both stay
+    /// <c>Sealed</c>: ProLang has no inheritance.
+    /// </para>
     /// </remarks>
     public TypeDefinition EmitStruct(StructSymbol structSymbol)
     {
@@ -81,16 +90,29 @@ internal sealed class TypeEmitter
             return existing;
         }
 
+        var isReference = structSymbol.IsReferenceType;
+
+        var attributes = TypeAttributes.Sealed | TypeAttributes.Public;
+        if (!isReference)
+        {
+            attributes |= TypeAttributes.SequentialLayout;
+        }
+
         var typeDef = new TypeDefinition(
             string.Empty,
             structSymbol.Name,
-            TypeAttributes.SequentialLayout | TypeAttributes.Sealed | TypeAttributes.Public,
-            _references.GetRequiredType("System.ValueType"));
+            attributes,
+            _references.GetRequiredType(isReference ? "System.Object" : "System.ValueType"));
 
         // Registered before the fields are added, so that a struct containing itself by
         // reference — or two structs referring to each other — does not recurse forever.
         _structTypes[structSymbol.Name] = typeDef;
         _module.Types.Add(typeDef);
+
+        if (isReference)
+        {
+            EmitDefaultConstructor(typeDef);
+        }
 
         foreach (var field in structSymbol.Fields)
         {
@@ -99,6 +121,40 @@ internal sealed class TypeEmitter
 
         return typeDef;
     }
+
+    /// <summary>
+    /// Emits the parameterless constructor a reference type needs in order to be created.
+    /// </summary>
+    /// <remarks>
+    /// <c>newobj</c> takes a constructor reference, and there is no allocating alternative:
+    /// <c>initobj</c> on a class merely nulls a slot. The body is the minimum a verifiable
+    /// constructor can be — chain to <c>System.Object</c>'s and return.
+    /// </remarks>
+    private void EmitDefaultConstructor(TypeDefinition typeDef)
+    {
+        var objectConstructor = _references.ResolveMethod("System.Object", ".ctor", [])
+            ?? throw new InvalidOperationException(
+                "Could not resolve 'System.Object..ctor()'. The .NET reference assemblies could not "
+                + "be located or are incomplete.");
+
+        var constructor = new MethodDefinition(
+            ".ctor",
+            MethodAttributes.Public | MethodAttributes.HideBySig | MethodAttributes.SpecialName | MethodAttributes.RTSpecialName,
+            _references.GetRequiredType("System.Void"));
+
+        var il = constructor.Body.GetILProcessor();
+        il.Emit(OpCodes.Ldarg_0);
+        il.Emit(OpCodes.Call, objectConstructor);
+        il.Emit(OpCodes.Ret);
+
+        typeDef.Methods.Add(constructor);
+    }
+
+    /// <summary>The parameterless constructor of an emitted reference type.</summary>
+    public static MethodReference GetDefaultConstructor(TypeDefinition typeDef) =>
+        typeDef.Methods.FirstOrDefault(m => m.IsConstructor && m.Parameters.Count == 0)
+        ?? throw new InvalidOperationException(
+            $"Reference type '{typeDef.Name}' was emitted without a parameterless constructor.");
 
     /// <summary>
     /// Maps a ProLang function type onto a BCL <c>Action</c> or <c>Func</c>.
@@ -190,6 +246,11 @@ internal sealed class TypeEmitter
         return type.Name switch
         {
             "any" => _references.GetRequiredType("System.Object"),
+
+            // `null` is not a type anyone writes, but it reaches here whenever a null literal flows
+            // into `any` and the emitter asks whether the source is a value type.
+            "null" => _references.GetRequiredType("System.Object"),
+
             "bool" => _references.GetRequiredType("System.Boolean"),
             "int" => _references.GetRequiredType("System.Int32"),
             "uint32" => _references.GetRequiredType("System.UInt32"),

@@ -1,0 +1,146 @@
+/*
+ * `imp` blocks — functions associated with a type.
+ *
+ * ProLang had no way to say that a function belongs to a type, so the whole standard library spells
+ * it by hand: 26 files, 26 prefixes, and every one of its 437 functions named `<prefix>_<verb>`.
+ * `imp` is that convention made real.
+ *
+ * A member whose first parameter is named `self` is an instance method, reached through a value; one
+ * without is associated with the type itself. Both are reached with `->`.
+ *
+ * The receiver is passed as argument 0, which is how array, string and .NET instance methods have
+ * always been encoded — so `self` is an ordinary parameter from the binder's point of view, and
+ * named arguments, default values and per-argument conversion all work through an arrow with no
+ * special case.
+ */
+
+import "io"
+import "array"
+
+class Rect {
+    x: int;
+    y: int;
+}
+
+imp Rect {
+    // Associated: no `self`, so it is reached through the type.
+    func new(x: int, y: int): Rect {
+        return Rect { x: x, y: y }
+    }
+
+    func origin(): Rect {
+        return Rect { x: 0, y: 0 }
+    }
+
+    // Instance: `self` first, so it is reached through a value.
+    func area(self: Rect): int {
+        return self.x * self.y
+    }
+
+    func scaled(self: Rect, by: int = 2): Rect {
+        return Rect { x: self.x * by, y: self.y * by }
+    }
+
+    func wider(self: Rect, by: int): Rect {
+        return Rect { x: self.x + by, y: self.y }
+    }
+}
+
+// A value struct. Its mutators return a new struct and the caller reassigns, because a ProLang
+// struct is a .NET value type and a write to `self.count` would land in the callee's copy. `imp`
+// changes how these are spelled, not what they mean.
+struct IntStack {
+    items: array<int>;
+    count: int;
+}
+
+imp IntStack {
+    func new(capacity: int): IntStack {
+        let items: array<int> = array_new(capacity)
+        return IntStack { items: items, count: 0 }
+    }
+
+    func push(self: IntStack, value: int): IntStack {
+        if (self.count >= self.items.length()) {
+            return self
+        }
+
+        self.items[self.count] = value
+        return IntStack { items: self.items, count: self.count + 1 }
+    }
+
+    func peek(self: IntStack): int {
+        if (self.count == 0) {
+            return 0
+        }
+
+        return self.items[self.count - 1]
+    }
+
+    func depth(self: IntStack): int {
+        return self.count
+    }
+}
+
+// An imp block may also target an enum.
+enum Suit {
+    HEARTS,
+    SPADES
+}
+
+imp Suit {
+    func name(value: int): string {
+        if (value == Suit.HEARTS) {
+            return "hearts"
+        }
+
+        return "spades"
+    }
+}
+
+// `Type->member` with no argument list is the function itself, as a value. Its signature includes
+// `self`, so an instance method is a function of its receiver.
+func apply(f: func(Rect) : int, r: Rect) : int
+{
+    return f(r)
+}
+
+func transform(f: func(Rect, int) : Rect, r: Rect, n: int) : int
+{
+    return f(r, n)->area()
+}
+
+func main()
+{
+    // ── Associated functions ─────────────────────────────────────────────────
+    let r = Rect->new(3, 4)
+    print("area          = " + r->area())
+    print("origin area   = " + Rect->origin()->area())
+
+    // ── Defaults and named arguments reach through the arrow ─────────────────
+    print("default arg   = " + r->scaled()->area())
+    print("positional    = " + r->scaled(3)->area())
+    print("named         = " + r->scaled(by: 4)->area())
+
+    // ── An instance method may take its receiver explicitly ──────────────────
+    print("explicit self = " + Rect->area(r))
+
+    // ── Chained arrows ───────────────────────────────────────────────────────
+    print("chained       = " + r->scaled(2)->wider(1)->area())
+
+    // ── A value struct keeps its reassignment convention ─────────────────────
+    let s = IntStack->new(4)
+    s = s->push(10)
+    s = s->push(20)
+    s = s->push(30)
+    print("stack         = " + s->peek() + "," + s->depth())
+
+    // ── An enum can carry associated functions too ───────────────────────────
+    print("enum          = " + Suit->name(Suit.HEARTS) + "," + Suit->name(Suit.SPADES))
+
+    // ── Function values ──────────────────────────────────────────────────────
+    let area = Rect->area
+    print("as value      = " + apply(area, r))
+    print("passed direct = " + apply(Rect->area, Rect->new(5, 6)))
+    print("two params    = " + transform(Rect->wider, r, 7))
+}

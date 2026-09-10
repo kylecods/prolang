@@ -1,0 +1,94 @@
+/*
+ * Regression: a struct field naming a struct that is not yet declared.
+ *
+ * The binder used to bind a struct's field types before declaring the struct itself, and it walked
+ * the declarations in a single sequential pass. So a field could only name a struct that appeared
+ * textually earlier: `struct Outer { inner: Inner }` ahead of `Inner` reported "Type 'Inner'
+ * doesn't exist", and so did a struct naming itself through an `array<T>`. Neither is a real
+ * restriction — `TypeEmitter` registers a definition before adding its fields precisely so a type
+ * can reference itself, and `CEmitter` emits forward typedefs for the same reason.
+ *
+ * Structs are now declared in one pass and have their fields bound in a second, against the same
+ * symbol instances, so a reference bound early is completed retroactively.
+ *
+ * What is still an error is a struct that contains itself *by value*, which has no finite size;
+ * that is reported as its own diagnostic rather than as an undefined type. An array field does not
+ * count, because an array is one reference of known size however deeply it nests.
+ */
+
+import "io"
+import "array"
+
+// ── Forward reference: Outer names Inner, declared below ─────────────────────
+struct Outer {
+    inner: Inner;
+    tag:   int;
+}
+
+struct Inner {
+    value: int;
+}
+
+// ── Self-reference through an array ──────────────────────────────────────────
+struct Node {
+    value: int;
+    kids:  array<Node>;
+}
+
+// ── Mutual reference, each side through an array ─────────────────────────────
+struct Ping {
+    pongs: array<Pong>;
+    n:     int;
+}
+
+struct Pong {
+    pings: array<Ping>;
+    n:     int;
+}
+
+// ── A generic instantiated before its own template is bound ──────────────────
+// Holder names Box<Payload> while Box's fields are still unbound. Substituting the template's
+// fields eagerly at that moment captured an empty field list, and TypeEmitter then cached the
+// empty definition under the name "Box<Payload>" — an assembly that verified, ran, and gave
+// wrong answers. The substitution is deferred to first read instead.
+struct Holder {
+    boxed: Box<Payload>;
+    tag:   int;
+}
+
+struct Box<T> {
+    value: T;
+    count: int;
+}
+
+struct Payload {
+    n: int;
+}
+
+func sum_kids(node: Node) : int
+{
+    let total = node.value
+    for (i = 0 to length(node.kids) - 1) {
+        total = total + node.kids[i].value
+    }
+    return total
+}
+
+func main()
+{
+    let o = Outer { inner: Inner { value: 7 }, tag: 3 }
+    print("forward     = " + o.inner.value + "/" + o.tag)
+
+    let root: Node = Node { value: 1, kids: array_new(2) }
+    root.kids[0] = Node { value: 2, kids: array_new(0) }
+    root.kids[1] = Node { value: 3, kids: array_new(0) }
+    print("recursive   = " + root.value + "," + root.kids[0].value + "," + root.kids[1].value)
+    print("sum_kids    = " + sum_kids(root))
+
+    let p = Ping { pongs: array_new(1), n: 10 }
+    p.pongs[0] = Pong { pings: array_new(0), n: 20 }
+    print("mutual      = " + p.n + "," + p.pongs[0].n)
+
+    let h = Holder { boxed: Box<Payload> { value: Payload { n: 42 }, count: 2 }, tag: 9 }
+    print("generic fwd = " + h.boxed.value.n + "," + h.boxed.count + "," + h.tag)
+}

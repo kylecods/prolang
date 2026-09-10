@@ -54,7 +54,7 @@ func render_canvas(canvasId: int, bitmapId: int, doc: Document, preview: Documen
 func render_status(stroke: Stroke, view: View, doc: Document, x: int, y: int, dirty: bool) : string {
     let position: string = util_pad_left("-", 4) + "," + util_pad_left("-", 4)
 
-    if (doc_in_bounds(doc, x, y)) {
+    if (doc->in_bounds(x, y)) {
         position = util_pad_left("" + x, 4) + "," + util_pad_left("" + y, 4)
     }
 

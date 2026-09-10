@@ -72,7 +72,11 @@ internal static class TestCorpus
         new("tests/language/datatypes/types.prl", CorpusKind.Runnable),
         new("tests/language/functions/default-and-named-arguments.prl", CorpusKind.Runnable),
         new("tests/language/functions/function-values.prl", CorpusKind.Runnable),
+        new("tests/language/imp/imp-blocks.prl", CorpusKind.Runnable),
+        new("tests/language/classes/recursive.prl", CorpusKind.Runnable),
+        new("tests/language/classes/reference-semantics.prl", CorpusKind.Runnable),
         new("tests/language/structs/array-of-structs.prl", CorpusKind.Runnable),
+        new("tests/language/structs/forward-and-recursive-references.prl", CorpusKind.Runnable),
         new("tests/language/structs/nested-field-assignment.prl", CorpusKind.Runnable),
         new("tests/language/entry-point/basic-main.prl", CorpusKind.Runnable),
         new("tests/language/entry-point/multiple-prints.prl", CorpusKind.Runnable),
@@ -157,10 +161,16 @@ internal static class TestCorpus
             "Library — test cases; run by tests/std/run_tests.prl."),
         new("examples/17-widgets/counter.prl", CorpusKind.CompileOnly,
             "Windows Forms GUI with an event loop that only ends when the window is closed."),
+        new("examples/17-widgets/counter_gl.prl", CorpusKind.CompileOnly,
+            "OpenGL GUI with an event loop that only ends when the window is closed."),
         new("examples/18-psp-cube/cube.prl", CorpusKind.CompileOnly,
             "Library — the cube scene painter; exercised by examples/18-psp-cube/tests/run_tests.prl."),
         new("examples/18-psp-cube/cube_desktop.prl", CorpusKind.CompileOnly,
             "Windows Forms GUI with an event loop that only ends when the window is closed."),
+        new("examples/19-opengl-cube/cube.prl", CorpusKind.CompileOnly,
+            "Native OpenGL GUI with an event loop that only ends when the window is closed."),
+        new("examples/20-opengl-widgets/main.prl", CorpusKind.CompileOnly,
+            "OpenGL UI widgets with an embedded 3D scene; event loop only ends when window is closed."),
         new("tests/std/test_font.prl", CorpusKind.CompileOnly,
             "Library — test cases; run by tests/std/run_tests.prl."),
         new("tests/std/test_widget.prl", CorpusKind.CompileOnly,
@@ -188,6 +198,27 @@ internal static class TestCorpus
             "CODEGEN BUG: compiles and is snapshotted, but `any as int` on a boxed value NREs at "
             + "runtime in __UserMain, so its output cannot be asserted. The snapshot captures the "
             + "faulty IL; fixing the bug is expected to change it."),
+
+        // ── Text editor ──────────────────────────────────────────────────────────────────
+        // The three pure modules are exercised by tests/run_tests.prl; the app itself is a
+        // window loop over the OpenGL host and cannot run under a test harness.
+        new("examples/21-text-editor/keys.prl", CorpusKind.CompileOnly,
+            "Library — virtual-key to character map; exercised by tests/run_tests.prl."),
+        new("examples/21-text-editor/buffer.prl", CorpusKind.CompileOnly,
+            "Library — text buffer, cursor and undo; exercised by tests/run_tests.prl."),
+        new("examples/21-text-editor/syntax.prl", CorpusKind.CompileOnly,
+            "Library — prolang tokenizer for highlighting; exercised by tests/run_tests.prl."),
+        new("examples/21-text-editor/editor.prl", CorpusKind.CompileOnly,
+            "OpenGL GUI with an event loop that only ends when the window is closed."),
+        new("examples/21-text-editor/main.prl", CorpusKind.CompileOnly,
+            "Interactive GUI entry point; opens a window that only closes when the user does."),
+        new("examples/21-text-editor/tests/test_keys.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/run_tests.prl."),
+        new("examples/21-text-editor/tests/test_buffer.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/run_tests.prl."),
+        new("examples/21-text-editor/tests/test_syntax.prl", CorpusKind.CompileOnly,
+            "Library — test cases; run by tests/run_tests.prl."),
+        new("examples/21-text-editor/tests/run_tests.prl", CorpusKind.Runnable),
 
         // ── Pre-existing failures, tracked so they cannot regress further or vanish ───────
         new("tests/language/parser/test-parser-simple.prl", CorpusKind.Runnable),

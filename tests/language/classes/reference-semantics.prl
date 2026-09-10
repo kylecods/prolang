@@ -1,0 +1,97 @@
+/*
+ * `class` — a heap-allocated type that is referred to rather than copied.
+ *
+ * A struct is a .NET value type, so passing one to a function passes a copy and assigning to a
+ * scalar field of that copy is invisible to the caller. Every non-trivial type in std/ works around
+ * this the same way: it holds an `array<int>` and keeps its counters in there, because writes
+ * *through* an array reference are visible where writes to a scalar field are not. std/ui/widget.prl
+ * says so directly — "a scalar count field would be incremented on a copy and thrown away".
+ *
+ * A class removes the workaround rather than papering over it. The reference is the value, so a
+ * scalar field survives being passed, and two names for the same object see each other's writes.
+ *
+ * What this file does NOT exercise is `null`, which is still bound as the integer 0. Terminated
+ * linked structures wait for that.
+ */
+
+import "io"
+import "array"
+
+class Counter {
+    count: int;
+    label: string;
+}
+
+class Pair {
+    left:  Counter;
+    right: Counter;
+}
+
+struct ValueCounter {
+    count: int;
+}
+
+// The case the language could not express: a scalar field mutated through a parameter.
+func bump(c: Counter) : void
+{
+    c.count = c.count + 1
+}
+
+// The same function over a struct, kept as the contrast. It writes to a copy, so the caller sees
+// nothing — this is correct value-type behaviour, not a bug, and it must stay this way.
+func bump_value(c: ValueCounter) : void
+{
+    c.count = c.count + 1
+}
+
+func make_counter(n: int) : Counter
+{
+    return Counter { count: n, label: "made" }
+}
+
+func main()
+{
+    // ── Mutation through a parameter ─────────────────────────────────────────
+    let c = Counter { count: 0, label: "c" }
+    bump(c)
+    bump(c)
+    bump(c)
+    print("through param  = " + c.count)
+
+    let v = ValueCounter { count: 0 }
+    bump_value(v)
+    bump_value(v)
+    print("value copy     = " + v.count)
+
+    // ── Aliasing: two names, one object ──────────────────────────────────────
+    let a = Counter { count: 1, label: "a" }
+    let b = a
+    b.count = 5
+    print("alias          = " + a.count + "," + b.count)
+
+    // ── A class field holding a class ────────────────────────────────────────
+    let shared = Counter { count: 100, label: "shared" }
+    let p = Pair { left: shared, right: shared }
+    p.left.count = 7
+    print("nested         = " + p.right.count + "," + shared.count)
+
+    // ── array<Class>: element assignment writes to the object, not a copy ────
+    let arr: array<Counter> = array_new(2)
+    arr[0] = Counter { count: 10, label: "zero" }
+    arr[1] = Counter { count: 20, label: "one" }
+    arr[0].count = 99
+    print("array element  = " + arr[0].count + "," + arr[1].count)
+
+    // Holding the element by name and writing through it reaches the array.
+    let held = arr[1]
+    held.count = 42
+    print("array alias    = " + arr[1].count)
+
+    // ── Assigning to a field of a call result ────────────────────────────────
+    // For a struct this is rejected: there is no storage location to write into, so the write
+    // would land in a discarded copy. A call returning a class yields the reference itself, so
+    // there is nothing temporary about it.
+    let fresh = make_counter(3)
+    fresh.count = 4
+    print("from call      = " + fresh.count + "," + fresh.label)
+}

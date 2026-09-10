@@ -32,6 +32,24 @@ internal sealed class BoundBinaryOperator
         public TypeSymbol RightType { get; }
         public TypeSymbol Type { get; }
 
+        /// <summary>
+        /// An <c>==</c> or <c>!=</c> comparing references, built on demand rather than looked up.
+        /// </summary>
+        /// <remarks>
+        /// The table below pairs exact operand types, which works for the primitives it was written
+        /// for but cannot express "any reference type, against null" — every class a program declares
+        /// would need its own row. The binder decides that a comparison is legal and asks for the
+        /// operator here.
+        /// </remarks>
+        public static BoundBinaryOperator ReferenceEquality(SyntaxKind syntaxKind, TypeSymbol leftType, TypeSymbol rightType)
+        {
+            var kind = syntaxKind == SyntaxKind.EqualsEqualsToken
+                ? BoundBinaryOperatorKind.Equals
+                : BoundBinaryOperatorKind.NotEquals;
+
+            return new BoundBinaryOperator(syntaxKind, kind, leftType, rightType, TypeSymbol.Bool);
+        }
+
         private static readonly BoundBinaryOperator[] _operators =
         [
             // ── int (32-bit signed) ──────────────────────────────────────────
