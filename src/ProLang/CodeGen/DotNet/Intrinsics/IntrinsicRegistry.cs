@@ -90,5 +90,14 @@ internal static class IntrinsicRegistry
         // ── Threading ────────────────────────────────────────────────────────────────────
         [BuiltInFunctions.ThreadSleep] = Intrinsic.Call("System.Threading.Thread", "Sleep", "System.Int32"),
         [BuiltInFunctions.TimeMillis] = Intrinsic.Call(RuntimeLibrary.TimeOps, "Millis"),
+        [BuiltInFunctions.PspInit] = Intrinsic.Call(RuntimeLibrary.PspOps, "Init"),
+        [BuiltInFunctions.PspClear] = Intrinsic.Call(RuntimeLibrary.PspOps, "Clear", "System.Int32"),
+        [BuiltInFunctions.PspFillRect] = Intrinsic.Call(RuntimeLibrary.PspOps, "FillRect", "System.Int32", "System.Int32", "System.Int32", "System.Int32", "System.Int32"),
+        [BuiltInFunctions.PspDrawText] = Intrinsic.Call(RuntimeLibrary.PspOps, "DrawText", "System.Int32", "System.Int32", "System.String", "System.Int32"),
+        [BuiltInFunctions.PspSwapBuffers] = Intrinsic.Call(RuntimeLibrary.PspOps, "SwapBuffers"),
+        [BuiltInFunctions.PspVsync] = Intrinsic.Call(RuntimeLibrary.PspOps, "Vsync"),
+        [BuiltInFunctions.PspButtonsHeld] = Intrinsic.Call(RuntimeLibrary.PspOps, "ButtonsHeld"),
+        [BuiltInFunctions.PspButtonPressed] = Intrinsic.Call(RuntimeLibrary.PspOps, "ButtonPressed", "System.Int32"),
+        [BuiltInFunctions.PspDrawLine] = Intrinsic.Call(RuntimeLibrary.PspOps, "DrawLine", "System.Int32", "System.Int32", "System.Int32", "System.Int32", "System.Int32"),
     };
 }

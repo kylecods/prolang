@@ -1,0 +1,17 @@
+TARGET = prolang-msil
+.DEFAULT_GOAL := all
+OBJS = runtime.o
+RUNTIME_DIR ?= ../../runtime/psp-v
+OPT ?= -O3
+CFLAGS = $(OPT) -G0 -std=gnu11 -ffunction-sections -fdata-sections -fno-strict-aliasing
+CFLAGS += -I$(RUNTIME_DIR) -include $(RUNTIME_DIR)/psp_compat.h
+CXXFLAGS = $(CFLAGS) -fno-exceptions -fno-rtti
+ASFLAGS = $(CFLAGS)
+LDFLAGS = -Wl,--gc-sections
+LIBS = -lpspgu -lpspge -lpspdisplay -lpspctrl -lm
+BUILD_PRX = 1
+EXTRA_TARGETS = EBOOT.PBP
+PSP_EBOOT_TITLE = ProLang MSIL Runtime
+PSPSDK := $(shell psp-config --pspsdk-path)
+runtime.o: $(RUNTIME_DIR)/host.h $(RUNTIME_DIR)/psp_compat.h $(RUNTIME_DIR)/gc.h $(RUNTIME_DIR)/../../native/prl_psp.h
+include $(PSPSDK)/lib/build.mak

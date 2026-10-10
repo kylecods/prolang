@@ -1,0 +1,5 @@
+import "io"
+func main() {
+    let divisor = 0
+    print(42 / divisor)
+}

@@ -1,0 +1,39 @@
+import "io"
+import "test"
+
+struct Inner { value: int }
+struct Packet { inner: Inner, data: array<int> }
+global saved: Packet = Packet { inner: Inner { value: 4 }, data: [1, 2] }
+
+func change(p: Packet) : Packet {
+    p.inner.value = 9
+    p.data[0] = 7
+    return p
+}
+func add(x: int, y: int) : int { return x + y }
+func apply(f: func(int, int) : int, x: int) : int { return f(x, 2) }
+func mutate(p: Packet) { p.data[1] = 11 }
+func call_mutator(f: func(Packet), p: Packet) { f(p) }
+func main() {
+    let p: Packet = saved
+    let q: Packet = change(p)
+    assert(p.inner.value == 4, "struct parameters must copy")
+    assert(q.inner.value == 9, "nested field addresses must update returned struct")
+    assert(saved.data[0] == 7, "array fields must alias through struct copies")
+    saved.inner.value = 6
+    assert(p.inner.value == 4, "global struct assignment must copy")
+    let table: array<Packet> = array_new(2)
+    table[0] = q
+    table[0].inner.value = 12
+    assert(q.inner.value == 9, "array stores must copy structs")
+    assert(table[0].inner.value == 12, "nested array field address")
+    assert(table[1].inner.value == 0, "struct arrays must initialize recursively")
+    call_mutator(mutate, q)
+    assert(q.data[1] == 11, "Action delegate with struct parameter")
+    assert(apply(add, 40) == 42, "Func delegate")
+    print(saved.inner.value)
+    print(q.inner.value)
+    print(table[0].inner.value)
+    print(apply(add, 40))
+    print("STRUCTS PASS")
+}

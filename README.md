@@ -3,6 +3,9 @@
 A statically typed programming language that compiles to .NET MSIL, with additional backends that
 transpile to C99 for native and PlayStation Portable targets.
 
+An experimental [PSP MSIL interpreter written in V](runtime/psp-v/README.md) can also load
+and execute a supported subset of the normal compiled `.dll` directly from a homebrew EBOOT.
+
 ```prolang
 import "io"
 

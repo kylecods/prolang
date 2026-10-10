@@ -1,0 +1,40 @@
+import "io"
+import "test"
+
+func sum(n: int): int {
+    let total = 0
+    while (n > 0) {
+        total = total + n
+        n = n - 1
+    }
+    return total
+}
+
+func main() {
+    let a = 2147483647
+    assert(a + 1 == 0 - 2147483647 - 1, "int32 wraparound")
+    let x = 0 - 13
+    assert(x / 5 == 0 - 2, "signed division")
+    assert(x % 5 == 0 - 3, "signed remainder")
+    assert(sum(100) == 5050, "starg and backward branches")
+    let flags = 17
+    assert((flags & 16) == 16, "and")
+    assert((flags | 2) == 19, "or")
+    assert((flags ^ 1) == 16, "xor")
+    assert((flags << 2) == 68, "shift left")
+    assert((flags >> 1) == 8, "shift right")
+    let chars: array<char> = ['a', 'Z']
+    chars[0] = 'V'
+    assert(chars[0] == 'V', "char array")
+    let bytes: array<uint8> = array_new(2)
+    bytes[0] = uint8(255)
+    assert(int(bytes[0]) == 255, "byte array")
+    let words: array<string> = ["hé", "😀"]
+    assert(words[0].length() == 2, "Unicode BMP")
+    assert(words[1].length() == 2, "Unicode surrogate pair")
+    assert(words[1].substring(0, 2) == "😀", "surrogate substring")
+    let alias = words
+    alias[0] = "changed"
+    assert(words[0] == "changed", "array aliases")
+    print("ARITHMETIC PASS")
+}
