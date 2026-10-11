@@ -1,0 +1,6 @@
+import "io"
+func deep(n: int): int {
+    if (n == 0) { return 0 }
+    return 1 + deep(n - 1)
+}
+func main() { print(deep(1000)) }

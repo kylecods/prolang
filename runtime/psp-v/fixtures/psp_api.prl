@@ -1,0 +1,16 @@
+import "psp"
+import "io"
+import "test"
+
+func main() {
+    psp_init()
+    psp_clear(0)
+    psp_fill_rect(10, 10, 100, 40, 16711680)
+    psp_draw_line(10, 60, 110, 100, 65280)
+    psp_draw_text(10, 110, "MSIL PSP", 16777215)
+    let held: int = psp_buttons_held()
+    assert(psp_button_pressed(512) == ((held & 512) != 0), "controller bridge")
+    psp_swap_buffers()
+    psp_vsync()
+    print("PSP API PASS")
+}

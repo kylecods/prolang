@@ -1,0 +1,34 @@
+import "io"
+import "test"
+
+global counter: int = 7
+
+func factorial(n: int): int {
+    if (n <= 1) { return 1 }
+    return n * factorial(n - 1)
+}
+
+func main(args: array<string>) {
+    print("ProLang MSIL on PSP")
+    let values: array<int> = array_new(5)
+    let sum: int = 0
+    for (let i = 0 to 4) {
+        values[i] = i * i
+        sum = sum + values[i]
+    }
+    counter = counter + sum
+    assert(counter == 37, "globals, arrays and loops")
+    assert(factorial(6) == 720, "recursive method calls")
+    let message = "Hello " + "PSP"
+    assert(message.length() == 9, "string length")
+    assert(message.charAt(6) == 'P', "UTF-16 char indexing")
+    assert(message.substring(6, 9) == "PSP", "substring")
+    assert(message.indexOf("PSP") == 6, "indexOf")
+    print(message)
+    print(counter)
+    print(factorial(6))
+    print(true)
+    print('V')
+    print("args=" + string(args.length()))
+    print("PASS")
+}

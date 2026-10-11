@@ -287,15 +287,15 @@ internal static class BuiltInFunctions
 
     // PSP graphics / input
     //
-    // These compile only under --emit-psp, where they become calls into the PSP SDK. A program
-    // that imports "psp" and is built for .NET will bind but has nothing to run against, which is
-    // why each of these says so.
+    // --emit-psp calls the SDK directly. Normal MSIL calls ProLang.Runtime.PspOps,
+    // which the V PSP interpreter implements; executing those imports on the CLR
+    // throws PlatformNotSupportedException.
     public static readonly FunctionSymbol PspInit = new("psp_init",
         ImmutableArray<ParameterSymbol>.Empty, TypeSymbol.Void)
     {
         Documentation =
             "Sets up the PSP's graphics hardware and display list. Call once, before drawing " +
-            "anything.\n\nPSP only — build with `--emit-psp`.",
+            "anything.\n\nPSP only — use `--emit-psp` or the V MSIL runtime.",
     };
 
     public static readonly FunctionSymbol PspClear = new("psp_clear",
@@ -303,7 +303,7 @@ internal static class BuiltInFunctions
     {
         Documentation =
             "Fills the whole frame with one colour, starting a frame.\n\n" +
-            "`color` is packed ARGB — see `ui/color`. PSP only.",
+            "`color` is packed RGB (0xRRGGBB). PSP only.",
     };
 
     public static readonly FunctionSymbol PspFillRect = new("psp_fill_rect",
@@ -338,7 +338,7 @@ internal static class BuiltInFunctions
     {
         Documentation =
             "Shows the frame that has just been drawn and starts drawing into the other buffer.\n\n" +
-            "Call `psp_vsync()` first, or the swap can happen mid-scan and tear. PSP only.",
+            "The swap waits for vertical blank. PSP only.",
     };
 
     public static readonly FunctionSymbol PspVsync = new("psp_vsync",
