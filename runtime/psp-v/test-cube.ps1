@@ -62,6 +62,14 @@ try {
             $median = if ($timings.Count % 2) { $timings[$middle] } else { ($timings[$middle - 1] + $timings[$middle]) / 2 }
             Write-Host "Frame time: median $median ms (about $([math]::Round(1000 / [math]::Max(1, $median), 1)) fps), $($timings.Count) steady frames"
         }
+        # Frame time is locked to vblank once a frame fits in one; work time is what the frame
+        # actually cost before waiting for the GE and the display, i.e. the remaining headroom.
+        $work = @([regex]::Matches($log, 'FRAME (\d+)[^\r\n]* work_us=(\d+)') |
+            Where-Object { [int]$_.Groups[1].Value -gt 1 -and ([int]$_.Groups[1].Value - 1) % 30 -ne 0 } |
+            ForEach-Object { [int]$_.Groups[2].Value } | Sort-Object)
+        if ($work.Count) {
+            Write-Host "Work before present: median $($work[[int][math]::Floor($work.Count / 2)] / 1000) ms, max $($work[-1] / 1000) ms (16.7 ms per vblank)"
+        }
         Write-Host "Frame captures: $out/first-frame.bmp and $out/last-frame.bmp"
     } finally {
         if (!$process.HasExited) {

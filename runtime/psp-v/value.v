@@ -152,20 +152,6 @@ fn equal_values(a Value, b Value) bool {
 	}
 }
 
-fn pop(mut stack []Value) !Value {
-	if stack.len == 0 {
-		return error('evaluation stack underflow')
-	}
-	return stack.pop()
-}
-
-fn slot(values []Value, index int) !Value {
-	if index < 0 || index >= values.len {
-		return error('argument/local index out of bounds')
-	}
-	return copy_value(values[index])
-}
-
 // Struct payloads are immutable snapshots. A field write copies only the path
 // being changed, so ordinary CLI value loads can share the payload safely.
 fn copy_value(v Value) Value {
@@ -235,11 +221,4 @@ fn field_address(addr Value, field int) !Value {
 			path: path
 		}
 	}
-}
-
-fn store(mut values []Value, index int, value Value) ! {
-	if index < 0 || index >= values.len {
-		return error('argument/local index out of bounds')
-	}
-	values[index] = value
 }

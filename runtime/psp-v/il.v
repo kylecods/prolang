@@ -20,6 +20,12 @@ struct Body {
 	locals    []int
 	signature Signature
 	max_stack int
+mut:
+	// The execution form; see decode.v.
+	fast []Fast
+	// Each local's zero value. Struct payloads are immutable snapshots, so one per body is
+	// shared by every call rather than rebuilt on entry.
+	local_init []Value
 }
 
 fn (im &Image) body(m Method) !Body {

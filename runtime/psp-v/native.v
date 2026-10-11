@@ -30,73 +30,71 @@ fn is_delegate(owner string) bool {
 		|| owner.starts_with('System.Func`')
 }
 
-fn (mut vm Vm) native_call(key string, name string, sig Signature, args []Value) !Value {
-	match key {
-		'ProLang.Runtime.PspOps.Init:->1' {
+// Runs a supported runtime or BCL call. The site was matched to its implementation once, by
+// `native_id` at decode time, rather than by comparing key strings on every call.
+fn (mut vm Vm) native_call(site &NativeSite, args []Value) !Value {
+	match site.id {
+		.psp_init {
 			C.prl_host_psp_init()
 		}
-		'ProLang.Runtime.PspOps.Clear:8,->1' {
+		.psp_clear {
 			C.prl_host_clear(args[0].int_value()!)
 		}
-		'ProLang.Runtime.PspOps.FillRect:8,8,8,8,8,->1' {
+		.psp_fill_rect {
 			C.prl_host_rect(args[0].int_value()!, args[1].int_value()!, args[2].int_value()!,
 				args[3].int_value()!, args[4].int_value()!)
 		}
-		'ProLang.Runtime.PspOps.DrawLine:8,8,8,8,8,->1' {
+		.psp_draw_line {
 			C.prl_host_line(args[0].int_value()!, args[1].int_value()!, args[2].int_value()!,
 				args[3].int_value()!, args[4].int_value()!)
 		}
-		'ProLang.Runtime.PspOps.DrawText:8,8,14,8,->1' {
+		.psp_draw_text {
 			s := utf8(args[2].string_value()!)
 			C.prl_host_text(args[0].int_value()!, args[1].int_value()!, s.str, s.len,
 				args[3].int_value()!)
 		}
-		'ProLang.Runtime.PspOps.SwapBuffers:->1' {
+		.psp_swap {
 			C.prl_host_perf(vm.steps, vm.calls)
 			C.prl_host_swap()
 			C.prl_host_gc_stats()
 			vm.steps = 0
 			vm.calls = 0
 		}
-		'ProLang.Runtime.PspOps.Vsync:->1' {
+		.psp_vsync {
 			C.prl_host_vsync()
 		}
-		'ProLang.Runtime.PspOps.ButtonsHeld:->8' {
+		.psp_buttons_held {
 			return integer(C.prl_host_buttons())
 		}
-		'ProLang.Runtime.PspOps.ButtonPressed:8,->2' {
+		.psp_button_pressed {
 			return integer(if C.prl_host_buttons() & args[0].int_value()! != 0 { 1 } else { 0 })
 		}
-		'ProLang.Runtime.Output.Initialize:->1' {
+		.out_init {
 			vm.output = ''
 			return Value{}
 		}
-		'ProLang.Runtime.Output.Flush:->1' {
+		.out_flush {
 			vm.flush()
 			return Value{}
 		}
-		'ProLang.Runtime.Output.Write:14,->1', 'ProLang.Runtime.Output.Write:28,->1',
-		'ProLang.Runtime.Output.Write:8,->1', 'ProLang.Runtime.Output.Write:9,->1',
-		'ProLang.Runtime.Output.Write:2,->1', 'ProLang.Runtime.Output.Write:3,->1' {
-			vm.append_output(vm.format(args[0], sig.params[0])! + utf16('\n'))!
+		.out_write {
+			vm.append_output(vm.format(args[0], site.sig.params[0])! + utf16('\n'))!
 			return Value{}
 		}
-		'ProLang.Runtime.StringOps.From:8,->14', 'ProLang.Runtime.StringOps.From:9,->14',
-		'ProLang.Runtime.StringOps.From:2,->14', 'ProLang.Runtime.StringOps.From:3,->14',
-		'ProLang.Runtime.StringOps.From:28,->14' {
-			return text_value(vm.format(args[0], sig.params[0])!)
+		.str_from {
+			return text_value(vm.format(args[0], site.sig.params[0])!)
 		}
-		'System.String.Concat:14,14,->14', 'System.String.Concat:28,28,->14' {
+		.str_concat {
 			return text_value(vm.format(args[0], 28)! + vm.format(args[1], 28)!)
 		}
-		'System.String.op_Equality:14,14,->2', 'System.String.op_Inequality:14,14,->2' {
+		.str_equality, .str_inequality {
 			yes := equal_values(args[0], args[1])
-			return integer(if yes == (name == 'op_Equality') { 1 } else { 0 })
+			return integer(if yes == (site.id == .str_equality) { 1 } else { 0 })
 		}
-		'System.String.get_Length:this,->8' {
+		.str_length {
 			return integer(args[0].string_value()!.len / 2)
 		}
-		'ProLang.Runtime.StringOps.CharAt:14,8,->3', 'ProLang.Runtime.StringOps.CharCode:14,8,->8' {
+		.str_char {
 			s := args[0].string_value()!
 			i := args[1].int_value()!
 			if i < 0 || i >= s.len / 2 {
@@ -104,7 +102,7 @@ fn (mut vm Vm) native_call(key string, name string, sig Signature, args []Value)
 			}
 			return integer(int(u16(s[i * 2]) | (u16(s[i * 2 + 1]) << 8)))
 		}
-		'ProLang.Runtime.StringOps.Substring:14,8,8,->14' {
+		.str_substring {
 			s := args[0].string_value()!
 			start := args[1].int_value()!
 			end := args[2].int_value()!
@@ -113,7 +111,7 @@ fn (mut vm Vm) native_call(key string, name string, sig Signature, args []Value)
 			}
 			return text_value(s[start * 2..end * 2])
 		}
-		'System.String.IndexOf:this,14,->8' {
+		.str_index_of {
 			s := args[0].string_value()!
 			needle := args[1].string_value()!
 			if needle.len > s.len {
@@ -126,24 +124,24 @@ fn (mut vm Vm) native_call(key string, name string, sig Signature, args []Value)
 			}
 			return integer(-1)
 		}
-		'System.Math.Min:8,8,->8', 'System.Math.Max:8,8,->8' {
+		.math_min, .math_max {
 			a := args[0].int_value()!
 			b := args[1].int_value()!
-			return integer(if (a < b) == (name == 'Min') { a } else { b })
+			return integer(if (a < b) == (site.id == .math_min) { a } else { b })
 		}
-		'ProLang.Runtime.TestOps.Assert:2,14,->1' {
+		.assert {
 			if args[0].int_value()! == 0 {
 				vm.flush()
 				return error('assertion failed: ${utf8(args[1].string_value()!)}')
 			}
 			return Value{}
 		}
-		'ProLang.Runtime.ConsoleOps.Write:14,->1' {
+		.console_write {
 			vm.flush()
 			host_write(utf8(args[0].string_value()!))
 			return Value{}
 		}
-		'System.Threading.Thread.Sleep:8,->1' {
+		.sleep {
 			ms := args[0].int_value()!
 			if ms < 0 || ms > 60000 {
 				return error('sleep must be between 0 and 60000 ms')
@@ -151,11 +149,11 @@ fn (mut vm Vm) native_call(key string, name string, sig Signature, args []Value)
 			C.prl_host_sleep(ms)
 			return Value{}
 		}
-		'ProLang.Runtime.TimeOps.Millis:->8' {
+		.millis {
 			return integer(C.prl_host_millis())
 		}
-		else {
-			return error('unsupported native method ${key}')
+		.unknown {
+			return error('unsupported native method ${site.key}')
 		}
 	}
 	return Value{}

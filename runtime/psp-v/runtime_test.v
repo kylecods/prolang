@@ -153,26 +153,64 @@ fn test_reject_excessive_signature_nesting() {
 	assert false
 }
 
-fn test_reused_frames_start_empty_and_preserve_returned_values() {
+fn test_value_stack_is_cleared_and_reused_across_runs() {
 	im := load_image(read_assembly(@VMODROOT + '/../../artifacts/msil-structs/program.dll')!)!
 	mut vm := new_vm(im)!
 	vm.run([]string{})!
-	for frame in vm.frames {
-		assert frame.args.len == 0 && frame.locals.len == 0 && frame.stack.len == 0
+	// Returning clears each frame, so nothing a finished call held stays reachable.
+	for v in vm.vals {
+		assert v.kind == .null_value && v.data == unsafe { nil }
 	}
-	mut used := 0
-	mut capacities := []int{}
-	for frame in vm.frames {
-		capacities << frame.stack.cap
-		if frame.stack.cap > 0 {
-			used++
+	buffer := vm.vals.data
+	// Running the program again reuses the same slots. Its assertions exercise struct
+	// results, nested addresses and callbacks after sibling calls reuse slots.
+	vm.run([]string{})!
+	assert vm.vals.data == buffer
+}
+
+fn test_constant_methods_are_folded_into_their_callers() {
+	im := load_image(read_assembly(@VMODROOT + '/../../artifacts/msil-arithmetic/program.dll')!)!
+	vm := new_vm(im)!
+	for b in vm.bodies {
+		for f in b.fast {
+			if f.op == .call {
+				assert constant_result(vm.bodies[f.a].fast, vm.bodies[f.a], map[int]int{}) == none
+			}
 		}
 	}
-	assert used > 1
-	// Running the program again reuses the same buffers. Its assertions exercise
-	// struct results, nested addresses and callbacks after sibling calls reuse slots.
-	vm.run([]string{})!
-	for i, frame in vm.frames {
-		assert frame.stack.cap == capacities[i]
+}
+
+fn test_stack_depth_is_verified_before_execution() {
+	body := Body{
+		signature: Signature{
+			returns: 8
+		}
+		max_stack: 2
 	}
+	verify_stack([Fast{ op: .add }, Fast{ op: .ret }], body, 'm', []) or {
+		assert err.msg().contains('underflow')
+		verify_stack([Fast{ op: .ldc }, Fast{ op: .brtrue, a: 3 }, Fast{ op: .ldc }, Fast{ op: .ret }],
+			body, 'm', []) or {
+			assert err.msg().contains('inconsistent')
+			return
+		}
+		assert false, 'unbalanced branch accepted'
+		return
+	}
+	assert false, 'underflow accepted'
+}
+
+fn test_fusion_merges_sequences_but_never_across_a_branch_target() {
+	fused := fuse([Fast{ op: .ldc, a: 7 }, Fast{ op: .add }, Fast{ op: .ret }])
+	assert fused.len == 2 && fused[0].op == .add_imm && fused[0].a == 7 && fused[1].op == .ret
+	// A branch lands on the add, so the ldc must stay separate.
+	kept := fuse([Fast{ op: .ldc, a: 7 }, Fast{ op: .add }, Fast{ op: .br, a: 1 }])
+	assert kept.len == 3 && kept[0].op == .ldc && kept[1].op == .add && kept[2].a == 1
+	// `x >= 0` as compiled: ldc 0; clt; ldc 0; ceq.
+	ge := fuse([Fast{ op: .ldc }, Fast{ op: .clt }, Fast{ op: .ldc }, Fast{ op: .ceq },
+		Fast{ op: .ret }])
+	assert ge.len == 2 && ge[0].op == .cge_imm && ge[0].a == 0
+	// A branch to a removed `ldnull; pop` lands on what follows it.
+	skip := fuse([Fast{ op: .br, a: 1 }, Fast{ op: .ldnull }, Fast{ op: .pop }, Fast{ op: .ret }])
+	assert skip.len == 2 && skip[0].a == 1 && skip[1].op == .ret
 }

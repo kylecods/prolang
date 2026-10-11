@@ -9,8 +9,8 @@ The runtime supports console programs and the rotating cube in `examples/18-psp-
 including its UI toolkit, structs and scene painter delegate. It is an experimental interpreter,
 not a full CLR. Fixtures are compared with .NET and executed in PPSSPP; physical PSP testing
 is still required. Interpretation is substantially slower than the existing C PSP backend.
-The optimized cube runs at about 12 fps in the tested PPSSPP configuration; see the
-measurements below. It still needs further optimization for smooth gameplay.
+The cube runs at a vblank-locked 60 fps in the tested PPSSPP configuration, using about 9.7 ms
+of each 16.7 ms frame; see the measurements below. Physical hardware is likely to be slower.
 
 ## Build
 
@@ -104,24 +104,47 @@ rendering and vblank, with initialization and screenshot readback excluded:
 | Reusable argument/local/evaluation buffers | 283 ms | 3.5 |
 | GCC `-O3` | 200 ms | 5.0 |
 | Compact value slots and cached string literals | 83 ms | 12.0 |
+| Execution form: dense opcodes, verified stack depth, one value stack, folded constants | 17 ms (12.0 ms work) | 60 |
+| Fused instruction sequences | 17 ms (9.7 ms work) | 60 |
 
-The initial comparisons used ten frames after startup. The final run verified 61 changing
-orientations, seven collections, and a median of 83 ms across 58 steady frames. The test
-forces collections after frames 30 and 60; those two subsequent frames are excluded from
-the steady-state median. A pointer-range filter reduced these collection frames from
-584–599 ms to 148–150 ms. Production collects at the allocation threshold instead of
-forcing a collection every 30 frames. Physical PSP performance remains unmeasured.
+Once a frame fits in one vblank its time is locked at 16–17 ms, so `test-cube.ps1` also reports
+**work**: the time from one present to the request for the next, before waiting on the GE and the
+display. That is the headroom left, and the number to watch on hardware.
 
-The main changes address actual overhead: freeing a temporary used to scan every managed
-allocation; a hash table now finds it directly. PSP value slots shrank from 76 to 16 bytes:
-integers and handles stay inline, while strings, structs and addresses use immutable payloads.
-Call buffers are reused per depth and cleared on return to release dead references. Literal
-string values are prepared once during decoding. The collector rejects words outside the
-managed heap range before searching its block descriptors.
+The initial comparisons used ten frames after startup. The current run verified 61 changing
+orientations, with every frame's draw counts and edge-geometry hash identical to the 83 ms
+interpreter's, and a median of 17 ms across 58 steady frames. The test forces collections after
+frames 30 and 60; those two subsequent frames are excluded from the steady-state median. A
+pointer-range filter reduced these collection frames from 584–599 ms to 148–150 ms; leaving the
+1 MiB GU display list out of the root scan, and the faster interpreter, bring them to about 50 ms
+of work. Production collects at the allocation threshold instead: at the cube's ~1.5 KiB of
+garbage a frame, roughly every five or six seconds, which is a visible three-frame hitch.
+Physical PSP performance remains unmeasured.
 
-The cube still executes roughly 63,000 IL instructions and 3,700 ProLang calls per frame.
-Further gains likely require integer-specific array storage, combining frequent instruction
-sequences during decoding, or compiling hot methods to native code. These are future work.
+Where the 83 ms went: V lowered the dispatch `match` to a chain of comparisons, and every push,
+pop, local access and array index was an out-of-line call returning a `Result` with bounds
+checks — about 200 host instructions per IL instruction. Half of all calls were to methods like
+`Ui->stride()` whose whole body is `ldc.i4 30; ret`. `decode.v` now turns each body into an
+execution form once, at load:
+
+- A dense opcode per instruction with every token resolved, including native calls, which were
+  matched by comparing key strings on every call. GCC compiles the dispatch to a jump table.
+- `nop`s removed, and calls to parameterless constant methods folded into the constant.
+- The evaluation stack depth proven at every instruction (consistent at branch targets, within
+  `maxstack`, correct at `ret`), so the loop does no underflow or overflow checks. Value kinds
+  are still checked wherever they were, with the same diagnostics.
+- Common sequences fused: `ldc; add`, `ldarg; ldfld`, `clt; ldc 0; ceq` (which is how `>=` is
+  compiled), `dup; stloc; pop` (an assignment statement), and others. Never across a branch target.
+
+Execution runs every frame in one contiguous value stack with an explicit frame array and no
+recursion: a call's arguments are already on the caller's stack and become the callee's argument
+slots where they lie. Freeing a temporary no longer scans every managed allocation; PSP value
+slots are 16 bytes; frames are cleared on return to release dead references.
+
+The cube now executes about 40,500 IL instructions and 1,750 calls per frame. `Ui->get`, a
+bounds-checked array read, is a quarter of them, and `Ui->node` clears each new node's 30 fields
+with an interpreted loop. Inlining small methods, and a native bulk fill for that loop, are the
+likely next steps.
 Use `test-cube.ps1 -SkipBuild` after rebuilding to reproduce the timing and correctness checks;
 frame logs include instruction and call counts.
 
@@ -154,14 +177,16 @@ interop. Normal MSIL compilation maps PSP builtins to `ProLang.Runtime.PspOps`; 
 implements these imports. Running those calls directly on desktop .NET throws a clear
 `PlatformNotSupportedException`.
 
-Unknown instructions or unsupported signatures fail explicitly. All method bodies are decoded
-before the entry point executes, including methods the program does not call. This is not an
-ECMA verification engine and must not be treated as a sandbox for untrusted assemblies.
+Unknown instructions or unsupported signatures fail explicitly. All method bodies are decoded,
+and their stack depths verified, before the entry point executes, including methods the program
+does not call. This is not an ECMA verification engine — value types are checked as they are
+used, not proven — and must not be treated as a sandbox for untrusted assemblies.
 
 ## Limits and memory
 
 The image is limited to 8 MiB, each metadata table to 65,535 rows, evaluation stacks and locals
-to 1,024 slots per method, call depth to 128, array elements cumulatively to 262,144, boxed
+to 1,024 slots per method, all active frames together to 16,384 value slots (256 KiB on the PSP),
+call depth to 128, array elements cumulatively to 262,144, boxed
 objects to 262,144, and execution to 10 million instructions between buffer swaps (or for the
 whole run of a console program). The output buffer holds at most
 64 KiB of UTF-16 bytes before a flush. These are bounds, not promises that all maxima fit
@@ -170,8 +195,9 @@ simultaneously in the PSP heap. Sleep is limited to 60 seconds per call.
 The PSP host reserves a 12 MiB heap and a 512 KiB main-thread stack. V is built with `-gc none`;
 `gc.h` supplies a single-threaded conservative collector for the interpreter's generated C
 allocations on PSP. It scans saved registers, the main thread's stack and module data, follows
-interior pointers, and reclaims unreachable temporary strings and struct payloads. Argument,
-local and evaluation buffers are retained per call depth and cleared on method return.
+interior pointers, and reclaims unreachable temporary strings and struct payloads. The GU display
+list, 1 MiB of static data that never holds a heap pointer, is left out of the root scan. Every
+frame's arguments, locals and evaluation stack share one value stack, cleared on method return.
 Struct payloads use immutable snapshots, copying only the field path on mutation.
 
 VM arrays and boxes currently retain stable handles for the entire run: their cumulative
@@ -182,7 +208,8 @@ intended for bounded tests; the PSP collector is the memory profile exercised by
 ## Source layout and next work
 
 `reader.v` checks binary reads; `image.v` reads PE/CLI metadata and resolves tokens; `il.v`
-decodes method bodies and checks branches; `value.v` defines values and UTF-16 conversion;
+decodes method bodies and checks branches; `decode.v` turns them into the execution form
+(resolved, folded, fused and stack-verified); `value.v` defines values and UTF-16 conversion;
 `vm.v` executes instructions; `native.v` supplies runtime/BCL calls. `host.h` is the small
 file, output, clock, GU/controller, and PSP bootstrap boundary; interpreter logic is V.
 

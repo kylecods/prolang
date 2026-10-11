@@ -21,6 +21,10 @@ static size_t prl_gc_count, prl_gc_capacity, prl_gc_bytes;
 static size_t prl_gc_threshold = 512 * 1024;
 static unsigned prl_gc_cycles;
 static unsigned char *prl_gc_stack_end;
+/* Static data that can never hold a heap pointer, left out of the root scan. The PSP host
+ * names its 1 MiB GU display list here: it is all of the static data bar 50 KiB, and holds only
+ * GE commands and vertex floats. Scanning it can only retain garbage, never save a live object. */
+static const unsigned char *prl_gc_skip_begin, *prl_gc_skip_end;
 extern unsigned char _fdata[], _end[];
 static size_t prl_gc_hash(void *p) {
     return ((uintptr_t)p >> 3) * (uintptr_t)2654435761u;
@@ -92,7 +96,11 @@ static __attribute__((noinline)) void prl_gc_collect(void) {
     for (size_t i = 0; i < prl_gc_count; i++) prl_gc_blocks[i].marked = 0;
     prl_gc_scan((const void *)&stack_anchor, prl_gc_stack_end);
     prl_gc_scan(registers, (unsigned char *)registers + sizeof(registers));
-    prl_gc_scan(_fdata, _end);
+    uintptr_t skip = (uintptr_t)prl_gc_skip_begin, skip_end = (uintptr_t)prl_gc_skip_end;
+    if (skip >= (uintptr_t)_fdata && skip < skip_end && skip_end <= (uintptr_t)_end) {
+        prl_gc_scan(_fdata, prl_gc_skip_begin);
+        prl_gc_scan(prl_gc_skip_end, _end);
+    } else prl_gc_scan(_fdata, _end);
     /* Mark to a fixed point. A marked block is scanned exactly once. */
     int pending;
     do {

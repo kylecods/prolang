@@ -4,11 +4,21 @@ const max_steps = 10000000
 const max_depth = 128
 const max_array_elements = 262144
 const max_output = 65536
+// Every active frame's arguments, locals and evaluation stack, end to end. 16 bytes a slot on
+// the PSP, so 256 KiB.
+const value_stack_size = 16384
 
-struct Frame {
-	args   []Value
-	locals []Value
-	stack  []Value
+// One active method. Its arguments, locals and evaluation stack are consecutive ranges of
+// `Vm.vals`: a call's arguments are already on the caller's evaluation stack, and they become
+// the callee's argument slots where they lie, with no copy.
+struct CallFrame {
+mut:
+	body   int // index into Vm.bodies
+	pc     int // where the caller resumes; saved only while a callee runs
+	args   int // slot of argument 0
+	locals int // slot of local 0
+	ret    int // where the result goes: `args`, or the delegate's slot for Invoke
+	limit  int // one past the frame's last slot
 }
 
 struct Vm {
@@ -24,15 +34,20 @@ mut:
 	output             string
 	field_types        []int
 	field_offsets      []int
+	field_owner        []int // the TypeDef row declaring each instance field
 	type_fields        [][]int
 	delegates          int
-	frames             []Frame
+	vals               []Value
+	frames             []CallFrame
+	sites              []NativeSite
+	literals           []Value
+	texts              []string
+	unsupported        []string
 }
 
 fn new_vm(im &Image) !Vm {
 	mut vm := Vm{
-		image:  im
-		frames: []Frame{len: max_depth}
+		image: im
 	}
 	for i in 1 .. im.rows[4] + 1 {
 		mut f := im.row(4, i)!
@@ -47,6 +62,7 @@ fn new_vm(im &Image) !Vm {
 		}
 		vm.field_types << read_type(mut sig)!
 		vm.field_offsets << -1
+		vm.field_owner << 0
 		vm.globals << Value{}
 	}
 	vm.type_fields = [][]int{len: im.rows[2] + 1}
@@ -69,6 +85,7 @@ fn new_vm(im &Image) !Vm {
 				continue
 			}
 			vm.field_offsets[f - 1] = vm.type_fields[ty].len
+			vm.field_owner[f - 1] = ty
 			vm.type_fields[ty] << f - 1
 		}
 	}
@@ -111,10 +128,25 @@ fn new_vm(im &Image) !Vm {
 			}
 			code[j] = cached
 		}
+		fast := vm.translate(code, body) or { return error('${m.name}: ${err}') }
+		mut local_init := []Value{}
+		for t in body.locals {
+			local_init << vm.zero(t, 0)!
+		}
 		vm.bodies << Body{
 			...body
-			code: code
+			code:       code
+			fast:       remap(fast)
+			local_init: local_init
 		}
+	}
+	fold_constants(mut vm.bodies)
+	// After folding, so a folded call takes part: `node * Ui->stride()` becomes one mul_imm.
+	for mut b in vm.bodies {
+		b.fast = fuse(b.fast)
+	}
+	for i, b in vm.bodies {
+		verify_stack(b.fast, b, im.methods[i].name, vm.bodies)!
 	}
 	return vm
 }
@@ -184,288 +216,494 @@ fn (vm &Vm) array_index(a Value, index int) !int {
 }
 
 fn (mut vm Vm) run(args []string) ! {
-	signature := vm.bodies[int(vm.image.entry & 0xffffff) - 1].signature
-	mut values := []Value{}
+	_ = vm.image.method(vm.image.entry)!
+	entry := int(vm.image.entry & 0xffffff) - 1
+	signature := vm.bodies[entry].signature
+	if vm.vals.len == 0 {
+		vm.vals = []Value{len: value_stack_size}
+		vm.frames = []CallFrame{len: max_depth}
+	}
+	mut count := 0
 	if signature.params.len == 1 && signature.params[0] == 0x8e {
 		a := vm.new_array(0x0e, args.len)!
 		for i, s in args {
 			vm.heap[a.n].values[i] = text_value(utf16(s))
 		}
-		values << a
+		vm.vals[0] = a
+		count = 1
 	} else if signature.params.len != 0 {
 		return error('entry point must take no arguments or string[]')
 	}
-	_ = vm.execute(vm.image.entry, values, 0)!
+	_ = vm.execute(entry, count) or {
+		// Release whatever the failed frames still referenced.
+		unsafe { C.memset(vm.vals.data, 0, usize(vm.vals.len) * usize(sizeof(Value))) }
+		return err
+	}
 }
 
-fn (mut vm Vm) execute(token u32, arguments []Value, depth int) !Value {
+// Runs a method and everything it calls, with an explicit frame stack rather than recursion.
+//
+// The decoder has proved the evaluation stack depth at every instruction (see verify_stack),
+// so nothing here checks for underflow or for overflowing the frame. Values are still checked
+// for kind wherever the old interpreter checked them, with the same diagnostics.
+@[direct_array_access]
+fn (mut vm Vm) execute(entry int, nargs int) !Value {
+	// Aliases, not copies: these share the VM's buffers, and stay in registers.
+	mut vals := unsafe { vm.vals }
+	mut frames := unsafe { vm.frames }
+	mut steps := vm.steps
+	mut depth := 0
+	mut fr := CallFrame{
+		body: entry
+	}
+	if nargs != vm.bodies[entry].signature.params.len {
+		return error('argument count mismatch: ${vm.image.methods[entry].name}')
+	}
 	vm.calls++
-	if depth >= max_depth {
-		return error('call depth limit exceeded')
-	}
-	method := vm.image.method(token)!
-	body := &vm.bodies[int(token & 0xffffff) - 1]
-	if arguments.len != body.signature.params.len {
-		return error('argument count mismatch: ${method.name}')
-	}
-	// Each call depth owns separate buffers. Calls borrow the caller's stack
-	// slice, then copy into their own argument slots before running any IL.
-	frame := vm.frames[depth]
-	mut args := unsafe { frame.args }
-	mut locals := unsafe { frame.locals }
-	mut stack := unsafe { frame.stack }
-	if stack.cap < body.max_stack + 1 {
-		stack = []Value{cap: body.max_stack + 1}
-	}
-	defer {
-		reset_frame(mut args)
-		reset_frame(mut locals)
-		reset_frame(mut stack)
-		vm.frames[depth] = Frame{
-			args:   args
-			locals: locals
-			stack:  stack
-		}
-	}
-	args << arguments
-	for t in body.locals {
-		locals << vm.zero(t, 0)!
-	}
+	fr.locals = nargs
+	fr.limit = vm.enter(entry, fr.locals)!
+	mut code := unsafe { vm.bodies[entry].fast }
+	mut sp := fr.locals + vm.bodies[entry].locals.len
 	mut pc := 0
-	for pc < body.code.len {
-		vm.steps++
-		if vm.steps > max_steps {
+	for {
+		steps++
+		if steps > max_steps {
 			return error('instruction budget exceeded')
 		}
-		ins := &body.code[pc]
+		f := code[pc]
 		pc++
-		op := ins.op
-		n := ins.operand
-		match op {
-			0x00 {}
-			0x02...0x05 {
-				stack << slot(args, op - 2)!
+		match f.op {
+			.ldarg {
+				vals[sp] = vals[fr.args + f.a]
+				sp++
 			}
-			0x06...0x09 {
-				stack << slot(locals, op - 6)!
-			}
-			0x0a...0x0d {
-				store(mut locals, op - 10, pop(mut stack)!)!
-			}
-			0x0e, 0xfe09 {
-				stack << slot(args, n)!
-			}
-			0x10, 0xfe0b {
-				store(mut args, n, pop(mut stack)!)!
-			}
-			0x11, 0xfe0c {
-				stack << slot(locals, n)!
-			}
-			0x0f, 0xfe0a {
-				stack << address_of(mut args, n)!
-			}
-			0x12, 0xfe0d {
-				stack << address_of(mut locals, n)!
-			}
-			0x13, 0xfe0e {
-				store(mut locals, n, pop(mut stack)!)!
-			}
-			0x14 {
-				stack << Value{}
-			}
-			0x15...0x1e {
-				stack << integer(op - 0x16)
-			}
-			0x1f, 0x20 {
-				stack << integer(n)
-			}
-			0x25 {
-				v := pop(mut stack)!
-				stack << copy_value(v)
-				stack << v
-			}
-			0x26 {
-				_ = pop(mut stack)!
-			}
-			0x28, 0x6f {
-				signature := ins.signature
-				call_token := u32(n)
-				count := signature.params.len + if signature.instance { 1 } else { 0 }
-				if count > stack.len {
-					return error('call stack underflow in ${method.name}')
+			.ldarg_fld {
+				obj := vals[fr.args + f.a]
+				record := if obj.kind == .address { dereference(obj)! } else { obj }
+				if record.kind != .record || record.n != f.c || f.b < 0
+					|| f.b >= record.data.fields.len {
+					return error('invalid struct field access')
 				}
-				call_args := unsafe { stack[stack.len - count..] }
-				stack.trim(stack.len - count)
-				value := if call_token >> 24 == 6 {
-					vm.execute(call_token, call_args, depth + 1)!
-				} else if ins.name == 'Invoke' && is_delegate(ins.owner) {
-					if call_args[0].kind != .delegate_value {
+				vals[sp] = record.data.fields[f.b]
+				sp++
+			}
+			.add_imm, .sub_imm, .mul_imm {
+				a := vals[sp - 1]
+				if a.kind != .integer {
+					return error('expected an int32 value')
+				}
+				vals[sp - 1] = integer(match f.op {
+					.add_imm { int(u32(a.n) + u32(f.a)) }
+					.sub_imm { int(u32(a.n) - u32(f.a)) }
+					else { int(u32(a.n) * u32(f.a)) }
+				})
+			}
+			.clt_imm, .cgt_imm, .cge_imm, .cle_imm {
+				a := vals[sp - 1]
+				if a.kind != .integer {
+					return error('expected an int32 value')
+				}
+				yes := match f.op {
+					.clt_imm { a.n < f.a }
+					.cgt_imm { a.n > f.a }
+					.cge_imm { a.n >= f.a }
+					else { a.n <= f.a }
+				}
+				vals[sp - 1] = integer(if yes { 1 } else { 0 })
+			}
+			.ceq_imm {
+				// Against an integer, ceq is false for any other kind: no diagnostic is possible.
+				a := vals[sp - 1]
+				vals[sp - 1] = integer(if a.kind == .integer && a.n == f.a { 1 } else { 0 })
+			}
+			.cge, .cle {
+				a := vals[sp - 2]
+				b := vals[sp - 1]
+				if a.kind != .integer || b.kind != .integer {
+					return error('expected an int32 value')
+				}
+				sp--
+				yes := if f.op == .cge { a.n >= b.n } else { a.n <= b.n }
+				vals[sp - 1] = integer(if yes { 1 } else { 0 })
+			}
+			.ldelem_imm {
+				a := vals[sp - 1]
+				if a.kind != .array_ref || a.n < 0 || a.n >= vm.heap.len {
+					return error('expected non-null array')
+				}
+				if f.a < 0 || f.a >= vm.heap[a.n].values.len {
+					return error('array index out of bounds')
+				}
+				vals[sp - 1] = vm.heap[a.n].values[f.a]
+			}
+			.ldc {
+				vals[sp] = Value{
+					kind: .integer
+					n:    f.a
+				}
+				sp++
+			}
+			.call, .invoke {
+				mut callee := f.a
+				mut ret := sp - f.b
+				mut base := ret
+				if f.op == .invoke {
+					d := vals[ret]
+					if d.kind != .delegate_value {
 						return error('Invoke on a null or invalid delegate')
 					}
-					vm.execute(u32(call_args[0].n), call_args[1..], depth + 1)!
-				} else {
-					vm.native_call(ins.key, ins.name, signature, call_args)!
+					callee = int(u32(d.n) & 0xffffff) - 1
+					if callee < 0 || callee >= vm.bodies.len {
+						return error('invalid MethodDef token 0x${u32(d.n):08x}')
+					}
+					base = ret + 1
+					if f.b - 1 != vm.bodies[callee].signature.params.len {
+						return error('argument count mismatch: ${vm.image.methods[callee].name}')
+					}
 				}
-				if signature.returns != 1 {
-					stack << value
+				if depth + 1 >= max_depth {
+					return error('call depth limit exceeded')
+				}
+				vm.calls++
+				fr.pc = pc
+				frames[depth] = fr
+				depth++
+				fr = CallFrame{
+					body:   callee
+					args:   base
+					locals: sp
+					ret:    ret
+				}
+				fr.limit = vm.enter(callee, sp)!
+				code = unsafe { vm.bodies[callee].fast }
+				sp += vm.bodies[callee].locals.len
+				pc = 0
+			}
+			.ret {
+				returns := vm.bodies[fr.body].signature.returns != 1
+				result := if returns { vals[sp - 1] } else { Value{} }
+				slot := fr.ret
+				// Clear the frame so its dead values do not keep garbage alive.
+				unsafe {
+					C.memset(&vals[slot], 0, usize(fr.limit - slot) * usize(sizeof(Value)))
+				}
+				if depth == 0 {
+					vm.steps = steps
+					return result
+				}
+				depth--
+				fr = frames[depth]
+				code = unsafe { vm.bodies[fr.body].fast }
+				pc = fr.pc
+				sp = slot
+				if returns {
+					vals[sp] = result
+					sp++
 				}
 			}
-			0x2a {
-				if body.signature.returns == 1 {
-					if stack.len != 0 {
-						return error('non-empty stack at void return')
-					}
-					return Value{}
-				}
-				if stack.len != 1 {
-					return error('invalid return stack')
-				}
-				return pop(mut stack)!
+			.ldloc {
+				vals[sp] = vals[fr.locals + f.a]
+				sp++
 			}
-			0x2b...0x44 {
-				short_op := if op >= 0x38 { op - 13 } else { op }
-				mut take := false
-				if short_op == 0x2b {
-					take = true
-				} else if short_op == 0x2c || short_op == 0x2d {
-					v := pop(mut stack)!
-					truth := v.kind != .null_value && (v.kind != .integer || v.n != 0)
-					take = if short_op == 0x2c { !truth } else { truth }
+			.add, .sub, .mul, .and_, .or_ {
+				a := vals[sp - 2]
+				b := vals[sp - 1]
+				if a.kind != .integer || b.kind != .integer {
+					return error('expected an int32 value')
+				}
+				sp--
+				vals[sp - 1] = integer(match f.op {
+					.add { int(u32(a.n) + u32(b.n)) }
+					.sub { int(u32(a.n) - u32(b.n)) }
+					.mul { int(u32(a.n) * u32(b.n)) }
+					.and_ { a.n & b.n }
+					else { a.n | b.n }
+				})
+			}
+			.div, .div_un, .rem, .rem_un, .xor, .shl, .shr, .shr_un {
+				b := vals[sp - 1].int_value()!
+				a := vals[sp - 2].int_value()!
+				sp--
+				vals[sp - 1] = integer(binary(f.b, a, b)!)
+			}
+			.ldfld, .ldflda {
+				obj := vals[sp - 1]
+				record := if obj.kind == .address { dereference(obj)! } else { obj }
+				if record.kind != .record || record.n != f.c || f.b < 0
+					|| f.b >= record.data.fields.len {
+					return error('invalid struct field access')
+				}
+				vals[sp - 1] = if f.op == .ldfld {
+					record.data.fields[f.b]
 				} else {
-					b := pop(mut stack)!
-					a := pop(mut stack)!
-					if short_op == 0x2e {
-						take = equal_values(a, b)
-					} else if short_op == 0x33 {
-						take = !equal_values(a, b)
-					} else {
-						x := a.int_value()!
-						y := b.int_value()!
-						take = match short_op {
-							0x2f { x >= y }
-							0x30 { x > y }
-							0x31 { x <= y }
-							0x32 { x < y }
-							0x34 { u32(x) >= u32(y) }
-							0x35 { u32(x) > u32(y) }
-							0x36 { u32(x) <= u32(y) }
-							0x37 { u32(x) < u32(y) }
-							else { false }
-						}
+					field_address(obj, f.b)!
+				}
+			}
+			.clt, .cgt, .clt_un, .cgt_un {
+				a := vals[sp - 2]
+				b := vals[sp - 1]
+				if a.kind != .integer || b.kind != .integer {
+					return error('expected an int32 value')
+				}
+				sp--
+				yes := match f.op {
+					.clt { a.n < b.n }
+					.cgt { a.n > b.n }
+					.clt_un { u32(a.n) < u32(b.n) }
+					else { u32(a.n) > u32(b.n) }
+				}
+				vals[sp - 1] = integer(if yes { 1 } else { 0 })
+			}
+			.pop {
+				sp--
+			}
+			.ldelem {
+				i := vals[sp - 1]
+				a := vals[sp - 2]
+				if i.kind != .integer {
+					return error('expected an int32 value')
+				}
+				if a.kind != .array_ref || a.n < 0 || a.n >= vm.heap.len {
+					return error('expected non-null array')
+				}
+				if i.n < 0 || i.n >= vm.heap[a.n].values.len {
+					return error('array index out of bounds')
+				}
+				mut v := vm.heap[a.n].values[i.n]
+				if f.a != 0 {
+					x := v.int_value()!
+					v = integer(match f.a {
+						1 { int(i8(x)) }
+						2 { int(u8(x)) }
+						3 { int(i16(x)) }
+						else { int(u16(x)) }
+					})
+				}
+				sp--
+				vals[sp - 1] = v
+			}
+			.ceq {
+				a := vals[sp - 2]
+				b := vals[sp - 1]
+				mut yes := false
+				if a.kind == .integer && b.kind == .integer {
+					yes = a.n == b.n
+				} else {
+					if a.kind == .text && b.kind == .text {
+						return error('string reference identity comparison is unsupported')
 					}
+					yes = equal_values(a, b)
+				}
+				sp--
+				vals[sp - 1] = integer(if yes { 1 } else { 0 })
+			}
+			.brfalse, .brtrue {
+				sp--
+				v := vals[sp]
+				truth := v.kind != .null_value && (v.kind != .integer || v.n != 0)
+				if truth == (f.op == .brtrue) {
+					pc = f.a
+				}
+			}
+			.stloc {
+				sp--
+				vals[fr.locals + f.a] = vals[sp]
+			}
+			.ldnull {
+				vals[sp] = Value{}
+				sp++
+			}
+			.stelem {
+				mut v := vals[sp - 1]
+				index := vals[sp - 2].int_value()!
+				a := vals[sp - 3]
+				sp -= 3
+				h := vm.array_index(a, index)!
+				if f.a == 1 {
+					v = integer(int(u8(v.int_value()!)))
+				} else if f.a == 2 {
+					v = integer(int(u16(v.int_value()!)))
+				}
+				vm.heap[h].values[index] = v
+			}
+			.dup {
+				vals[sp] = vals[sp - 1]
+				sp++
+			}
+			.br {
+				pc = f.a
+			}
+			.beq, .bne_un {
+				a := vals[sp - 2]
+				b := vals[sp - 1]
+				sp -= 2
+				same := if a.kind == .integer && b.kind == .integer {
+					a.n == b.n
+				} else {
+					equal_values(a, b)
+				}
+				if same == (f.op == .beq) {
+					pc = f.a
+				}
+			}
+			.bge, .bgt, .ble, .blt, .bge_un, .bgt_un, .ble_un, .blt_un {
+				a := vals[sp - 2]
+				b := vals[sp - 1]
+				if a.kind != .integer || b.kind != .integer {
+					return error('expected an int32 value')
+				}
+				sp -= 2
+				x := a.n
+				y := b.n
+				take := match f.op {
+					.bge { x >= y }
+					.bgt { x > y }
+					.ble { x <= y }
+					.blt { x < y }
+					.bge_un { u32(x) >= u32(y) }
+					.bgt_un { u32(x) > u32(y) }
+					.ble_un { u32(x) <= u32(y) }
+					else { u32(x) < u32(y) }
 				}
 				if take {
-					pc = n
+					pc = f.a
 				}
 			}
-			0x58...0x64 {
-				b := pop(mut stack)!.int_value()!
-				a := pop(mut stack)!.int_value()!
-				stack << integer(binary(op, a, b)!)
+			.call_native {
+				sp -= f.b
+				vm.steps = steps
+				result := vm.native_call(&vm.sites[f.a], vals[sp..sp + f.b])!
+				steps = vm.steps
+				if f.c == 1 {
+					vals[sp] = result
+					sp++
+				}
 			}
-			0x65, 0x66 {
-				a := pop(mut stack)!.int_value()!
-				stack << integer(if op == 0x65 { int(u32(0) - u32(a)) } else { ~a })
+			.ldstr {
+				vals[sp] = vm.literals[f.a]
+				sp++
 			}
-			0x67, 0x68, 0x69, 0x6d, 0xd1, 0xd2, 0xd3, 0xe0 {
-				a := pop(mut stack)!.int_value()!
-				stack << integer(match op {
-					0x67 { int(i8(a)) }
-					0x68 { int(i16(a)) }
-					0xd1 { int(u16(a)) }
-					0xd2 { int(u8(a)) }
+			.starg {
+				sp--
+				vals[fr.args + f.a] = vals[sp]
+			}
+			.neg, .not {
+				a := vals[sp - 1].int_value()!
+				vals[sp - 1] = integer(if f.op == .neg { int(u32(0) - u32(a)) } else { ~a })
+			}
+			.conv_i1, .conv_i2, .conv_u1, .conv_u2, .conv_i4 {
+				a := vals[sp - 1].int_value()!
+				vals[sp - 1] = integer(match f.op {
+					.conv_i1 { int(i8(a)) }
+					.conv_i2 { int(i16(a)) }
+					.conv_u1 { int(u8(a)) }
+					.conv_u2 { int(u16(a)) }
 					else { a }
 				})
 			}
-			0x72 {
-				stack << ins.literal
+			.ldlen {
+				a := vals[sp - 1]
+				if a.kind != .array_ref || a.n < 0 || a.n >= vm.heap.len {
+					return error('ldlen on non-array')
+				}
+				vals[sp - 1] = integer(vm.heap[a.n].values.len)
 			}
-			0xfe06 {
-				_ = vm.image.method(u32(n))!
-				stack << Value{
+			.newarr {
+				vals[sp - 1] = vm.new_array(f.a, vals[sp - 1].int_value()!)!
+			}
+			.ldelema {
+				index := vals[sp - 1].int_value()!
+				h := vm.array_index(vals[sp - 2], index)!
+				sp--
+				vals[sp - 1] = address_of(mut vm.heap[h].values, index)!
+			}
+			.ldsfld {
+				vals[sp] = vm.globals[f.a]
+				sp++
+			}
+			.stsfld {
+				sp--
+				vm.globals[f.a] = vals[sp]
+			}
+			.ldsflda {
+				vals[sp] = address_of(mut vm.globals, f.a)!
+				sp++
+			}
+			.stfld {
+				v := vals[sp - 1]
+				obj := vals[sp - 2]
+				sp -= 2
+				record := if obj.kind == .address { dereference(obj)! } else { obj }
+				if record.kind != .record || record.n != f.c || f.b < 0
+					|| f.b >= record.data.fields.len {
+					return error('invalid struct field access')
+				}
+				if obj.kind != .address {
+					return error('stfld needs a struct address')
+				}
+				mut fields := record.data.fields.clone()
+				fields[f.b] = v
+				write_address(obj, record_value(record.n, fields))!
+			}
+			.ldarga {
+				vals[sp] = address_of(mut vals, fr.args + f.a)!
+				sp++
+			}
+			.ldloca {
+				vals[sp] = address_of(mut vals, fr.locals + f.a)!
+				sp++
+			}
+			.ldobj {
+				vals[sp - 1] = copy_value(dereference(vals[sp - 1])!)
+			}
+			.stobj {
+				v := vals[sp - 1]
+				addr := vals[sp - 2]
+				sp -= 2
+				_ = dereference(addr)!
+				write_address(addr, v)!
+			}
+			.initobj {
+				sp--
+				addr := vals[sp]
+				_ = dereference(addr)!
+				write_address(addr, vm.zero(0x100000 | f.a, 0)!)!
+			}
+			.ldftn {
+				vals[sp] = Value{
 					kind: .function
-					n:    n
+					n:    f.a
 				}
+				sp++
 			}
-			0x73 {
-				if !is_delegate(ins.owner) || ins.name != '.ctor'
-					|| ins.signature.params != [28, 24] {
-					return error('unsupported constructor ${ins.owner}.${ins.name}')
-				}
-				f := pop(mut stack)!
-				target := pop(mut stack)!
-				if target.kind != .null_value || f.kind != .function {
+			.newobj_delegate {
+				fn_value := vals[sp - 1]
+				target := vals[sp - 2]
+				if target.kind != .null_value || fn_value.kind != .function {
 					return error('only capture-free static delegates are supported')
 				}
 				if vm.delegates == 2147483647 {
 					return error('delegate identity limit exceeded')
 				}
 				vm.delegates++
-				stack << Value{
+				sp--
+				vals[sp - 1] = Value{
 					kind: .delegate_value
-					n:    f.n
+					n:    fn_value.n
 					id:   vm.delegates
 				}
 			}
-			0xfe15 {
-				addr := pop(mut stack)!
-				_ = dereference(addr)!
-				v := vm.zero(0x100000 | (n & 0xffffff), 0)!
-				write_address(addr, v)!
+			.newobj_unsupported {
+				return error('unsupported constructor ${vm.unsupported[f.a]}')
 			}
-			0x71 {
-				stack << copy_value(dereference(pop(mut stack)!)!)
-			}
-			0x81 {
-				v := pop(mut stack)!
-				addr := pop(mut stack)!
-				_ = dereference(addr)!
-				write_address(addr, v)!
-			}
-			0x7b...0x7d {
-				mut v := Value{}
-				if op == 0x7d {
-					v = pop(mut stack)!
-				}
-				obj := pop(mut stack)!
-				record := if obj.kind == .address { dereference(obj)! } else { obj }
-				i := vm.field_offsets[ins.field]
-				if record.kind != .record || i < 0 || i >= record.data.fields.len
-					|| ins.field !in vm.type_fields[record.n] {
-					return error('invalid struct field access')
-				}
-				if op == 0x7b {
-					stack << copy_value(record.data.fields[i])
-				} else if op == 0x7c {
-					stack << field_address(obj, i)!
-				} else {
-					if obj.kind != .address {
-						return error('stfld needs a struct address')
-					}
-					mut fields := record.data.fields.clone()
-					fields[i] = v
-					write_address(obj, record_value(record.n, fields))!
-				}
-			}
-			0x7e, 0x80 {
-				i := ins.field
-				if op == 0x7e {
-					stack << slot(vm.globals, i)!
-				} else {
-					store(mut vm.globals, i, pop(mut stack)!)!
-				}
-			}
-			0x7f {
-				stack << address_of(mut vm.globals, ins.field)!
-			}
-			0x8c, 0xa5 {
-				ty := ins.text
+			.box, .unbox {
+				ty := vm.texts[f.a]
 				if ty !in ['System.Int32', 'System.UInt32', 'System.Boolean', 'System.Char',
 					'System.Byte', 'System.SByte', 'System.Int16', 'System.UInt16'] {
 					return error('unsupported box/unbox type ${ty}')
 				}
-				v := pop(mut stack)!
-				if op == 0x8c {
+				v := vals[sp - 1]
+				if f.op == .box {
 					_ = v.int_value()!
 					if vm.boxes.len >= max_array_elements {
 						return error('boxed object limit exceeded')
@@ -476,7 +714,7 @@ fn (mut vm Vm) execute(token u32, arguments []Value, depth int) !Value {
 							text: ty
 						}
 					}
-					stack << Value{
+					vals[sp - 1] = Value{
 						kind: .boxed
 						n:    vm.boxes.len - 1
 					}
@@ -485,93 +723,26 @@ fn (mut vm Vm) execute(token u32, arguments []Value, depth int) !Value {
 						|| vm.boxes[v.n].data.text != ty {
 						return error('unbox.any type mismatch')
 					}
-					stack << integer(vm.boxes[v.n].n)
+					vals[sp - 1] = integer(vm.boxes[v.n].n)
 				}
 			}
-			0x8d {
-				stack << vm.new_array(ins.field, pop(mut stack)!.int_value()!)!
-			}
-			0x8f {
-				index := pop(mut stack)!.int_value()!
-				a := pop(mut stack)!
-				h := vm.array_index(a, index)!
-				stack << address_of(mut vm.heap[h].values, index)!
-			}
-			0x8e {
-				a := pop(mut stack)!
-				if a.kind != .array_ref || a.n < 0 || a.n >= vm.heap.len {
-					return error('ldlen on non-array')
-				}
-				stack << integer(vm.heap[a.n].values.len)
-			}
-			0x90...0x95, 0x9a, 0xa3 {
-				index := pop(mut stack)!.int_value()!
-				a := pop(mut stack)!
-				h := vm.array_index(a, index)!
-				mut v := copy_value(vm.heap[h].values[index])
-				if op in [0x90, 0x91, 0x92, 0x93] {
-					x := v.int_value()!
-					v = integer(match op {
-						0x90 { int(i8(x)) }
-						0x91 { int(u8(x)) }
-						0x92 { int(i16(x)) }
-						else { int(u16(x)) }
-					})
-				}
-				stack << v
-			}
-			0x9b...0x9e, 0xa2, 0xa4 {
-				mut v := pop(mut stack)!
-				index := pop(mut stack)!.int_value()!
-				a := pop(mut stack)!
-				h := vm.array_index(a, index)!
-				if op == 0x9c {
-					v = integer(int(u8(v.int_value()!)))
-				}
-				if op == 0x9d {
-					v = integer(int(u16(v.int_value()!)))
-				}
-				vm.heap[h].values[index] = v
-			}
-			0xfe01...0xfe05 {
-				b := pop(mut stack)!
-				a := pop(mut stack)!
-				mut yes := false
-				if op == 0xfe01 {
-					if a.kind == .text && b.kind == .text {
-						return error('string reference identity comparison is unsupported')
-					}
-					yes = equal_values(a, b)
-				} else {
-					x := a.int_value()!
-					y := b.int_value()!
-					yes = match op {
-						0xfe02 { x > y }
-						0xfe03 { u32(x) > u32(y) }
-						0xfe04 { x < y }
-						else { u32(x) < u32(y) }
-					}
-				}
-				stack << integer(if yes { 1 } else { 0 })
-			}
-			else {
-				return error('${method.name}: opcode 0x${op:04x} at IL_${ins.offset:04x} has no handler')
-			}
-		}
-		if stack.len > body.max_stack {
-			return error('maxstack exceeded in ${method.name}')
 		}
 	}
-	return error('method ${method.name} falls through without ret')
+	return error('unreachable')
 }
 
-fn reset_frame(mut values []Value) {
-	// Clearing capacity also removes dead values above the evaluation stack's
-	// current length, so cached buffers do not keep temporary objects alive.
-	if values.cap > 0 {
-		unsafe { C.memset(values.data, 0, usize(values.cap) * usize(sizeof(Value))) }
+// Prepares the frame of `body` whose locals start at `locals`, and returns its limit.
+@[direct_array_access]
+fn (mut vm Vm) enter(body int, locals int) !int {
+	b := &vm.bodies[body]
+	limit := locals + b.locals.len + b.max_stack
+	if limit > vm.vals.len {
+		return error('value stack exhausted')
 	}
-	values.clear()
+	for i, v in b.local_init {
+		vm.vals[locals + i] = v
+	}
+	return limit
 }
 
 fn binary(op int, a int, b int) !int {

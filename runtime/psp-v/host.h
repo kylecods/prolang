@@ -27,6 +27,10 @@ static int prl_callback_thread(SceSize size, void *arg) {
 static FILE *prl_log;
 static int prl_frames, prl_test_frames, prl_lines, prl_rects, prl_texts;
 static int prl_perf_last, prl_perf_instructions, prl_perf_calls;
+/* When the previous present returned. time_ms spans present to present, so it is locked to
+ * vblank once a frame fits; work_us stops before this frame's GE sync and vblank wait, which is
+ * the headroom that is left. */
+static SceInt64 prl_perf_start;
 static unsigned prl_geometry_hash = 2166136261u;
 static void prl_host_init(void) {
     prl_log = fopen("runtime.log", "w");
@@ -51,7 +55,9 @@ static void prl_host_finish(int status) {
     /* Keep the result visible. HOME exits through the callback. */
     sceKernelSleepThreadCB();
 }
-static void prl_host_psp_init(void) { prl_psp_init(); prl_perf_last = prl_host_millis(); }
+static void prl_host_psp_init(void) {
+    prl_psp_init(); prl_perf_last = prl_host_millis(); prl_perf_start = sceKernelGetSystemTimeWide();
+}
 static void prl_host_perf(int instructions, int calls) { prl_perf_instructions = instructions; prl_perf_calls = calls; }
 static void prl_host_clear(int c) { prl_psp_clear(c); }
 static void prl_host_rect(int x, int y, int w, int h, int c) {
@@ -101,10 +107,11 @@ static void prl_host_snapshot(const char *path) {
     free(copy);
 }
 static void prl_host_swap(void) {
+    int work = (int)(sceKernelGetSystemTimeWide() - prl_perf_start);
     prl_psp_swap_buffers(); prl_frames++;
     if (prl_test_frames && prl_log) {
-        fprintf(prl_log, "FRAME %d lines=%d rects=%d texts=%d geometry=%08x time_ms=%d instructions=%d calls=%d\n", prl_frames,
-            prl_lines, prl_rects, prl_texts, prl_geometry_hash, prl_host_millis() - prl_perf_last,
+        fprintf(prl_log, "FRAME %d lines=%d rects=%d texts=%d geometry=%08x time_ms=%d work_us=%d instructions=%d calls=%d\n", prl_frames,
+            prl_lines, prl_rects, prl_texts, prl_geometry_hash, prl_host_millis() - prl_perf_last, work,
             prl_perf_instructions, prl_perf_calls);
         fflush(prl_log);
         if (prl_frames == 1) prl_host_snapshot("first-frame.bmp");
@@ -112,6 +119,7 @@ static void prl_host_swap(void) {
     }
     prl_lines = prl_rects = prl_texts = 0; prl_geometry_hash = 2166136261u;
     prl_perf_last = prl_host_millis();
+    prl_perf_start = sceKernelGetSystemTimeWide();
 }
 static void prl_host_vsync(void) { prl_psp_vsync(); }
 static int prl_host_buttons(void) {
@@ -180,6 +188,8 @@ static void prl_host_gc_init(void) {
     memset(&info, 0, sizeof(info)); info.size = sizeof(info);
     if (sceKernelReferThreadStatus(sceKernelGetThreadId(), &info) >= 0)
         prl_gc_stack_end = (unsigned char *)info.stack + info.stackSize;
+    prl_gc_skip_begin = (const unsigned char *)prl_psp_dlist;
+    prl_gc_skip_end = (const unsigned char *)prl_psp_dlist + sizeof(prl_psp_dlist);
 }
 static void prl_host_gc_stats(void) {
     if (prl_log && prl_test_frames) {
