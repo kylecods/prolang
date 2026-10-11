@@ -43,6 +43,14 @@ mut:
 	literals           []Value
 	texts              []string
 	unsupported        []string
+	// Compiled code (jit.v). Read by generated MIPS through fixed offsets, so these are plain
+	// words and arrays whose buffers never move once compilation is done.
+	jit_on       bool
+	jit_table    []voidptr // entry address of each body's code
+	jit_nparams  []int     // each body's parameter count, for Invoke's argument check
+	jit_depth    int       // active compiled frames, less one
+	jit_vals_end voidptr   // one past the last value slot, for the frame-size check
+	jit_error    string    // the diagnostic of a failed compiled run
 }
 
 fn new_vm(im &Image) !Vm {
@@ -135,18 +143,21 @@ fn new_vm(im &Image) !Vm {
 		}
 		vm.bodies << Body{
 			...body
-			code:       code
-			fast:       remap(fast)
-			local_init: local_init
+			code:         code
+			fast:         remap(fast)
+			local_init:   local_init
+			scratch_base: body.locals.len
 		}
 	}
 	fold_constants(mut vm.bodies)
-	// After folding, so a folded call takes part: `node * Ui->stride()` becomes one mul_imm.
+	// Inlining and fusion come after folding, so a folded call takes part in both: `node *
+	// Ui->stride()` becomes one mul_imm, and a method that only called constants is a leaf.
+	inline_calls(mut vm.bodies)
 	for mut b in vm.bodies {
 		b.fast = fuse(b.fast)
 	}
 	for i, b in vm.bodies {
-		verify_stack(b.fast, b, im.methods[i].name, vm.bodies)!
+		_ = verify_stack(b.fast, b, im.methods[i].name, vm.bodies)!
 	}
 	return vm
 }
@@ -234,11 +245,27 @@ fn (mut vm Vm) run(args []string) ! {
 	} else if signature.params.len != 0 {
 		return error('entry point must take no arguments or string[]')
 	}
-	_ = vm.execute(entry, count) or {
-		// Release whatever the failed frames still referenced.
-		unsafe { C.memset(vm.vals.data, 0, usize(vm.vals.len) * usize(sizeof(Value))) }
-		return err
+	if count != signature.params.len {
+		return error('argument count mismatch: ${vm.image.methods[entry].name}')
 	}
+	if vm.jit_on {
+		vm.run_compiled(entry) or {
+			vm.clear_values()
+			return err
+		}
+	} else {
+		_ = vm.execute(entry, count) or {
+			vm.clear_values()
+			return err
+		}
+	}
+	// Compiled code clears only the pointer word of each slot it releases (see jit.v). Leave the
+	// value stack as the interpreter would, wholly empty, whichever engine ran.
+	vm.clear_values()
+}
+
+fn (mut vm Vm) clear_values() {
+	unsafe { C.memset(vm.vals.data, 0, usize(vm.vals.len) * usize(sizeof(Value))) }
 }
 
 // Runs a method and everything it calls, with an explicit frame stack rather than recursion.
@@ -246,6 +273,9 @@ fn (mut vm Vm) run(args []string) ! {
 // The decoder has proved the evaluation stack depth at every instruction (see verify_stack),
 // so nothing here checks for underflow or for overflowing the frame. Values are still checked
 // for kind wherever the old interpreter checked them, with the same diagnostics.
+//
+// Only the frequent operations are handled here, inline; everything else goes to `exec_slow`,
+// which the compiled code (jit.v) uses too, so a rare operation has one implementation.
 @[direct_array_access]
 fn (mut vm Vm) execute(entry int, nargs int) !Value {
 	// Aliases, not copies: these share the VM's buffers, and stay in registers.
@@ -255,9 +285,6 @@ fn (mut vm Vm) execute(entry int, nargs int) !Value {
 	mut depth := 0
 	mut fr := CallFrame{
 		body: entry
-	}
-	if nargs != vm.bodies[entry].signature.params.len {
-		return error('argument count mismatch: ${vm.image.methods[entry].name}')
 	}
 	vm.calls++
 	fr.locals = nargs
@@ -278,14 +305,15 @@ fn (mut vm Vm) execute(entry int, nargs int) !Value {
 				sp++
 			}
 			.ldarg_fld {
+				// The common case inline: a struct value of the right type. A managed address,
+				// or anything invalid, goes the long way.
 				obj := vals[fr.args + f.a]
-				record := if obj.kind == .address { dereference(obj)! } else { obj }
-				if record.kind != .record || record.n != f.c || f.b < 0
-					|| f.b >= record.data.fields.len {
-					return error('invalid struct field access')
+				if obj.kind == .record && obj.n == f.c && f.b >= 0 && f.b < obj.data.fields.len {
+					vals[sp] = obj.data.fields[f.b]
+					sp++
+				} else {
+					sp = vm.exec_slow(unsafe { &code[pc - 1] }, fr.args, fr.locals, sp)!
 				}
-				vals[sp] = record.data.fields[f.b]
-				sp++
 			}
 			.add_imm, .sub_imm, .mul_imm {
 				a := vals[sp - 1]
@@ -312,7 +340,6 @@ fn (mut vm Vm) execute(entry int, nargs int) !Value {
 				vals[sp - 1] = integer(if yes { 1 } else { 0 })
 			}
 			.ceq_imm {
-				// Against an integer, ceq is false for any other kind: no diagnostic is possible.
 				a := vals[sp - 1]
 				vals[sp - 1] = integer(if a.kind == .integer && a.n == f.a { 1 } else { 0 })
 			}
@@ -420,23 +447,12 @@ fn (mut vm Vm) execute(entry int, nargs int) !Value {
 					else { a.n | b.n }
 				})
 			}
-			.div, .div_un, .rem, .rem_un, .xor, .shl, .shr, .shr_un {
-				b := vals[sp - 1].int_value()!
-				a := vals[sp - 2].int_value()!
-				sp--
-				vals[sp - 1] = integer(binary(f.b, a, b)!)
-			}
-			.ldfld, .ldflda {
+			.ldfld {
 				obj := vals[sp - 1]
-				record := if obj.kind == .address { dereference(obj)! } else { obj }
-				if record.kind != .record || record.n != f.c || f.b < 0
-					|| f.b >= record.data.fields.len {
-					return error('invalid struct field access')
-				}
-				vals[sp - 1] = if f.op == .ldfld {
-					record.data.fields[f.b]
+				if obj.kind == .record && obj.n == f.c && f.b >= 0 && f.b < obj.data.fields.len {
+					vals[sp - 1] = obj.data.fields[f.b]
 				} else {
-					field_address(obj, f.b)!
+					sp = vm.exec_slow(unsafe { &code[pc - 1] }, fr.args, fr.locals, sp)!
 				}
 			}
 			.clt, .cgt, .clt_un, .cgt_un {
@@ -485,17 +501,12 @@ fn (mut vm Vm) execute(entry int, nargs int) !Value {
 			.ceq {
 				a := vals[sp - 2]
 				b := vals[sp - 1]
-				mut yes := false
 				if a.kind == .integer && b.kind == .integer {
-					yes = a.n == b.n
+					sp--
+					vals[sp - 1] = integer(if a.n == b.n { 1 } else { 0 })
 				} else {
-					if a.kind == .text && b.kind == .text {
-						return error('string reference identity comparison is unsupported')
-					}
-					yes = equal_values(a, b)
+					sp = vm.exec_slow(unsafe { &code[pc - 1] }, fr.args, fr.locals, sp)!
 				}
-				sp--
-				vals[sp - 1] = integer(if yes { 1 } else { 0 })
 			}
 			.brfalse, .brtrue {
 				sp--
@@ -569,16 +580,6 @@ fn (mut vm Vm) execute(entry int, nargs int) !Value {
 					pc = f.a
 				}
 			}
-			.call_native {
-				sp -= f.b
-				vm.steps = steps
-				result := vm.native_call(&vm.sites[f.a], vals[sp..sp + f.b])!
-				steps = vm.steps
-				if f.c == 1 {
-					vals[sp] = result
-					sp++
-				}
-			}
 			.ldstr {
 				vals[sp] = vm.literals[f.a]
 				sp++
@@ -586,36 +587,6 @@ fn (mut vm Vm) execute(entry int, nargs int) !Value {
 			.starg {
 				sp--
 				vals[fr.args + f.a] = vals[sp]
-			}
-			.neg, .not {
-				a := vals[sp - 1].int_value()!
-				vals[sp - 1] = integer(if f.op == .neg { int(u32(0) - u32(a)) } else { ~a })
-			}
-			.conv_i1, .conv_i2, .conv_u1, .conv_u2, .conv_i4 {
-				a := vals[sp - 1].int_value()!
-				vals[sp - 1] = integer(match f.op {
-					.conv_i1 { int(i8(a)) }
-					.conv_i2 { int(i16(a)) }
-					.conv_u1 { int(u8(a)) }
-					.conv_u2 { int(u16(a)) }
-					else { a }
-				})
-			}
-			.ldlen {
-				a := vals[sp - 1]
-				if a.kind != .array_ref || a.n < 0 || a.n >= vm.heap.len {
-					return error('ldlen on non-array')
-				}
-				vals[sp - 1] = integer(vm.heap[a.n].values.len)
-			}
-			.newarr {
-				vals[sp - 1] = vm.new_array(f.a, vals[sp - 1].int_value()!)!
-			}
-			.ldelema {
-				index := vals[sp - 1].int_value()!
-				h := vm.array_index(vals[sp - 2], index)!
-				sp--
-				vals[sp - 1] = address_of(mut vm.heap[h].values, index)!
 			}
 			.ldsfld {
 				vals[sp] = vm.globals[f.a]
@@ -625,110 +596,207 @@ fn (mut vm Vm) execute(entry int, nargs int) !Value {
 				sp--
 				vm.globals[f.a] = vals[sp]
 			}
-			.ldsflda {
-				vals[sp] = address_of(mut vm.globals, f.a)!
-				sp++
-			}
-			.stfld {
-				v := vals[sp - 1]
-				obj := vals[sp - 2]
-				sp -= 2
-				record := if obj.kind == .address { dereference(obj)! } else { obj }
-				if record.kind != .record || record.n != f.c || f.b < 0
-					|| f.b >= record.data.fields.len {
-					return error('invalid struct field access')
-				}
-				if obj.kind != .address {
-					return error('stfld needs a struct address')
-				}
-				mut fields := record.data.fields.clone()
-				fields[f.b] = v
-				write_address(obj, record_value(record.n, fields))!
-			}
-			.ldarga {
-				vals[sp] = address_of(mut vals, fr.args + f.a)!
-				sp++
-			}
-			.ldloca {
-				vals[sp] = address_of(mut vals, fr.locals + f.a)!
-				sp++
-			}
-			.ldobj {
-				vals[sp - 1] = copy_value(dereference(vals[sp - 1])!)
-			}
-			.stobj {
-				v := vals[sp - 1]
-				addr := vals[sp - 2]
-				sp -= 2
-				_ = dereference(addr)!
-				write_address(addr, v)!
-			}
-			.initobj {
-				sp--
-				addr := vals[sp]
-				_ = dereference(addr)!
-				write_address(addr, vm.zero(0x100000 | f.a, 0)!)!
-			}
-			.ldftn {
-				vals[sp] = Value{
-					kind: .function
-					n:    f.a
-				}
-				sp++
-			}
-			.newobj_delegate {
-				fn_value := vals[sp - 1]
-				target := vals[sp - 2]
-				if target.kind != .null_value || fn_value.kind != .function {
-					return error('only capture-free static delegates are supported')
-				}
-				if vm.delegates == 2147483647 {
-					return error('delegate identity limit exceeded')
-				}
-				vm.delegates++
-				sp--
-				vals[sp - 1] = Value{
-					kind: .delegate_value
-					n:    fn_value.n
-					id:   vm.delegates
-				}
-			}
-			.newobj_unsupported {
-				return error('unsupported constructor ${vm.unsupported[f.a]}')
-			}
-			.box, .unbox {
-				ty := vm.texts[f.a]
-				if ty !in ['System.Int32', 'System.UInt32', 'System.Boolean', 'System.Char',
-					'System.Byte', 'System.SByte', 'System.Int16', 'System.UInt16'] {
-					return error('unsupported box/unbox type ${ty}')
-				}
-				v := vals[sp - 1]
-				if f.op == .box {
-					_ = v.int_value()!
-					if vm.boxes.len >= max_array_elements {
-						return error('boxed object limit exceeded')
-					}
-					vm.boxes << Value{
-						...v
-						data: &ValueData{
-							text: ty
-						}
-					}
-					vals[sp - 1] = Value{
-						kind: .boxed
-						n:    vm.boxes.len - 1
-					}
-				} else {
-					if v.kind != .boxed || v.n < 0 || v.n >= vm.boxes.len
-						|| vm.boxes[v.n].data.text != ty {
-						return error('unbox.any type mismatch')
-					}
-					vals[sp - 1] = integer(vm.boxes[v.n].n)
-				}
+			else {
+				// A native call may swap buffers, which reads and resets the step count.
+				vm.steps = steps
+				sp = vm.exec_slow(unsafe { &code[pc - 1] }, fr.args, fr.locals, sp)!
+				steps = vm.steps
 			}
 		}
 	}
 	return error('unreachable')
+}
+
+// Performs one operation that the interpreter loop and the compiled code do not handle inline:
+// the rare ones, and the unusual cases of a few frequent ones (`ldfld` through a managed address,
+// `ceq` on anything but two ints). It is the only implementation of those, shared by both
+// engines, so they cannot disagree. `args` and `locals` are the frame's first argument and local
+// slots, `sp` one past the top of its evaluation stack; it returns the new `sp`.
+//
+// Control flow (calls, returns, branches) never comes here: it is all inline in both engines.
+@[direct_array_access]
+fn (mut vm Vm) exec_slow(f &Fast, args int, locals int, sp int) !int {
+	mut vals := unsafe { vm.vals }
+	match f.op {
+		.ldarg_fld, .ldfld, .ldflda {
+			obj := if f.op == .ldarg_fld { vals[args + f.a] } else { vals[sp - 1] }
+			record := if obj.kind == .address { dereference(obj)! } else { obj }
+			if record.kind != .record || record.n != f.c || f.b < 0
+				|| f.b >= record.data.fields.len {
+				return error('invalid struct field access')
+			}
+			if f.op == .ldarg_fld {
+				vals[sp] = record.data.fields[f.b]
+				return sp + 1
+			}
+			vals[sp - 1] = if f.op == .ldfld {
+				record.data.fields[f.b]
+			} else {
+				field_address(obj, f.b)!
+			}
+		}
+		.ceq {
+			a := vals[sp - 2]
+			b := vals[sp - 1]
+			mut yes := false
+			if a.kind == .integer && b.kind == .integer {
+				yes = a.n == b.n
+			} else {
+				if a.kind == .text && b.kind == .text {
+					return error('string reference identity comparison is unsupported')
+				}
+				yes = equal_values(a, b)
+			}
+			vals[sp - 2] = integer(if yes { 1 } else { 0 })
+			return sp - 1
+		}
+		.div, .div_un, .rem, .rem_un, .xor, .shl, .shr, .shr_un {
+			b := vals[sp - 1].int_value()!
+			a := vals[sp - 2].int_value()!
+			vals[sp - 2] = integer(binary(f.b, a, b)!)
+			return sp - 1
+		}
+		.neg, .not {
+			a := vals[sp - 1].int_value()!
+			vals[sp - 1] = integer(if f.op == .neg { int(u32(0) - u32(a)) } else { ~a })
+		}
+		.conv_i1, .conv_i2, .conv_u1, .conv_u2, .conv_i4 {
+			a := vals[sp - 1].int_value()!
+			vals[sp - 1] = integer(match f.op {
+				.conv_i1 { int(i8(a)) }
+				.conv_i2 { int(i16(a)) }
+				.conv_u1 { int(u8(a)) }
+				.conv_u2 { int(u16(a)) }
+				else { a }
+			})
+		}
+		.ldlen {
+			a := vals[sp - 1]
+			if a.kind != .array_ref || a.n < 0 || a.n >= vm.heap.len {
+				return error('ldlen on non-array')
+			}
+			vals[sp - 1] = integer(vm.heap[a.n].values.len)
+		}
+		.newarr {
+			vals[sp - 1] = vm.new_array(f.a, vals[sp - 1].int_value()!)!
+		}
+		.ldelema {
+			index := vals[sp - 1].int_value()!
+			h := vm.array_index(vals[sp - 2], index)!
+			vals[sp - 2] = address_of(mut vm.heap[h].values, index)!
+			return sp - 1
+		}
+		.ldsflda {
+			vals[sp] = address_of(mut vm.globals, f.a)!
+			return sp + 1
+		}
+		.stfld {
+			v := vals[sp - 1]
+			obj := vals[sp - 2]
+			record := if obj.kind == .address { dereference(obj)! } else { obj }
+			if record.kind != .record || record.n != f.c || f.b < 0
+				|| f.b >= record.data.fields.len {
+				return error('invalid struct field access')
+			}
+			if obj.kind != .address {
+				return error('stfld needs a struct address')
+			}
+			mut fields := record.data.fields.clone()
+			fields[f.b] = v
+			write_address(obj, record_value(record.n, fields))!
+			return sp - 2
+		}
+		.ldarga, .ldloca {
+			vals[sp] = address_of(mut vals, if f.op == .ldarga { args } else { locals } + f.a)!
+			return sp + 1
+		}
+		.ldobj {
+			vals[sp - 1] = copy_value(dereference(vals[sp - 1])!)
+		}
+		.stobj {
+			v := vals[sp - 1]
+			addr := vals[sp - 2]
+			_ = dereference(addr)!
+			write_address(addr, v)!
+			return sp - 2
+		}
+		.initobj {
+			addr := vals[sp - 1]
+			_ = dereference(addr)!
+			write_address(addr, vm.zero(0x100000 | f.a, 0)!)!
+			return sp - 1
+		}
+		.ldftn {
+			vals[sp] = Value{
+				kind: .function
+				n:    f.a
+			}
+			return sp + 1
+		}
+		.newobj_delegate {
+			fn_value := vals[sp - 1]
+			target := vals[sp - 2]
+			if target.kind != .null_value || fn_value.kind != .function {
+				return error('only capture-free static delegates are supported')
+			}
+			if vm.delegates == 2147483647 {
+				return error('delegate identity limit exceeded')
+			}
+			vm.delegates++
+			vals[sp - 2] = Value{
+				kind: .delegate_value
+				n:    fn_value.n
+				id:   vm.delegates
+			}
+			return sp - 1
+		}
+		.newobj_unsupported {
+			return error('unsupported constructor ${vm.unsupported[f.a]}')
+		}
+		.box, .unbox {
+			ty := vm.texts[f.a]
+			if ty !in ['System.Int32', 'System.UInt32', 'System.Boolean', 'System.Char',
+				'System.Byte', 'System.SByte', 'System.Int16', 'System.UInt16'] {
+				return error('unsupported box/unbox type ${ty}')
+			}
+			v := vals[sp - 1]
+			if f.op == .box {
+				_ = v.int_value()!
+				if vm.boxes.len >= max_array_elements {
+					return error('boxed object limit exceeded')
+				}
+				vm.boxes << Value{
+					...v
+					data: &ValueData{
+						text: ty
+					}
+				}
+				vals[sp - 1] = Value{
+					kind: .boxed
+					n:    vm.boxes.len - 1
+				}
+			} else {
+				if v.kind != .boxed || v.n < 0 || v.n >= vm.boxes.len
+					|| vm.boxes[v.n].data.text != ty {
+					return error('unbox.any type mismatch')
+				}
+				vals[sp - 1] = integer(vm.boxes[v.n].n)
+			}
+		}
+		.call_native {
+			base := sp - f.b
+			result := vm.native_call(&vm.sites[f.a], vals[base..sp])!
+			if f.c == 1 {
+				vals[base] = result
+				return base + 1
+			}
+			return base
+		}
+		else {
+			return error('internal: ${f.op} has no general implementation')
+		}
+	}
+	return sp
 }
 
 // Prepares the frame of `body` whose locals start at `locals`, and returns its limit.

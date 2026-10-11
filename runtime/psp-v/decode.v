@@ -5,54 +5,100 @@ module main
 // `il.v` decodes and checks the IL as written. This file turns it into what the interpreter
 // loop actually runs: a dense opcode per instruction, every token already resolved, `nop`s
 // removed, calls to constant-returning methods folded into constants, and the evaluation
-// stack depth proven at every instruction. The loop in `vm.v` relies on that proof, so it does
-// not check for stack underflow or overflow per instruction. Common instruction sequences are
-// then fused into single operations; see `fuse`.
+// stack depth proven at every instruction. The loop in `vm.v` and the compiler in `jit.v` both
+// rely on that proof, so neither checks for stack underflow or overflow per instruction.
+//
+// ── Reading the operation list ───────────────────────────────────────────────
+//
+// Each operation is one `Fast`: an opcode and up to three integer operands, `a`, `b` and `c`.
+// The stack effect is written `[..., x, y] -> [..., r]`, top of stack on the right.
+//
+// Values carry a kind (see value.v). "int" below means a value of kind `.integer`; an
+// operation that needs one and gets anything else fails with `expected an int32 value`.
+// Integer arithmetic wraps at 32 bits, as the CLI's does. Conditions are ints, 0 or 1.
+//
+// Branch targets (`a` of every branch) are indices into the same `Fast` array.
 enum Op as u8 {
-	// Fused forms, produced only by `fuse`. `a` is the constant operand unless noted.
-	ldarg_fld // ldarg a; ldfld (b = slot, c = declaring type)
+	// ── Fused operations ─────────────────────────────────────────────────────
+	// Produced only by `fuse`, each standing for the IL sequence shown. They behave exactly as
+	// that sequence did, including its diagnostics; they exist because the interpreter's cost
+	// is mostly per operation, not per unit of work.
+
+	// `ldarg a; ldfld`. Pushes field `b` of the struct in argument `a`, which must be a struct of
+	// type `c` (or a managed address of one). [...] -> [..., field]
+	ldarg_fld
+	// `ldc a; add|sub|mul`. [..., x] -> [..., x OP a]. x must be an int.
 	add_imm
 	sub_imm
 	mul_imm
+	// `ldc a; clt|cgt`. [..., x] -> [..., x < a] or [..., x > a], signed. x must be an int.
 	clt_imm
 	cgt_imm
+	// `ldc a; ceq`. [..., x] -> [..., 1 if x is the int a, else 0]. Never fails: comparing any
+	// other kind with an int is simply unequal.
 	ceq_imm
-	cge_imm // ldc a; clt; ldc 0; ceq
-	cle_imm // ldc a; cgt; ldc 0; ceq
-	cge // clt; ldc 0; ceq
-	cle // cgt; ldc 0; ceq
-	ldelem_imm // ldc a; ldelem
-	// One per supported IL instruction.
-	ldarg // a = argument index
-	ldc // a = value
-	call // a = body index, b = argument count, c = 1 if a value is returned
-	ret
-	ldloc // a = local index
-	add
-	ldfld // a = field index
-	clt
-	pop
-	ldelem // a = 0 plain, 1 i1, 2 u1, 3 i2, 4 u2
-	ceq
-	brfalse // a = target
+	// `ldc a; clt; ldc 0; ceq` and `ldc a; cgt; ldc 0; ceq`: how the compiler spells x >= a and
+	// x <= a. [..., x] -> [..., x >= a] or [..., x <= a], signed.
+	cge_imm
+	cle_imm
+	// `clt; ldc 0; ceq` and `cgt; ldc 0; ceq`. [..., x, y] -> [..., x >= y] or [..., x <= y].
+	cge
+	cle
+	// `ldc a; ldelem` with no narrowing. [..., array] -> [..., array[a]]. Fails with `expected
+	// non-null array` or `array index out of bounds`.
+	ldelem_imm
+
+	// ── Arguments, locals and constants ──────────────────────────────────────
+
+	// [...] -> [..., argument a]
+	ldarg
+	// [...] -> [..., int a]
+	ldc
+	// [...] -> [..., local a]
+	ldloc
+	// [..., v] -> [...]; local a = v
 	stloc
-	mul
-	ldnull
-	stelem // a = 0 plain, 1 u1, 2 u2
-	or_
-	brtrue
-	dup
-	sub
-	and_
-	br
-	call_native // a = site index, b = argument count, c = 1 if a value is returned
-	ldstr // a = literal index
+	// [..., v] -> [...]; argument a = v
 	starg
-	cgt
-	cgt_un
-	clt_un
+	// [...] -> [..., null]
+	ldnull
+	// [...] -> [..., literal string a]. Literals are decoded once, at load.
+	ldstr
+	// [..., v] -> [...]
+	pop
+	// [..., v] -> [..., v, v]
+	dup
+
+	// ── Calls ────────────────────────────────────────────────────────────────
+
+	// Calls method body `a` with the top `b` values as its arguments, the deepest first.
+	// [..., arg0 .. argN] -> [..., result] when `c` is 1, else [...]. The arguments stay where
+	// they are and become the callee's argument slots. Fails with `call depth limit exceeded`
+	// past 128 active calls.
+	call
+	// Calls a runtime or BCL method: native call site `a` (see NativeSite), `b` arguments
+	// (including `this` for an instance method), `c` = 1 if it returns a value.
+	call_native
+	// Delegate Invoke. The delegate is below its `b - 1` arguments:
+	// [..., delegate, arg0 .. argN] -> [..., result] when `c` is 1, else [...].
+	// Fails with `Invoke on a null or invalid delegate`.
+	invoke
+	// Returns: the top value if the method returns one. The frame is cleared.
+	ret
+
+	// ── Branches ─────────────────────────────────────────────────────────────
+
+	// Jumps to `a`.
+	br
+	// [..., v] -> [...]; jumps to `a` if v is false / true. False is null or the int 0;
+	// anything else, a string or a struct included, is true.
+	brfalse
+	brtrue
+	// [..., x, y] -> [...]; jumps to `a` if x and y are equal / not equal (see `equal_values`).
 	beq
 	bne_un
+	// [..., x, y] -> [...]; jumps to `a` if x >= y, x > y, x <= y or x < y. Both must be ints.
+	// The `_un` forms compare as unsigned.
 	bge
 	bgt
 	ble
@@ -61,42 +107,103 @@ enum Op as u8 {
 	bgt_un
 	ble_un
 	blt_un
+
+	// ── Arithmetic and comparison ────────────────────────────────────────────
+	// Binary operations are [..., x, y] -> [..., x OP y]; both operands must be ints.
+
+	add
+	sub
+	mul
+	// Signed and unsigned division and remainder. Fail with `division by zero`; signed division
+	// of -2147483648 by -1 fails with `int32 division overflow`. `b` holds the IL opcode.
 	div
 	div_un
 	rem
 	rem_un
+	and_
+	or_
 	xor
+	// Shifts by y & 31. `shr` is arithmetic, `shr_un` logical.
 	shl
 	shr
 	shr_un
+	// [..., x, y] -> [..., x < y] or [..., x > y]; `_un` compares as unsigned.
+	clt
+	cgt
+	clt_un
+	cgt_un
+	// [..., x, y] -> [..., x == y] for any two values (see `equal_values`), except that two
+	// strings fail with `string reference identity comparison is unsupported`.
+	ceq
+	// [..., x] -> [..., -x] / [..., ~x]
 	neg
 	not
+	// [..., x] -> [..., x narrowed to 8 or 16 bits, then widened back, signed or unsigned].
 	conv_i1
 	conv_i2
 	conv_u1
 	conv_u2
-	conv_i4 // identity on int32, but still rejects a non-integer
+	// [..., x] -> [..., x]. The identity on an int32, but still rejects anything else.
+	conv_i4
+
+	// ── Arrays ───────────────────────────────────────────────────────────────
+
+	// [..., count] -> [..., new array]. `a` is the element type; elements start at their zero
+	// value. Fails with `array heap limit exceeded`.
+	newarr
+	// [..., array] -> [..., length]
 	ldlen
-	newarr // a = element type
+	// [..., array, index] -> [..., element]. `a` narrows the element: 0 none, 1 i1, 2 u1, 3 i2,
+	// 4 u2. Fails with `expected non-null array` or `array index out of bounds`.
+	ldelem
+	// [..., array, index, v] -> [...]; array[index] = v, first narrowed by `a`: 0 none, 1 u1,
+	// 2 u2.
+	stelem
+	// [..., array, index] -> [..., managed address of array[index]]
 	ldelema
-	ldsfld // a = field index
+
+	// ── Structs, fields and addresses ────────────────────────────────────────
+	// A struct is an immutable snapshot (see value.v), so storing to a field builds a new one.
+
+	// [..., struct] -> [..., field]. Field index `a`, at slot `b` of a struct of type `c`. The
+	// operand may also be a managed address of the struct. Anything else fails with `invalid
+	// struct field access`.
+	ldfld
+	// [..., struct address] -> [..., address of its field]. Operands as for `ldfld`.
+	ldflda
+	// [..., struct address, v] -> [...]; the field is set to v through the address. Operands
+	// as for `ldfld`; fails with `stfld needs a struct address` if given a struct value.
+	stfld
+	// [...] -> [..., static field a] / [..., v] -> [...] / [...] -> [..., its address]
+	ldsfld
 	stsfld
 	ldsflda
-	ldflda
-	stfld
+	// [...] -> [..., managed address of argument a / local a]
 	ldarga
 	ldloca
+	// [..., address] -> [..., the value it points at]
 	ldobj
+	// [..., address, v] -> [...]; stores v through the address
 	stobj
-	initobj // a = struct TypeDef row
-	ldftn // a = MethodDef token
+	// [..., address] -> [...]; stores the zero value of struct type `a` through the address
+	initobj
+
+	// ── Delegates and boxes ──────────────────────────────────────────────────
+
+	// [...] -> [..., function a], a MethodDef token: what a delegate is built from.
+	ldftn
+	// [..., null, function] -> [..., delegate]. Only capture-free static delegates exist.
 	newobj_delegate
-	newobj_unsupported // a = original instruction index, for the diagnostic
-	invoke // b = argument count including the delegate, c = 1 if a value is returned
-	box // a = type name index
+	// Any other constructor: fails with `unsupported constructor`, naming entry `a` of
+	// Vm.unsupported. `b` is its argument count, for the stack depth proof.
+	newobj_unsupported
+	// [..., int] -> [..., box], for the small integer types named by Vm.texts[a].
+	box
+	// [..., box] -> [..., int]. Fails with `unbox.any type mismatch`.
 	unbox
 }
 
+// One operation. What `a`, `b` and `c` mean depends on the opcode; see Op.
 struct Fast {
 	op Op
 	a  int
@@ -480,8 +587,10 @@ fn remap(code []Fast) []Fast {
 
 // Proves the evaluation stack depth at every reachable instruction: never negative, never
 // above maxstack, the same along every path into a branch target, and exactly what `ret`
-// needs. Returns the error the old per-instruction checks would have raised at run time.
-fn verify_stack(code []Fast, body Body, name string, bodies []Body) ! {
+// needs. Returns the error the old per-instruction checks would have raised at run time, or
+// else each instruction's depth before it runs (-1 if unreachable), which is what lets the JIT
+// address every stack slot at a fixed offset.
+fn verify_stack(code []Fast, body Body, name string, bodies []Body) ![]int {
 	mut depth := []int{len: code.len, init: -1}
 	mut work := []int{}
 	if code.len == 0 {
@@ -516,17 +625,17 @@ fn verify_stack(code []Fast, body Body, name string, bodies []Body) ! {
 			}
 			continue
 		}
-		mut next := []int{}
-		if is_branch(f.op) {
-			next << f.a
+		// Successors: the branch target, then the next instruction unless the branch is
+		// unconditional. At most two, so no list is allocated per instruction.
+		branch := if is_branch(f.op) { f.a } else { -1 }
+		fallthrough := if f.op != .br { pc + 1 } else { -1 }
+		if fallthrough >= code.len {
+			return error('method ${name} falls through without ret')
 		}
-		if f.op != .br {
-			if pc + 1 >= code.len {
-				return error('method ${name} falls through without ret')
+		for target in [branch, fallthrough]! {
+			if target < 0 {
+				continue
 			}
-			next << pc + 1
-		}
-		for target in next {
 			if depth[target] == -1 {
 				depth[target] = after
 				work << target
@@ -535,6 +644,7 @@ fn verify_stack(code []Fast, body Body, name string, bodies []Body) ! {
 			}
 		}
 	}
+	return depth
 }
 
 // The value a parameterless, branch-free method always returns, if it is a constant.
@@ -718,4 +828,176 @@ fn fuse(code []Fast) []Fast {
 		i += used
 	}
 	return remap(out)
+}
+
+// ── Inlining ─────────────────────────────────────────────────────────────────
+
+// The largest callee, in operations, that `inline_calls` copies into its callers.
+const inline_limit = 40
+
+// Whether `b` can be copied into its callers: small, calling no ProLang method (so a copy never
+// recurses), and with locals whose zero value is the int 0 or null, which the copy re-creates
+// with `ldc 0` or `ldnull` each time it runs.
+fn inlinable(b Body) bool {
+	if b.fast.len == 0 || b.fast.len > inline_limit {
+		return false
+	}
+	for f in b.fast {
+		if f.op in [.call, .invoke] {
+			return false
+		}
+	}
+	for v in b.local_init {
+		if v.kind !in [.null_value, .integer] || v.n != 0 || v.data != unsafe { nil } {
+			return false
+		}
+	}
+	return true
+}
+
+// Replaces calls to small leaf methods with a copy of the method.
+//
+// `Ui->get`, a bounds-checked read of one int, is called 650 times a frame by the cube; the call
+// costs more than the read. A copy at the call site:
+//
+//     stloc s+N-1 .. stloc s+0     pop the arguments into scratch locals, last first
+//     ldc 0 / ldnull; stloc ...    re-create the callee's own locals at their zero value
+//     <callee body>                ldarg i -> ldloc s+i, its locals -> s+N+j, ret -> br end
+//   end:
+//
+// Every copy in a caller uses the same scratch locals starting at `s`: a copy contains no calls,
+// so two copies never run at once. Runs to a fixed point, so a method that becomes a leaf once
+// its own calls are copied in (`Ui->kind` is a `Ui->get`) is copied in turn.
+//
+// The one observable difference: a copied method no longer counts towards the 128-call depth
+// limit, which can only let a program that was at the limit go one level deeper.
+fn inline_calls(mut bodies []Body) {
+	for _ in 0 .. 4 {
+		mut ok := []bool{len: bodies.len}
+		for i, b in bodies {
+			ok[i] = inlinable(b)
+		}
+		mut changed := false
+		callees := bodies.clone()
+		for i in 0 .. bodies.len {
+			if inline_into(mut bodies[i], callees, ok) {
+				changed = true
+			}
+		}
+		if !changed {
+			break
+		}
+	}
+}
+
+fn inline_into(mut caller Body, bodies []Body, ok []bool) bool {
+	base := caller.locals.len
+	mut out := []Fast{cap: caller.fast.len * 2}
+	mut position := []int{len: caller.fast.len + 1}
+	mut caller_branches := []int{}
+	mut scratch := 0
+	mut stack := 0
+	for i, f in caller.fast {
+		position[i] = out.len
+		if f.op != .call || !ok[f.a] || f.b != bodies[f.a].signature.params.len {
+			if is_branch(f.op) {
+				caller_branches << out.len
+			}
+			out << f
+			continue
+		}
+		callee := bodies[f.a]
+		nargs := f.b
+		for k := nargs - 1; k >= 0; k-- {
+			out << Fast{
+				op: .stloc
+				a:  base + k
+			}
+		}
+		for j, v in callee.local_init {
+			// The callee's scratch locals are always written before they are read.
+			if j >= callee.scratch_base {
+				break
+			}
+			out << Fast{
+				op: if v.kind == .integer { Op.ldc } else { Op.ldnull }
+			}
+			out << Fast{
+				op: .stloc
+				a:  base + nargs + j
+			}
+		}
+		start := out.len
+		end := start + callee.fast.len
+		for k, g in callee.fast {
+			out << match g.op {
+				.ldarg {
+					Fast{
+						op: .ldloc
+						a:  base + g.a
+					}
+				}
+				.starg {
+					Fast{
+						op: .stloc
+						a:  base + g.a
+					}
+				}
+				.ldarga {
+					Fast{
+						op: .ldloca
+						a:  base + g.a
+					}
+				}
+				.ldloc, .stloc, .ldloca {
+					Fast{
+						...g
+						a: base + nargs + g.a
+					}
+				}
+				.ret {
+					// The final ret falls through to `end` anyway, so it is dropped (remap
+					// removes the marker); any earlier one jumps there.
+					Fast{
+						op: .br
+						a:  if k == callee.fast.len - 1 { -1 } else { end }
+					}
+				}
+				else {
+					if is_branch(g.op) {
+						Fast{
+							...g
+							a: start + g.a
+						}
+					} else {
+						g
+					}
+				}
+			}
+		}
+		if nargs + callee.locals.len > scratch {
+			scratch = nargs + callee.locals.len
+		}
+		if callee.max_stack > stack {
+			stack = callee.max_stack
+		}
+	}
+	if scratch == 0 {
+		return false
+	}
+	position[caller.fast.len] = out.len
+	for k in caller_branches {
+		out[k] = Fast{
+			...out[k]
+			a: position[out[k].a]
+		}
+	}
+	for _ in 0 .. scratch {
+		caller.locals << 0x1c
+		caller.local_init << Value{}
+	}
+	// An upper bound: the callee's stack sits on top of whatever the caller had below the call.
+	caller.max_stack += stack
+	caller.fast = remap(out)
+	return true
 }

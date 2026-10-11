@@ -17,10 +17,14 @@ mut:
 
 struct Body {
 	code      []Instruction
-	locals    []int
 	signature Signature
-	max_stack int
 mut:
+	// Local variable types. Inlining appends scratch locals for the inlined callees' arguments
+	// and locals, and raises max_stack to cover the callee's own evaluation stack.
+	locals    []int
+	max_stack int
+	// Locals from here on are inlining scratch, always written before they are read.
+	scratch_base int
 	// The execution form; see decode.v.
 	fast []Fast
 	// Each local's zero value. Struct payloads are immutable snapshots, so one per body is

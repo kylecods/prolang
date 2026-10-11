@@ -1,8 +1,11 @@
 param(
     [string]$Emulator = 'C:/Program Files/PPSSPP/PPSSPPWindows64.exe',
     [switch]$SkipBuild,
-    [int]$TimeoutSeconds = 30
+    [int]$TimeoutSeconds = 30,
+    # Runs the interpreter instead of the JIT, by placing jit-off.txt beside the EBOOT.
+    [switch]$NoJit
 )
+$engine = if ($NoJit) { 'interpreter' } else { 'jit' }
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath("$PSScriptRoot/../..")
 if (!(Test-Path -LiteralPath $Emulator)) { throw 'Pass -Emulator with the PPSSPP executable path' }
@@ -27,6 +30,8 @@ try {
         Copy-Item -LiteralPath "artifacts/msil-$case/program.dll" -Destination "$out/program.dll" -Force
         if (Test-Path -LiteralPath "$out/runtime.log") { Remove-Item -LiteralPath "$out/runtime.log" }
         Set-Content -LiteralPath "$out/test.ini" -Value "[General]`nPauseOnLostFocus = False`n[Graphics]`nGraphicsBackend = 2"
+        if ($NoJit) { Set-Content -LiteralPath "$out/jit-off.txt" -Value 'interpret' }
+        elseif (Test-Path -LiteralPath "$out/jit-off.txt") { Remove-Item -LiteralPath "$out/jit-off.txt" }
         # Quote each path because Start-Process joins its argument array.
         $emuArgs = @("--log=`"$out/emulator.log`"", "--appendconfig=`"$out/test.ini`"", '-direct3d11', '--windowed', "`"$out/EBOOT.PBP`"")
         $process = Start-Process -FilePath "$portable/PPSSPPWindows64.exe" -ArgumentList $emuArgs -WorkingDirectory $out -WindowStyle Hidden -PassThru
@@ -50,11 +55,13 @@ try {
                 call_depth { 'call depth limit exceeded[\s\S]*PROLANG FAIL' }
             }
             if ($log -notmatch $expected) { throw "PSP test failed or timed out: $case`n$log`nSee $out/emulator.log" }
-            Write-Host "PASS in PPSSPP: $case ($out/runtime.log)"
+            # A program that fails to load never reaches the point where an engine is chosen.
+            if ($log -match 'ENGINE (\w+)' -and $Matches[1] -ne $engine) { throw "Ran on the $($Matches[1]), expected the ${engine}: $case" }
+            Write-Host "PASS in PPSSPP ($engine): $case ($out/runtime.log)"
         } finally {
             if (!$process.HasExited) {
                 $null = $process.CloseMainWindow()
-                if (!$process.WaitForExit(3000)) { Stop-Process -Id $process.Id }
+                if (!$process.WaitForExit(3000)) { Stop-Process -Id $process.Id; $process.WaitForExit() }
             }
             $process.Dispose()
         }

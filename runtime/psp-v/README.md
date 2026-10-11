@@ -1,16 +1,16 @@
 # ProLang MSIL runtime for PSP, written in V
 
-This is an initial interpreter for a defined subset of ProLang's normal .NET assemblies.
-It opens a PE/CLI DLL, reads its metadata and method bodies, and interprets the IL on the
-PSP's CPU. The program is **not** transpiled to C. V emits C for the interpreter itself;
-PSPSDK compiles that interpreter into a reusable homebrew `EBOOT.PBP`.
+This is a runtime for a defined subset of ProLang's normal .NET assemblies. It opens a PE/CLI
+DLL, reads its metadata and method bodies, and runs the IL on the PSP's CPU: compiled to MIPS
+at load by a template JIT, or interpreted. The program is **not** transpiled to C. V emits C
+for the runtime itself; PSPSDK compiles that into a reusable homebrew `EBOOT.PBP`.
 
 The runtime supports console programs and the rotating cube in `examples/18-psp-cube`,
-including its UI toolkit, structs and scene painter delegate. It is an experimental interpreter,
-not a full CLR. Fixtures are compared with .NET and executed in PPSSPP; physical PSP testing
-is still required. Interpretation is substantially slower than the existing C PSP backend.
-The cube runs at a vblank-locked 60 fps in the tested PPSSPP configuration, using about 9.7 ms
-of each 16.7 ms frame; see the measurements below. Physical hardware is likely to be slower.
+including its UI toolkit, structs and scene painter delegate. It is experimental, not a full
+CLR. Fixtures are compared with .NET and executed in PPSSPP on both engines; physical PSP
+testing is still required. The cube runs at a vblank-locked 60 fps in the tested PPSSPP
+configuration, using about 3.6 ms of each 16.7 ms frame compiled (9.4 ms interpreted); see the
+measurements below. Physical hardware is likely to be slower.
 
 ## Build
 
@@ -70,7 +70,22 @@ setting `RUNTIME_DIR` to this directory and building beside the generated `runti
 
 # Build the cube and verify 60 frames, changing geometry and memory collection.
 ./runtime/psp-v/test-cube.ps1
+
+# Either PPSSPP script on the interpreter instead of the JIT.
+./runtime/psp-v/test-ppsspp.ps1 -SkipBuild -NoJit
+./runtime/psp-v/test-cube.ps1 -SkipBuild -NoJit
 ```
+
+The JIT emits MIPS, so the desktop build (`test.ps1`) always interprets; there, the JIT's
+encoder is checked word for word against `psp-as`, and every fixture method is compiled though
+not run. The PPSSPP scripts run the JIT by default and check the log's `ENGINE jit` line, so a
+fallback to the interpreter cannot pass silently. `-NoJit` places a `jit-off.txt` beside the
+EBOOT, which is also how to turn the JIT off on hardware. Running both and comparing the cube's
+per-frame geometry hashes is the differential test between the engines.
+
+`test.ps1` builds with V's default C compiler. V 0.4.12's bundled tcc lacks `GetTickCount64`;
+use a full compiler, e.g. MSVC by running inside a Visual Studio developer shell with
+`VFLAGS=-cc msvc`.
 
 The emulator script defaults to `C:/Program Files/PPSSPP/PPSSPPWindows64.exe`; override it
 with `-Emulator`. It uses a portable copy under `artifacts/psp-tests/emulator/`, polls each
@@ -106,6 +121,8 @@ rendering and vblank, with initialization and screenshot readback excluded:
 | Compact value slots and cached string literals | 83 ms | 12.0 |
 | Execution form: dense opcodes, verified stack depth, one value stack, folded constants | 17 ms (12.0 ms work) | 60 |
 | Fused instruction sequences | 17 ms (9.7 ms work) | 60 |
+| Small leaf methods inlined | 17 ms (9.0 ms work) | 60 |
+| **Template JIT to MIPS** (interpreter, for comparison: 9.4 ms work) | 17 ms (**3.6 ms work**) | 60 |
 
 Once a frame fits in one vblank its time is locked at 16–17 ms, so `test-cube.ps1` also reports
 **work**: the time from one present to the request for the next, before waiting on the GE and the
@@ -141,10 +158,52 @@ recursion: a call's arguments are already on the caller's stack and become the c
 slots where they lie. Freeing a temporary no longer scans every managed allocation; PSP value
 slots are 16 bytes; frames are cleared on return to release dead references.
 
-The cube now executes about 40,500 IL instructions and 1,750 calls per frame. `Ui->get`, a
-bounds-checked array read, is a quarter of them, and `Ui->node` clears each new node's 30 fields
-with an interpreted loop. Inlining small methods, and a native bulk fill for that loop, are the
-likely next steps.
+Small leaf methods (at most 40 operations, calling no ProLang method) are then copied into
+their callers. `Ui->get`, a bounds-checked read of one int, was called 650 times a frame and the
+call cost more than the read; calls fell from 1,750 to 290 a frame. The copies share one set of
+scratch locals per caller, which is safe because a copy contains no calls, so two never run at
+once. The one visible difference: a copied method no longer counts towards the 128-call depth
+limit.
+
+### The JIT
+
+**Was it worth it?** After the work above, the interpreter spent about 9 ms on ~43,600
+operations a frame: some 43 CPU cycles each, nearly all of it fetching the operation, dispatching
+through the jump table, and copying 16-byte values in and out of memory by index. The drawing
+itself is about 0.5 ms (the C backend's build of the same scene spends that much in the same
+calls). Compiling each operation to its few loads and stores removes the fetch and dispatch, and
+the proven stack depth makes every stack slot a fixed offset from one register, so there is no
+stack pointer either. The estimate was 10–15 instructions per operation and ~3 ms a frame; the
+result is 3.6 ms, 2.6 times faster than the interpreter, leaving 78% of each frame free instead
+of 44%.
+
+**How it works** (`jit.v`, which documents each template beside the code that emits it):
+
+- Every body is compiled at load, before the program starts, into one buffer of machine code:
+  152 methods, ~500 KB, in about 120 ms of PSP time including a collection at the end. The
+  buffer comes from `memalign`, outside the collector, and is written back from the data cache
+  and invalidated in the instruction cache before it runs.
+- A body becomes a C-callable function, `int body(Vm *vm, Value *frame, Value *ret)`, using the
+  same frame layout in the same value stack as the interpreter. It returns 0, or 1 with the
+  diagnostic in `vm.jit_error`; callers propagate a 1, so an error unwinds every compiled frame.
+- Hot operations are emitted inline with the interpreter's checks, in its order, raising its
+  exact diagnostics. Every other operation, and the unusual case of a hot one (`ldfld` through a
+  managed address, `ceq` on anything but two ints), calls `exec_slow`, the single implementation
+  both engines share. So every operation is supported, and a rare one cannot behave differently
+  compiled.
+- Calls go through a table of entry addresses, which is also how `Invoke` finds a delegate's
+  method. Depth, value-stack room and the instruction budget are checked as the interpreter
+  does; the budget is charged per basic block rather than per operation.
+- A returning frame clears only the pointer word of each slot, enough for the collector; the
+  value stack is cleared in full when the program ends.
+
+The JIT is used whenever it can be: on the PSP, unless `jit-off.txt` is present, and only if
+compilation succeeds (it declines a frame too large for 16-bit offsets, or a V array layout it
+does not recognize). `runtime.log` records which engine ran, the code size and the compile time.
+
+The cube now executes about 43,600 operations and 290 calls per frame. Further gains would come
+from keeping stack values in registers across operations and from dropping kind checks the
+decoder can prove unnecessary, but with three quarters of the frame free, that is not pressing.
 Use `test-cube.ps1 -SkipBuild` after rebuilding to reproduce the timing and correctness checks;
 frame logs include instruction and call counts.
 
@@ -190,10 +249,13 @@ call depth to 128, array elements cumulatively to 262,144, boxed
 objects to 262,144, and execution to 10 million instructions between buffer swaps (or for the
 whole run of a console program). The output buffer holds at most
 64 KiB of UTF-16 bytes before a flush. These are bounds, not promises that all maxima fit
-simultaneously in the PSP heap. Sleep is limited to 60 seconds per call.
+simultaneously in the PSP heap. Sleep is limited to 60 seconds per call. Compiled code takes
+roughly 3 KB per method from the PSP heap, outside the collector; a method whose frame exceeds
+about 2,000 slots, or whose code exceeds the reach of a 16-bit branch, makes the whole program
+fall back to the interpreter.
 
 The PSP host reserves a 12 MiB heap and a 512 KiB main-thread stack. V is built with `-gc none`;
-`gc.h` supplies a single-threaded conservative collector for the interpreter's generated C
+`gc.h` supplies a single-threaded conservative collector for the runtime's generated C
 allocations on PSP. It scans saved registers, the main thread's stack and module data, follows
 interior pointers, and reclaims unreachable temporary strings and struct payloads. The GU display
 list, 1 MiB of static data that never holds a heap pointer, is left out of the root scan. Every
@@ -209,9 +271,11 @@ intended for bounded tests; the PSP collector is the memory profile exercised by
 
 `reader.v` checks binary reads; `image.v` reads PE/CLI metadata and resolves tokens; `il.v`
 decodes method bodies and checks branches; `decode.v` turns them into the execution form
-(resolved, folded, fused and stack-verified); `value.v` defines values and UTF-16 conversion;
-`vm.v` executes instructions; `native.v` supplies runtime/BCL calls. `host.h` is the small
-file, output, clock, GU/controller, and PSP bootstrap boundary; interpreter logic is V.
+(resolved, folded, inlined, fused and stack-verified), and documents every operation;
+`value.v` defines values and UTF-16 conversion; `vm.v` interprets operations and holds
+`exec_slow`, the one implementation of the rare ones; `jit.v` compiles them to MIPS;
+`native.v` supplies runtime/BCL calls. `host.h` is the small file, output, clock, GU/controller,
+code-memory and PSP bootstrap boundary; runtime logic is V.
 
 The PSP build excludes V 0.4.12's unused Unix closure header from generated C and preloads
 Newlib's `ctype.h` to avoid its `_S` macro colliding with V string literals. It does not change
@@ -219,7 +283,8 @@ the installed V compiler or supply fake Unix APIs. The V-generated C still produ
 pointer-cast and const-qualifier warnings with PSPSDK.
 
 Next milestones are reclaiming unused array/box handles, class semantics, wider numeric
-types, interpreter performance, and verification on physical PSP hardware.
+types, keeping values in registers across compiled operations, and verification on physical
+PSP hardware — the JIT in particular, since PPSSPP models neither cache nor bus timing.
 
 Format references: [ECMA-335](https://ecma-international.org/publications-and-standards/standards/ecma-335/),
 [V 0.4.12](https://github.com/vlang/v/tree/0.4.12),

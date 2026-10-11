@@ -3,14 +3,18 @@ param(
     [int]$Frames = 60,
     [int]$TimeoutSeconds = 180,
     [ValidateSet('s','2','3')][string]$Optimization = '3',
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [string]$Distro = 'Ubuntu',
+    # Runs the interpreter instead of the JIT, by placing jit-off.txt beside the EBOOT.
+    [switch]$NoJit
 )
+$engine = if ($NoJit) { 'interpreter' } else { 'jit' }
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath("$PSScriptRoot/../..")
 if ($Frames -lt 2) { throw 'At least two frames are required to verify rotation' }
 Push-Location $repo
 try {
-    if (!$SkipBuild) { & "$PSScriptRoot/build.ps1" -Program "$repo/examples/18-psp-cube/psp_cube.prl" -Optimization $Optimization }
+    if (!$SkipBuild) { & "$PSScriptRoot/build.ps1" -Program "$repo/examples/18-psp-cube/psp_cube.prl" -Optimization $Optimization -Distro $Distro }
     $out = "$repo/artifacts/psp-tests/cube"
     $portable = "$repo/artifacts/psp-tests/emulator"
     New-Item -ItemType Directory -Force $out, $portable | Out-Null
@@ -23,6 +27,8 @@ try {
     }
     Set-Content -LiteralPath "$out/test-frames.txt" -Value $Frames
     Set-Content -LiteralPath "$out/test.ini" -Value "[General]`nPauseOnLostFocus = False`n[Graphics]`nGraphicsBackend = 2"
+    if ($NoJit) { Set-Content -LiteralPath "$out/jit-off.txt" -Value 'interpret' }
+    elseif (Test-Path -LiteralPath "$out/jit-off.txt") { Remove-Item -LiteralPath "$out/jit-off.txt" }
     $emuArgs = @("--log=`"$out/emulator.log`"", "--appendconfig=`"$out/test.ini`"", '-direct3d11', '--windowed', "`"$out/EBOOT.PBP`"")
     $process = Start-Process -FilePath "$portable/PPSSPPWindows64.exe" -ArgumentList $emuArgs -WorkingDirectory $out -WindowStyle Hidden -PassThru
     try {
@@ -34,6 +40,7 @@ try {
             if ($process.HasExited) { throw 'PPSSPP exited before the cube reported completion' }
         } until ($log -match 'PROLANG (OK|FAIL)' -or [DateTime]::UtcNow -ge $deadline)
         if ($log -notmatch 'PROLANG OK') { throw "Cube failed or timed out:`n$log`nSee $out/emulator.log" }
+        if ($log -notmatch "ENGINE $engine") { throw "The cube did not run on the $engine" }
         $draws = [regex]::Matches($log, 'FRAME (\d+) lines=(\d+) rects=(\d+) texts=(\d+) geometry=([0-9a-f]+)')
         if ($draws.Count -lt $Frames) { throw 'Cube did not present the requested frames' }
         foreach ($frame in $draws) {
@@ -51,7 +58,7 @@ try {
         foreach ($heap in [regex]::Matches($log, 'HEAP bytes=(\d+)')) {
             if ([int]$heap.Groups[1].Value -gt 8 * 1024 * 1024) { throw 'Cube temporary allocations exceeded the expected memory budget' }
         }
-        Write-Host "PASS in PPSSPP: cube, $($draws.Count) frames, $($geometry.Count) distinct orientations, $($collections[-1].Groups[1].Value) collections"
+        Write-Host "PASS in PPSSPP ($engine): cube, $($draws.Count) frames, $($geometry.Count) distinct orientations, $($collections[-1].Groups[1].Value) collections"
         # Exclude initialization and the frame after each forced test collection.
         # Screenshot readback is already excluded by the host's timing boundary.
         $timings = @([regex]::Matches($log, 'FRAME (\d+)[^\r\n]* time_ms=(\d+)') |
@@ -74,7 +81,7 @@ try {
     } finally {
         if (!$process.HasExited) {
             $null = $process.CloseMainWindow()
-            if (!$process.WaitForExit(3000)) { Stop-Process -Id $process.Id }
+            if (!$process.WaitForExit(3000)) { Stop-Process -Id $process.Id; $process.WaitForExit() }
         }
         $process.Dispose()
     }

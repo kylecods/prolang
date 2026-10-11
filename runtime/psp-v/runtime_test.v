@@ -214,3 +214,64 @@ fn test_fusion_merges_sequences_but_never_across_a_branch_target() {
 	skip := fuse([Fast{ op: .br, a: 1 }, Fast{ op: .ldnull }, Fast{ op: .pop }, Fast{ op: .ret }])
 	assert skip.len == 2 && skip[0].a == 1 && skip[1].op == .ret
 }
+
+// Reference encodings from the pspdev assembler (`psp-as -march=allegrex`) for every instruction
+// form the JIT emits. The JIT cannot run off the PSP, so this is what pins its machine code down.
+fn test_jit_encodings_match_the_psp_assembler() {
+	mut a := Asm{}
+	a.addu(r_v0, r_a0, r_a1)
+	a.subu(r_t2, r_t2, r_t3)
+	a.and_(r_t2, r_t2, r_t3)
+	a.or_(r_t8, r_t8, r_t9)
+	a.xor(r_t2, r_t2, r_t3)
+	a.nor(r_t2, r_t2, r_zero)
+	a.slt(r_t2, r_t3, r_t2)
+	a.sltu(r_t4, r_t2, r_t3)
+	a.sllv(r_t2, r_t2, r_t3)
+	a.srlv(r_t2, r_t2, r_t3)
+	a.srav(r_t2, r_t2, r_t3)
+	a.sll(r_t2, r_t2, 24)
+	a.srl(r_t2, r_t2, 8)
+	a.sra(r_t2, r_t2, 16)
+	a.mul(r_t2, r_t2, r_t3) // mult t2,t3; mflo t2
+	a.jr(r_ra)
+	a.emit(mips_r(r_t9, 0, r_ra, 0, 0x09)) // jalr t9, without the helper's delay-slot nop
+	a.addiu(r_sp, r_sp, -32)
+	a.slti(r_t1, r_t0, 128)
+	a.sltiu(r_t2, r_t2, 1)
+	a.andi(r_t2, r_t2, 0xffff)
+	a.li(r_t1, max_steps) // lui t1,0x98; ori t1,t1,0x9680
+	a.xori(r_t8, r_t8, 1)
+	a.lw(r_ra, 28, r_sp)
+	a.sw(r_t2, -16, r_frame)
+	assert a.code == [u32(0x00851021), 0x014b5023, 0x014b5024, 0x0319c025, 0x014b5026, 0x01405027,
+		0x016a502a, 0x014b602b, 0x016a5004, 0x016a5006, 0x016a5007, 0x000a5600, 0x000a5202,
+		0x000a5403, 0x014b0018, 0x00005012, 0x03e00008, 0x0320f809, 0x27bdffe0, 0x29090080,
+		0x2d4a0001, 0x314affff, 0x3c090098, 0x35299680, 0x3b180001, 0x8fbf001c, 0xae2afff0]
+
+	// Branch offsets count words from the instruction after the branch, forwards and back.
+	mut b := Asm{}
+	back := b.label()
+	b.bind(back)
+	forward := b.label()
+	b.beq(r_t2, r_zero, forward) // words 0, 1 (delay slot)
+	b.emit(0)
+	b.bind(forward) // word 3: offset 3 - 1 = 2
+	b.bne(r_v0, r_zero, back) // word 3: offset 0 - 4 = -4
+	b.resolve()!
+	assert b.code[0] == 0x11400002
+	assert b.code[3] == 0x1440fffc
+}
+
+// Every operation of every fixture compiles: there is no method the JIT refuses. (It cannot run
+// here; PPSSPP runs the same fixtures compiled, through test-ppsspp.ps1.)
+fn test_jit_compiles_every_method_of_every_fixture() {
+	for case in ['smoke', 'arithmetic', 'boxed', 'structs', 'psp_api', 'assert_fail', 'div_zero',
+		'call_depth'] {
+		im := load_image(read_assembly(@VMODROOT + '/../../artifacts/msil-${case}/program.dll')!)!
+		mut vm := new_vm(im)!
+		words, starts := vm.jit_generate()!
+		assert starts.len == vm.bodies.len
+		assert words.len > starts.len * 10, case
+	}
+}

@@ -7,6 +7,7 @@
 #ifdef __PSP__
 #include <malloc.h>
 #include <pspkernel.h>
+#include <psputils.h>
 #include "../../native/prl_psp.h"
 PSP_MODULE_INFO("ProLang MSIL", 0, 0, 1);
 PSP_MAIN_THREAD_ATTR(THREAD_ATTR_USER | THREAD_ATTR_VFPU);
@@ -122,6 +123,29 @@ static void prl_host_swap(void) {
     prl_perf_start = sceKernelGetSystemTimeWide();
 }
 static void prl_host_vsync(void) { prl_psp_vsync(); }
+/* ── The JIT's machine boundary (jit.v) ──
+ * Code memory comes from memalign, outside the collector: nothing in it is a heap root, and the
+ * collector must never free it. The Allegrex has separate instruction and data caches, so freshly
+ * written code is written back from the one and invalidated in the other before it runs. */
+static void *prl_host_jit_alloc(int size) { return memalign(64, (size_t)size); }
+static void prl_host_jit_flush(void *p, int size) {
+    sceKernelDcacheWritebackRange(p, (unsigned int)size);
+    sceKernelIcacheInvalidateRange(p, (unsigned int)size);
+}
+/* Calls compiled code: int body(Vm *vm, Value *frame, Value *ret). */
+static int prl_host_jit_call(void *code, void *vm, void *frame, void *ret) {
+    return ((int (*)(void *, void *, void *))code)(vm, frame, ret);
+}
+/* On unless jit-off.txt sits beside the EBOOT, which selects the interpreter: the same program
+ * can then be run both ways and the logs compared. */
+static int prl_host_jit_enabled(void) {
+    FILE *f = fopen("jit-off.txt", "r");
+    if (f) { fclose(f); return 0; }
+    return 1;
+}
+static void prl_host_log(const char *s, int length) {
+    if (prl_log) { fwrite(s, 1, (size_t)length, prl_log); fflush(prl_log); }
+}
 static int prl_host_buttons(void) {
     return prl_test_frames > 0 && prl_frames >= prl_test_frames ? 8 : prl_psp_buttons_held();
 }
@@ -165,6 +189,14 @@ static void prl_host_text(int x,int y,const char *s,int len,int c) { (void)x;(vo
 static void prl_host_swap(void) { prl_frames++; }
 static void prl_host_vsync(void) {}
 static int prl_host_buttons(void) { return prl_frames >= prl_headless_frames() ? 8 : 0; }
+/* No JIT off the PSP: it emits MIPS. The desktop build always interprets. */
+static void *prl_host_jit_alloc(int size) { (void)size; return NULL; }
+static void prl_host_jit_flush(void *p, int size) { (void)p; (void)size; }
+static int prl_host_jit_call(void *code, void *vm, void *frame, void *ret) {
+    (void)code; (void)vm; (void)frame; (void)ret; return 1;
+}
+static int prl_host_jit_enabled(void) { return 0; }
+static void prl_host_log(const char *s, int length) { (void)s; (void)length; }
 #endif
 static int prl_host_size(const char *path) {
     FILE *f = fopen(path, "rb");
@@ -199,8 +231,18 @@ static void prl_host_gc_stats(void) {
             (unsigned)prl_gc_count, prl_gc_cycles); fflush(prl_log);
     }
 }
+/* Holds threshold collections off while the JIT compiles: it allocates a great deal that all
+ * dies together at the end, so collecting part-way only rescans what is still in use. An
+ * allocation that fails still collects, so this cannot run the heap out. Releasing the hold
+ * collects once, at load, rather than leaving the first collection of a running program — a
+ * visible hitch — to clear it up. */
+static void prl_host_gc_defer(int defer) {
+    if (defer) { prl_gc_threshold = (size_t)-1; return; }
+    prl_gc_collect();
+}
 #else
 static void prl_host_gc_init(void) {}
 static void prl_host_gc_stats(void) {}
+static void prl_host_gc_defer(int defer) { (void)defer; }
 #endif
 #endif
