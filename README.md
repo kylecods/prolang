@@ -249,4 +249,5 @@ PROLANG_UPDATE_SNAPSHOTS=1 dotnet test src/ProLang.Tests/ProLang.Tests.csproj -c
 - [The language server](docs/architecture/language-server.md) — how the editor asks the compiler
 - [Adding a builtin](docs/contributing/adding-a-builtin.md)
 - [Performance baseline](docs/perf/baseline-2026-08-15.md)
+- [C# IL runtime](runtime/mips-cs/README.md) — on-device PSP MIPS JIT, desktop NativeAOT reference, cube profiling and instruction listings
 - [AGENTS.md](AGENTS.md) — language reference and PSP toolchain setup

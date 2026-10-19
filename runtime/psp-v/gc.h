@@ -19,12 +19,16 @@ static PrlGcEntry *prl_gc_lookup;
 static size_t prl_gc_lookup_capacity, prl_gc_deleted;
 static size_t prl_gc_count, prl_gc_capacity, prl_gc_bytes;
 static size_t prl_gc_threshold = 512 * 1024;
+static size_t prl_gc_growth = 512 * 1024;
 static unsigned prl_gc_cycles;
 static unsigned char *prl_gc_stack_end;
 /* Static data that can never hold a heap pointer, left out of the root scan. The PSP host
  * names its 1 MiB GU display list here: it is all of the static data bar 50 KiB, and holds only
  * GE commands and vertex floats. Scanning it can only retain garbage, never save a live object. */
 static const unsigned char *prl_gc_skip_begin, *prl_gc_skip_end;
+/* Optional roots in permanent, non-managed storage (the portable C# VM's value stack).
+ * The V runtime leaves these null and continues to use its existing roots. */
+static const unsigned char *prl_gc_extra_begin, *prl_gc_extra_end;
 extern unsigned char _fdata[], _end[];
 static size_t prl_gc_hash(void *p) {
     return ((uintptr_t)p >> 3) * (uintptr_t)2654435761u;
@@ -101,6 +105,8 @@ static __attribute__((noinline)) void prl_gc_collect(void) {
         prl_gc_scan(_fdata, prl_gc_skip_begin);
         prl_gc_scan(prl_gc_skip_end, _end);
     } else prl_gc_scan(_fdata, _end);
+    if (prl_gc_extra_begin && prl_gc_extra_end > prl_gc_extra_begin)
+        prl_gc_scan(prl_gc_extra_begin, prl_gc_extra_end);
     /* Mark to a fixed point. A marked block is scanned exactly once. */
     int pending;
     do {
@@ -123,7 +129,7 @@ static __attribute__((noinline)) void prl_gc_collect(void) {
     }
     prl_gc_count = kept;
     prl_gc_reindex();
-    prl_gc_threshold = prl_gc_bytes + 512 * 1024;
+    prl_gc_threshold = prl_gc_bytes + prl_gc_growth;
     prl_gc_cycles++;
 }
 static void *prl_gc_malloc(size_t size) {
