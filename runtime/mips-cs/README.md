@@ -10,16 +10,23 @@ UI toolkit, structs, globals and delegates run through this path. Programs are r
 without rebuilding the EBOOT.
 
 ```text
-portable/*.cs → Roslyn type check → restricted C#→C → PSPSDK → EBOOT.PBP
+portable core → Roslyn type check → restricted C#→C → PSPSDK → EBOOT.PBP
                                                               ↓ on PSP
 ProLang → program.dll → PE/CLI loader → IL interpreter + MIPS JIT → GU/controller
 ```
 
-NativeAOT cannot target PSP/MIPS. The portable core uses an unmanaged C# subset and
-`cs-to-c/` translates that same source; unsupported C# syntax fails explicitly. This is
-not a general C# compiler. C platform glue supplies allocation, file I/O, graphics/input,
-cache maintenance and failure handling. The renderer and conservative collector are shared
-with `psp-v`; the loader, IL semantics and MIPS compiler are C#, not the V runtime.
+NativeAOT cannot target PSP/MIPS. The portable core is safe C#; `cs-to-c/` translates
+the same checked array, index and reference operations to C and rejects unsupported syntax.
+This is not a general C# compiler. C platform glue supplies file I/O, graphics/input,
+executable code allocation, cache maintenance and failure handling. The renderer is shared
+with `psp-v`; the loader, collector, IL semantics and MIPS compiler are portable C#.
+
+Guest references are integer handles into a fixed table. The collector traces guest value
+slots, permanent metadata objects, managed-address chains and output; it reuses unreachable
+handles only at instruction boundaries, after the JIT has flushed cached slots. Frames and
+image readers use checked array indices. PSP-native pointers remain inside the C platform
+boundary and generated code; they are never stored as guest values. `DesktopProgram.cs`,
+`LoaderTests.cs` and `HeapTests.cs` are desktop-only and are not translated.
 
 ```powershell
 ./runtime/mips-cs/build-psp.ps1
@@ -37,18 +44,26 @@ to `$HOME/pspdev-tmp/pspdev` inside WSL. The EBOOT and cube DLL are under
 `artifacts/mips-cs/psp/`; copy both into a homebrew folder on a PSP. Do not ship
 `test-frames.txt` or `jit-off.txt` in an interactive package.
 
-The tests reuse exactly one EBOOT across all nine fixtures. The PSP report compares every
-cube frame with the native C backend, includes forced collection frames in its p99/max,
-and disassembles the actual MIPS emitted on-device. A smooth 60 fps is a frame-budget
+The tests reuse exactly one EBOOT across eleven fixtures. The nine shared fixtures cover
+the existing compatibility profile; the local `array_bounds` and `gc_roots` fixtures check
+the JIT's array bounds diagnostic and collection with long-lived guest references. The PSP
+report compares every cube frame with the native C backend and disassembles the actual MIPS
+emitted on-device. A smooth 60 fps is a frame-budget
 result; CPU work remains higher than direct C. Physical PSP performance is unverified.
 The initial NativeAOT report below measured desktop emulation and is separate.
 
-The portable core uses eight-byte values on PSP, immutable metadata outside the managed
-collector, explicit VM roots, bounded transitive inlining, constant folding, a six-register
+The safe runtime always collects at its own allocation-pressure thresholds. `-NaturalGc`
+selects natural collection in the older baseline runtime; it does not change the safe
+collector's policy. See the [benchmark guide](benchmarks/README.md) for reproducible
+desktop and PSP comparisons.
+
+The portable core uses eight-byte guest values, immutable metadata roots, bounded transitive
+inlining, constant folding, a six-register
 integer cache, integer facts with checked boundaries, and fixed-point division strength
-reduction. A 16 KiB managed-heap growth interval bounds collection work on the cube.
-Collection still stops the world; the stress measurements are not a guarantee
-of zero pauses. It is an experimental compatibility profile, not a security sandbox.
+reduction. Collection is requested after 16 KiB of guest allocations or 1024 allocations,
+and runs at the next safe instruction boundary. The table holds at most 16,383 live guest
+objects; arrays are also subject to a live element limit. Collection stops the world.
+It is an experimental compatibility profile, not a security sandbox.
 
 ## Desktop NativeAOT reference
 
@@ -95,11 +110,14 @@ dotnet publish runtime/mips-cs/ProLang.Mips.csproj -c Release -r win-x64 `
 ```
 
 NativeAOT publishing requires the .NET native build prerequisites (Visual C++ tools on
-Windows). `test.ps1` compiles all nine V fixtures afresh, compares the four console programs
+Windows). `test.ps1` compiles all nine shared V fixtures afresh, compares the four console programs
 with their actual .NET execution, checks the PSP drawing bridge, and requires explicit
 diagnostics for four failure cases. It runs every fixture on all three engines, plus unit
 checks for decoding, stack verification, arithmetic, branch encoding and a non-nop MIPS delay
 slot. Neither the test nor the runtime invokes V or PPSSPP.
+It also builds the portable desktop runtime, runs loader and collector checks, and checks
+the local array bounds and collection fixtures against their expected outcomes. With
+`-SkipBuild`, that runtime must already be built.
 
 To run another supported assembly:
 

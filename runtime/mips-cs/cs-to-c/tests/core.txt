@@ -1,0 +1,24 @@
+public struct Cell { public int value; }
+public static class Test {
+    static int counter;
+    static int Next() { counter++; return counter; }
+    static int Pair(int a, int b) { return a * 10 + b; }
+    public static int Ordered() {
+        counter = 0;
+        int[] a = new int[4];
+        a[Next()] = Next();
+        ref int r = ref a[1];
+        r += Next();
+        Cell[] cells = new Cell[1];
+        cells[0].value = r;
+        return Pair(cells[0].value, Next());
+    }
+    static int Mutate(int[] a) { a[0] = 100; return 2; }
+    public static int Compound() { int[] a = new int[1]; a[0] = 1; a[0] += Mutate(a); return a[0]; }
+    public static bool Promotion() { uint x = 1; int y = -1; return x > y; }
+    public static int ReadBad() { int[] a = new int[1]; return a[1]; }
+    public static void WriteBad() { int[] a = new int[1]; a[-1] = 3; }
+    public static void RefBad() { int[] a = new int[0]; ref int r = ref a[0]; r = 3; }
+    public static int NullBad() { int[] a = null; return a[0]; }
+    public static int Defaults() { int[] a = new int[2]; return a[0] + a[1]; }
+}

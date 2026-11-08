@@ -16,12 +16,13 @@ try {
     New-Item -ItemType Directory -Force $portable | Out-Null
     Copy-Item -LiteralPath $Emulator -Destination "$portable/PPSSPPWindows64.exe" -Force
     Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $Emulator) 'assets') -Destination $portable -Recurse -Force
-    $cases = if ($Fixtures) { @('smoke','arithmetic','boxed','structs','psp_api','div_zero','assert_fail','call_depth','unsupported') } else { @('cube') }
+    $cases = if ($Fixtures) { @('smoke','arithmetic','boxed','structs','psp_api','div_zero','assert_fail','call_depth','unsupported','array_bounds','gc_roots') } else { @('cube') }
     foreach ($case in $cases) {
         $out = "$repo/artifacts/mips-cs/psp-tests/$(if ($NoJit) {'interpreter'} else {'jit'})/$case"
         New-Item -ItemType Directory -Force $out | Out-Null
         Copy-Item -LiteralPath "$repo/artifacts/mips-cs/psp/EBOOT.PBP" -Destination "$out/EBOOT.PBP" -Force
-        $source = if ($case -eq 'cube') { "$repo/examples/18-psp-cube/psp_cube.prl" } else { "$repo/runtime/psp-v/fixtures/$case.prl" }
+        $localSource = "$PSScriptRoot/fixtures/$case.prl"
+        $source = if ($case -eq 'cube') { "$repo/examples/18-psp-cube/psp_cube.prl" } elseif (Test-Path -LiteralPath $localSource) { $localSource } else { "$repo/runtime/psp-v/fixtures/$case.prl" }
         & dotnet src/ProLang/bin/Release/net10.0/ProLang.dll $source -o "$out/program.dll"
         if ($LASTEXITCODE) { throw "Fixture compilation failed: $case" }
         foreach ($name in 'runtime.log','first-frame.bmp','last-frame.bmp','jit-mips.bin') { if (Test-Path -LiteralPath "$out/$name") { Remove-Item -LiteralPath "$out/$name" } }
@@ -41,7 +42,7 @@ try {
                 if (Test-Path -LiteralPath "$out/runtime.log") { $log = Get-Content -LiteralPath "$out/runtime.log" -Raw }
                 if ($process.HasExited) { throw "Emulator exited: $case`n$log" }
             } until ($log -match 'PROLANG (OK|FAIL)' -or [DateTime]::UtcNow -ge $deadline)
-            $negative = @{ div_zero = 'division by zero'; assert_fail = 'assertion failed'; call_depth = 'call depth limit exceeded'; unsupported = 'unsupported signature type' }
+            $negative = @{ div_zero = 'division by zero'; assert_fail = 'assertion failed'; call_depth = 'call depth limit exceeded'; unsupported = 'unsupported signature type'; array_bounds = 'array index out of bounds' }
             if ($negative.ContainsKey($case)) {
                 if ($log -notmatch 'PROLANG FAIL' -or $log -notmatch $negative[$case]) { throw "Expected failure missing: $case`n$log" }
             } else {
@@ -63,7 +64,7 @@ try {
             if ($log -notmatch 'RUNTIME csharp-portable') { throw 'Wrong runtime' }
             $expectedEngine = if ($NoJit) { 'interpreter' } else { 'jit' }
             if ($log -notmatch "ENGINE $expectedEngine") { throw "Expected $expectedEngine engine" }
-            if ($case -in 'smoke','arithmetic','boxed','structs') {
+            if ($case -in 'smoke','arithmetic','boxed','structs','gc_roots') {
                 $expectedOutput = (& dotnet "$out/program.dll" | Out-String).Replace("`r`n","`n").Trim()
                 if ($LASTEXITCODE -or !$log.Replace("`r`n","`n").Contains($expectedOutput)) { throw "PSP output differs from .NET: $case" }
             }

@@ -1,0 +1,26 @@
+import "io"
+import "test"
+
+struct Kept { text: string, values: array<int> }
+global saved: Kept = Kept { text: "persistent", values: [17, 25] }
+
+func increment(value: int): int { return value + 1 }
+
+func main() {
+    let items: array<Kept> = array_new(1)
+    items[0] = saved
+    let callback: func(int): int = increment
+    let checksum: int = 0
+    for (let i = 0 to 19999) {
+        let transient = "item-" + string(i)
+        checksum = checksum + transient.length()
+    }
+    items[0].values[1] = callback(items[0].values[1])
+    assert(items[0].text == "persistent", "string survives collection")
+    assert(saved.values[0] == 17 && saved.values[1] == 26, "global array survives collection")
+    assert(items[0].values[0] + items[0].values[1] == 43, "struct array survives collection")
+    print(checksum)
+    print(items[0].text)
+    print(saved.values[1])
+    print("GC ROOTS PASS")
+}

@@ -15,7 +15,7 @@ try {
     New-Item -ItemType Directory -Force $out | Out-Null
     & dotnet src/ProLang/bin/Release/net10.0/ProLang.dll $Program -o "$out/program.dll"
     if ($LASTEXITCODE) { throw 'ProLang MSIL compilation failed' }
-    & dotnet runtime/mips-cs/cs-to-c/bin/Release/net10.0/CsToC.dll "$out/runtime.c" "$PSScriptRoot/portable/Core.cs" "$PSScriptRoot/portable/DesktopHost.cs" "$PSScriptRoot/portable/Decode.cs" "$PSScriptRoot/portable/Execute.cs" "$PSScriptRoot/portable/Jit.cs"
+    & dotnet runtime/mips-cs/cs-to-c/bin/Release/net10.0/CsToC.dll "$out/runtime.c" "$PSScriptRoot/portable/Core.cs" "$PSScriptRoot/portable/DesktopHost.cs" "$PSScriptRoot/portable/Decode.cs" "$PSScriptRoot/portable/Execute.cs" "$PSScriptRoot/portable/Jit.cs" "$PSScriptRoot/portable/ValueOperations.cs" "$PSScriptRoot/portable/Heap.cs"
     if ($LASTEXITCODE) { throw 'Portable C# translation failed' }
     if (!$GenerateOnly) {
         $script = (& wsl -d $Distro --exec wslpath -a "$PSScriptRoot/psp/build.sh").Trim()

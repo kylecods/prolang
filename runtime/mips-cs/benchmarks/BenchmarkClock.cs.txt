@@ -1,0 +1,33 @@
+using System;
+using System.Diagnostics;
+using System.Globalization;
+
+namespace ProLang.Portable;
+
+// Called immediately on entry to Present, then resumed after its logging/reset.
+static class BenchmarkClock
+{
+    static long startTicks, startBytes;
+    static bool started;
+    internal static void Stop(int frame)
+    {
+        long ticks = Stopwatch.GetTimestamp();
+        long bytes = GC.GetAllocatedBytesForCurrentThread();
+        if (started)
+        {
+            Console.WriteLine(string.Create(CultureInfo.InvariantCulture, $"BENCH {frame} ticks={ticks - startTicks} bytes={bytes - startBytes}"));
+        }
+    }
+    internal static void Start()
+    {
+        startBytes = GC.GetAllocatedBytesForCurrentThread();
+        startTicks = Stopwatch.GetTimestamp();
+        started = true;
+    }
+    internal static void Report()
+    {
+        using var process = Process.GetCurrentProcess();
+        process.Refresh();
+        Console.WriteLine($"BENCH frequency={Stopwatch.Frequency} gc0={GC.CollectionCount(0)} gc1={GC.CollectionCount(1)} gc2={GC.CollectionCount(2)} peak_working_set_bytes={process.PeakWorkingSet64} private_memory_bytes={process.PrivateMemorySize64}");
+    }
+}
