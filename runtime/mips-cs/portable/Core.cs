@@ -36,6 +36,18 @@ public struct Op
     public Val literal;
 }
 
+// The verifier's hot execution record; flags contain stack effects and block boundaries.
+public struct PlanOp
+{
+    public int code, operand, stack, offset, flags, cold;
+}
+
+public struct ColdOp
+{
+    public int method, native, count, returns, type, resultType;
+    public Val literal;
+}
+
 public struct Body
 {
     public int name;
@@ -44,6 +56,8 @@ public struct Body
     public int[] argtypes;
     public Val[] init;
     public Op[] ops;
+    public PlanOp[] plan;
+    public ColdOp[] cold;
     public int machine;
 }
 

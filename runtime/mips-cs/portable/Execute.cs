@@ -364,7 +364,7 @@ public static partial class VM
         output = 0;
     }
 
-    static Val NativeCall(Op op, int args)
+    static Val NativeCall(ColdOp op, int args)
     {
         int id = op.native;
         switch (id)
@@ -542,33 +542,39 @@ public static partial class VM
     {
         CollectIfNeeded();
         ref Body b = ref bodies[mid];
-        ref Op o = ref b.ops[pc];
+        ref PlanOp o = ref b.plan[pc];
+        return ExecuteResolved(ref b, ref o, frame);
+    }
+
+    static int ExecuteResolved(ref Body b, ref PlanOp o, int frame)
+    {
         int c = o.code, a = o.operand;
         int locals = frame + b.nargs;
-        int stack = locals + b.nlocals;
-        int sp = stack + o.depth;
-        Val x = o.depth > 0 ? memory[sp + -1] : default(Val), y = o.depth > 1 ? memory[sp + -2] : default(Val);
-        if (c >= 2 && c <= 5)
+        int sp = frame + o.stack;
+        int pop = o.flags & PlanPopMask;
+        int category = (o.flags >> PlanCategoryShift) & PlanCategoryMask;
+        Val x = pop > 0 ? memory[sp - 1] : default(Val), y = pop > 1 ? memory[sp - 2] : default(Val);
+        if (category == PlanLoadArgument)
         {
             memory[sp + 0] = memory[frame + c - 2];
         }
-        else if (c >= 6 && c <= 9)
+        else if (category == PlanLoadLocal)
         {
             memory[sp + 0] = memory[locals + c - 6];
         }
-        else if (c >= 10 && c <= 13)
+        else if (category == PlanStoreLocal)
         {
             memory[locals + c - 10] = x;
         }
-        else if (c >= 0x15 && c <= 0x1e)
+        else if (category == PlanSmallConstant)
         {
             memory[sp + 0] = Integer(c - 0x16);
         }
-        else if ((c >= 0x58 && c <= 0x64) || (c >= 0xfe02 && c <= 0xfe05))
+        else if (category == PlanBinary)
         {
             memory[sp + -2] = Integer(Binary(c, Int(y), Int(x)));
         }
-        else if ((c >= 0x2e && c <= 0x37) || (c >= 0x3b && c <= 0x44))
+        else if (category == PlanCompareBranch)
         {
             int compare = c <= 0x37 ? c - 0x2e : c - 0x3b;
             switch (compare)
@@ -597,6 +603,11 @@ public static partial class VM
         }
         else
         {
+            ColdOp extra = default;
+            if (o.cold != 0)
+            {
+                extra = b.cold[o.cold];
+            }
             switch (c)
             {
                 case 0:
@@ -639,13 +650,13 @@ public static partial class VM
                 case 0x28:
                 case 0x6f:
                     {
-                        int args = sp - o.count;
+                        int args = sp - extra.count;
                         Val result = default;
-                        if (o.method >= 0)
+                        if (extra.method >= 0)
                         {
-                            result = Invoke(o.method, args);
+                            result = Invoke(extra.method, args);
                         }
-                        else if (o.native == 100)
+                        else if (extra.native == 100)
                         {
                             if (memory[args + 0].kind != 7)
                             {
@@ -653,7 +664,7 @@ public static partial class VM
                             }
 
                             int target = (int)memory[args + 0].data;
-                            if (target < 0 || target >= methodCount || bodies[target].nargs != o.count - 1)
+                            if (target < 0 || target >= methodCount || bodies[target].nargs != extra.count - 1)
                             {
                                 Bad("delegate signature mismatch");
                             }
@@ -662,10 +673,10 @@ public static partial class VM
                         }
                         else
                         {
-                            result = NativeCall(o, args);
+                            result = NativeCall(extra, args);
                         }
 
-                        if (o.returns != 0)
+                        if (extra.returns != 0)
                         {
                             memory[args + 0] = result;
                         }
@@ -706,10 +717,10 @@ public static partial class VM
                     memory[sp + -1] = ReadAddress(x.data, 0);
                     break;
                 case 0x72:
-                    memory[sp + 0] = o.literal;
+                    memory[sp + 0] = extra.literal;
                     break;
                 case 0x73:
-                    if (o.native != 101 || x.kind != 6 || y.kind != 0)
+                    if (extra.native != 101 || x.kind != 6 || y.kind != 0)
                     {
                         Bad("unsupported constructor");
                     }
@@ -778,7 +789,7 @@ public static partial class VM
                     break;
                 case 0x8c:
                     {
-                        int box = NewObject(o.type, 1, 0);
+                        int box = NewObject(extra.type, 1, 0);
                         objects[box].kind = 8;
                         objects[box].values[0] = x;
                         memory[sp + -1] = Ref(8, box);
@@ -786,7 +797,7 @@ public static partial class VM
                     }
 
                 case 0x8d:
-                    memory[sp + -1] = NewArray(o.type, Int(x));
+                    memory[sp + -1] = NewArray(extra.type, Int(x));
                     break;
                 case 0x8e:
                     memory[sp + -1] = Integer(objects[Object(x, 3)].count);
@@ -853,7 +864,7 @@ public static partial class VM
                 case 0xa5:
                     {
                         int box = Object(x, 8);
-                        if (objects[box].type != o.type)
+                        if (objects[box].type != extra.type)
                         {
                             Bad("unbox.any type mismatch");
                         }
@@ -869,7 +880,7 @@ public static partial class VM
                     {
                         Val fn = default;
                         fn.kind = 6;
-                        fn.data = o.method;
+                        fn.data = extra.method;
                         memory[sp + 0] = fn;
                         break;
                     }
@@ -880,7 +891,7 @@ public static partial class VM
                         Bad("expected managed address");
                     }
 
-                    WriteAddress(x.data, Zero(o.type, 0), 0);
+                    WriteAddress(x.data, Zero(extra.type, 0), 0);
                     break;
                 default:
                     Bad("unhandled IL operation");
@@ -958,15 +969,14 @@ public static partial class VM
 
         Enter(mid, frame);
         int pc = 0;
-        int stack = frame + b.nargs + b.nlocals;
         while (true)
         {
-            ref Op o = ref b.ops[pc];
+            ref PlanOp o = ref b.plan[pc];
             int c = o.code;
             Charge(1);
             if (c == 0x2a)
             {
-                Val result = b.returns == 1 ? default(Val) : memory[stack + o.depth - 1];
+                Val result = b.returns == 1 ? default(Val) : memory[frame + o.stack - 1];
                 Leave(mid, frame);
                 return result;
             }
@@ -979,17 +989,21 @@ public static partial class VM
 
             if (c == 0x2c || c == 0x39 || c == 0x2d || c == 0x3a)
             {
-                bool truth = Truth(memory[stack + o.depth - 1]);
+                bool truth = Truth(memory[frame + o.stack - 1]);
                 if (truth == (c == 0x2d || c == 0x3a))
                 {
                     pc = o.operand;
                     continue;
                 }
             }
-            else if (Slow(mid, pc, frame) != 0)
+            else
             {
-                pc = o.operand;
-                continue;
+                CollectIfNeeded();
+                if (ExecuteResolved(ref b, ref o, frame) != 0)
+                {
+                    pc = o.operand;
+                    continue;
+                }
             }
 
             pc++;

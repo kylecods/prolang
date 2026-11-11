@@ -6,6 +6,8 @@ param(
     [int]$WarmupFrames = 100,
     [int]$DesktopSamples = 5,
     [int]$PspSamples = 3,
+    [ValidateSet('interpreter', 'jit')]
+    [string[]]$PspEngines = @('interpreter', 'jit'),
     [int]$TimeoutSeconds = 300,
     [string]$OutputDirectory = '',
     [string]$BaselineDirectory = '',
@@ -14,6 +16,8 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 if (!$Desktop -and !$Psp) { throw 'Select -Desktop, -Psp, or both.' }
+if ($Psp -and !$PspEngines.Count) { throw 'Select at least one PSP engine.' }
+$PspEngines = @($PspEngines | Select-Object -Unique)
 if ($WarmupFrames -lt 1 -or $Frames -le $WarmupFrames -or $DesktopSamples -lt 1 -or $PspSamples -lt 1 -or $TimeoutSeconds -lt 1) { throw 'Require 1 <= WarmupFrames < Frames and positive sample counts and timeout.' }
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
 $baseline = if ($BaselineDirectory) { [IO.Path]::GetFullPath($BaselineDirectory) } else { Join-Path $repo 'artifacts/mips-cs/safe-core-before' }
@@ -195,7 +199,7 @@ if ($Psp) {
         Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $Emulator) 'assets') -Destination $portable -Recurse -Force
     }
     Hash-File 'ppsspp' $emulatorExe
-    foreach ($engine in 'interpreter','jit') {
+    foreach ($engine in $PspEngines) {
         for ($i = 1; $i -le $PspSamples; $i++) {
             $order = if ($i % 2) { @('before','after') } else { @('after','before') }
             foreach ($variant in $order) { Run-Psp $engine $variant $i $emulatorExe }
@@ -205,7 +209,7 @@ if ($Psp) {
 $rows | Export-Csv -NoTypeInformation -LiteralPath (Join-Path $out 'frames.csv')
 $processStats | Export-Csv -NoTypeInformation -LiteralPath (Join-Path $out 'process-stats.csv')
 $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $out 'manifest.json')
-$envInfo = [ordered]@{ date_utc=[DateTime]::UtcNow.ToString('o'); os=[Environment]::OSVersion.VersionString; cpu=$env:PROCESSOR_IDENTIFIER; dotnet=((& dotnet --info) | Out-String); dotnet_environment=@(Get-ChildItem Env: | Where-Object { $_.Name -match '^(DOTNET|COMPlus)_' } | ForEach-Object { "$($_.Name)=$($_.Value)" }); frames=$Frames; warmup_frames=$WarmupFrames; desktop_samples=$DesktopSamples; psp_samples=$PspSamples; natural_gc=[bool]$NaturalGc }
+$envInfo = [ordered]@{ date_utc=[DateTime]::UtcNow.ToString('o'); os=[Environment]::OSVersion.VersionString; cpu=$env:PROCESSOR_IDENTIFIER; dotnet=((& dotnet --info) | Out-String); dotnet_environment=@(Get-ChildItem Env: | Where-Object { $_.Name -match '^(DOTNET|COMPlus)_' } | ForEach-Object { "$($_.Name)=$($_.Value)" }); frames=$Frames; warmup_frames=$WarmupFrames; desktop_samples=$DesktopSamples; psp_samples=$PspSamples; psp_engines=@(if ($Psp) { $PspEngines }); natural_gc=[bool]$NaturalGc }
 $envInfo | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $out 'environment.json')
 # Every sample must match the first baseline, including warmup, before computing timings.
 foreach ($engine in @($rows.engine | Select-Object -Unique)) {
@@ -232,7 +236,7 @@ $report = @"
 
 All requested frames matched their engine's baseline draw counts and geometry. Results pool frames across fresh process samples, exclude the first $WarmupFrames frames, and retain collection frames. Samples alternate before/after order. Percentiles use the lower observed value at floor((n-1)*p).
 
-Desktop measures the portable core with identical temporary instrumentation around Present: elapsed time and current-thread managed allocations from the prior Present exit to the next Present entry. It excludes Present logging and startup; frame one has no measurement. Native allocations are not included: the archived baseline uses NativeMemory, so managed allocation counts understate its total allocations. Peak process working set, private memory at completion, and whole-process CLR GC counts are recorded per desktop sample in process-stats.csv; they include startup and warmup. CLR GC counts do not measure the guest collector. PSP work_us is the existing host measurement; interpreter and JIT run sequentially in PPSSPP emulation, not on physical PSP hardware. PSP collection: $(if ($NaturalGc) { 'the baseline test host forced 30-frame collections are disabled' } else { 'the baseline test host may force collection every 30 frames' }); the safe runtime ignores this flag and uses pressure-triggered collection. The collector implementations and thresholds differ. PSP heap statistics after the rewrite include metadata and backing-array payloads but exclude array headers, while the old collector reports guest allocations, so the values are not directly comparable. Per-sample heap maxima, collection counts, and generated code bytes are in process-stats.csv; EBOOT sizes and hashes are in manifest.json. Per-sample timing percentiles are in sample-summary.csv. The same archived guest DLL is used for every run. Runtime configuration, raw per-frame data, binaries and logs are retained beside this report.
+Desktop measures the portable core with identical temporary instrumentation around Present: elapsed time and current-thread managed allocations from the prior Present exit to the next Present entry. It excludes Present logging and startup; frame one has no measurement. Managed allocation counts exclude native allocations. Peak process working set, private memory at completion, and whole-process CLR GC counts are recorded per desktop sample in process-stats.csv; they include startup and warmup. CLR GC counts do not measure the guest collector. PSP work_us is the existing host measurement; selected engines run sequentially in PPSSPP emulation, not on physical PSP hardware. The natural-gc flag was $(if ($NaturalGc) { 'enabled' } else { 'disabled' }) for both variants; its effect depends on the host implementation. Collector behavior and heap accounting may differ between revisions and should be checked before comparing heap figures. Per-sample heap maxima, collection counts, and generated code bytes are in process-stats.csv; EBOOT sizes and hashes are in manifest.json. Per-sample timing percentiles are in sample-summary.csv. The same archived guest DLL is used for every run. Runtime configuration, raw per-frame data, binaries and logs are retained beside this report.
 
 $(($summary | Format-Table -AutoSize | Out-String).Trim())
 "@

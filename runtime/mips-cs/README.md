@@ -26,7 +26,19 @@ slots, permanent metadata objects, managed-address chains and output; it reuses 
 handles only at instruction boundaries, after the JIT has flushed cached slots. Frames and
 image readers use checked array indices. PSP-native pointers remain inside the C platform
 boundary and generated code; they are never stored as guest values. `DesktopProgram.cs`,
-`LoaderTests.cs` and `HeapTests.cs` are desktop-only and are not translated.
+`LoaderTests.cs`, `HeapTests.cs` and `PlanTests.cs` are desktop-only and are not translated.
+After decoding and verification, both engines use an exact-length instruction plan with
+precomputed stack locations, stack effects, operation categories and control-flow
+boundaries. Call, type and literal information lives in a separate sparse table. Original
+IL offsets remain available in the plan; the temporary decoder records and verifier queue
+are released. The interpreter still charges each original instruction, and the JIT keeps
+its existing block charging and folding rules.
+
+JIT helper calls declare whether they read or write the frame, allocate, collect or never
+return. Checked array, field and length helpers preserve cached integer registers. Helpers
+that can observe or change the frame, allocate or collect publish the cache first; unknown
+helpers do so conservatively. Control-flow joins also flush when their incoming states can
+differ.
 
 ```powershell
 ./runtime/mips-cs/build-psp.ps1
@@ -44,12 +56,12 @@ to `$HOME/pspdev-tmp/pspdev` inside WSL. The EBOOT and cube DLL are under
 `artifacts/mips-cs/psp/`; copy both into a homebrew folder on a PSP. Do not ship
 `test-frames.txt` or `jit-off.txt` in an interactive package.
 
-The tests reuse exactly one EBOOT across eleven fixtures. The nine shared fixtures cover
-the existing compatibility profile; the local `array_bounds` and `gc_roots` fixtures check
-the JIT's array bounds diagnostic and collection with long-lived guest references. The PSP
-report compares every cube frame with the native C backend and disassembles the actual MIPS
-emitted on-device. A smooth 60 fps is a frame-budget
-result; CPU work remains higher than direct C. Physical PSP performance is unverified.
+The tests reuse exactly one EBOOT across twelve fixtures. The nine shared fixtures cover
+the existing compatibility profile; the local `array_bounds`, `gc_roots`, and `cache_effects`
+fixtures check array bounds, collection with long-lived guest references, and values cached
+across JIT helper calls. The PSP report compares every cube frame with the native C backend
+and disassembles the actual MIPS emitted on-device. A smooth 60 fps is a frame-budget result;
+CPU work remains higher than direct C. Physical PSP performance is unverified.
 The initial NativeAOT report below measured desktop emulation and is separate.
 
 The safe runtime always collects at its own allocation-pressure thresholds. `-NaturalGc`
@@ -58,8 +70,8 @@ collector's policy. See the [benchmark guide](benchmarks/README.md) for reproduc
 desktop and PSP comparisons.
 
 The portable core uses eight-byte guest values, immutable metadata roots, bounded transitive
-inlining, constant folding, a six-register
-integer cache, integer facts with checked boundaries, and fixed-point division strength
+inlining, constant folding, a six-register integer cache, integer facts with checked boundaries,
+and fixed-point division strength
 reduction. Collection is requested after 16 KiB of guest allocations or 1024 allocations,
 and runs at the next safe instruction boundary. The table holds at most 16,383 live guest
 objects; arrays are also subject to a live element limit. Collection stops the world.

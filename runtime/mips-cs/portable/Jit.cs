@@ -7,8 +7,8 @@ public static partial class VM
     static int[] labels = null!;
     static int[] fixAt = null!;
     static int[] fixTo = null!;
-    // Six dirty integer values in callee-saved $s2..$s7. Their tags are implicit. Flushes
-    // precede calls/branches; block entry invalidates the compile-time mapping.
+    // Six dirty integer values in callee-saved $s2..$s7. Their tags are implicit.
+    // Frame-observing helpers and control-flow joins require the cache to be flushed.
     static int[] cachedSlots = null!;
     static int cacheVictim;
     static void Emit(uint word)
@@ -130,8 +130,47 @@ public static partial class VM
         Emit(R(src, 0, dest, 0, 33));
     }
 
+    const int ReadsFrame = 1;
+    const int WritesFrame = 2;
+    const int Allocates = 4;
+    const int Collects = 8;
+    const int NoReturn = 16;
+    // A numeric initializer keeps this constant valid in the translated C output.
+    const int NeedsPublishedFrame = 15;
+
+    // Unknown helpers are conservative. The PSP ABI preserves $s2..$s7 across
+    // every native helper call. A non-returning trap does not rejoin the fast path.
+    static int HelperEffects(int number)
+    {
+        if (number == 1)
+        {
+            return ReadsFrame | WritesFrame;
+        }
+        if (number == 2)
+        {
+            return WritesFrame;
+        }
+        if (number == 3)
+        {
+            return ReadsFrame | WritesFrame | Allocates | Collects;
+        }
+        if (number == 4)
+        {
+            return NoReturn;
+        }
+        if (number == 5 || number == 6 || number == 7)
+        {
+            return 0;
+        }
+        return NeedsPublishedFrame;
+    }
+
     static void CallHelper(int number)
     {
+        if ((HelperEffects(number) & NeedsPublishedFrame) != 0)
+        {
+            FlushCache();
+        }
         Li(25, Host.Helper(number));
         Emit(R(25, 0, 31, 0, 9));
         Emit(0);
@@ -216,14 +255,20 @@ public static partial class VM
         Bind(ok);
     }
 
-    static bool Constant(Op op)
+    static bool Constant(PlanOp op)
     {
         return (op.code >= 0x15 && op.code <= 0x20);
     }
 
-    static int ConstantValue(Op op)
+    static int ConstantValue(PlanOp op)
     {
         return op.code < 0x1f ? op.code - 0x16 : op.operand;
+    }
+
+    static void FoldConstantCall(ref PlanOp op, int value)
+    {
+        op.code = 0x20;
+        op.operand = value;
     }
 
     static bool Leaf(int mid, int nesting)
@@ -236,13 +281,14 @@ public static partial class VM
 
         for (int i = 0; i < b.count; i++)
         {
-            ref Op o = ref b.ops[i];
+            ref PlanOp o = ref b.plan[i];
+            ColdOp extra = b.cold[o.cold];
             if (o.code == 0x6f || o.code == 0x73)
             {
                 return false;
             }
 
-            if (o.code == 0x28 && (o.method < 0 || !Leaf(o.method, nesting + 1)))
+            if (o.code == 0x28 && (extra.method < 0 || !Leaf(extra.method, nesting + 1)))
             {
                 return false;
             }
@@ -253,7 +299,6 @@ public static partial class VM
 
     static void SlowCall(int mid, int pc, int origin)
     {
-        FlushCache();
         Li(4, mid);
         Li(5, pc);
         Emit(I(9, 16, 6, origin * 8));
@@ -469,7 +514,6 @@ public static partial class VM
     {
         int array = sp - (store != 0 ? 3 : 2);
         int index = array + 1;
-        FlushCache();
         Check(array, 3);
         Check(index, 1);
         Lw(4, array, 4);
@@ -496,7 +540,6 @@ public static partial class VM
         ref Body b = ref bodies[mid];
         FlushCache();
         int[] map = new int[b.count + 1];
-        int[] targets = new int[b.count + 1];
         int[] known = new int[b.maxstack + 1];
         for (int i = 0; i <= b.count; i++)
         {
@@ -514,16 +557,6 @@ public static partial class VM
             }
         }
 
-        targets[0] = 1;
-        for (int i = 0; i < b.count; i++)
-        {
-            if (b.ops[i].code >= 0x2b && b.ops[i].code <= 0x44)
-            {
-                targets[b.ops[i].operand] = 1;
-                targets[i + 1] = 1;
-            }
-        }
-
         for (int i = 0; i < b.nlocals && inlining != 0; i++)
         {
             StoreVal(origin + b.nargs + i, b.init[i]);
@@ -531,10 +564,11 @@ public static partial class VM
 
         for (int pc = 0; pc < b.count; pc++)
         {
-            ref Op o = ref b.ops[pc];
+            ref PlanOp o = ref b.plan[pc];
+            ColdOp extra = b.cold[o.cold];
             int code = o.code, a = o.operand;
-            int sp = origin + b.nargs + b.nlocals + o.depth;
-            if (targets[pc] != 0)
+            int sp = origin + o.stack;
+            if ((o.flags & PlanBlockStart) != 0)
             {
                 FlushCache();
                 for (int i = 0; i <= b.maxstack; i++)
@@ -544,17 +578,17 @@ public static partial class VM
             }
 
             Bind(map[pc]);
-            if (o.depth < 0)
+            if (o.stack < 0)
             {
                 continue;
             }
 
-            int d = o.depth, resultKnown = 0;
+            int d = o.stack - b.nargs - b.nlocals, resultKnown = 0;
             int leftKnown = d >= 2 ? known[d - 2] : 0, rightKnown = d >= 1 ? known[d - 1] : 0;
-            if (targets[pc] != 0)
+            if ((o.flags & PlanBlockStart) != 0)
             {
                 int next = pc + 1;
-                while (next < b.count && targets[next] == 0 && b.ops[next - 1].code != 0x2a)
+                while (next < b.count && (b.plan[next].flags & PlanBlockStart) == 0 && b.plan[next - 1].code != 0x2a)
                 {
                     next++;
                 }
@@ -564,9 +598,9 @@ public static partial class VM
 
             if (Constant(o))
             {
-                if (pc + 1 < b.count && targets[pc + 1] == 0 && ArithmeticCode(b.ops[pc + 1].code))
+                if (pc + 1 < b.count && (b.plan[pc + 1].flags & PlanBlockStart) == 0 && ArithmeticCode(b.plan[pc + 1].code))
                 {
-                    Arithmetic(b.ops[pc + 1].code, sp, ConstantValue(o), 1, rightKnown, 1);
+                    Arithmetic(b.plan[pc + 1].code, sp, ConstantValue(o), 1, rightKnown, 1);
                     known[d - 1] = 1;
                     Bind(map[++pc]);
                     continue;
@@ -714,22 +748,22 @@ public static partial class VM
                 Bind(integer);
                 Branch(code == 0x2c || code == 0x39 ? 4 : 5, 9, 0, map[a]);
             }
-            else if (code == 0x28 && o.method >= 0)
+            else if (code == 0x28 && extra.method >= 0)
             {
                 FlushCache();
-                resultKnown = IntType(o.resultType) ? 1 : 0;
-                ref Body callee = ref bodies[o.method];
-                if (inlining < 2 && Leaf(o.method, 0))
+                resultKnown = IntType(extra.resultType) ? 1 : 0;
+                ref Body callee = ref bodies[extra.method];
+                if (inlining < 2 && Leaf(extra.method, 0))
                 {
                     int done = Label();
-                    EmitBody(o.method, sp - callee.nargs, done, sp - callee.nargs, inlining + 1);
+                    EmitBody(extra.method, sp - callee.nargs, done, sp - callee.nargs, inlining + 1);
                     Bind(done);
                 }
                 else
                 {
                     Emit(I(9, 16, 4, (sp - callee.nargs) * 8));
                     Emit(I(9, 16, 5, (sp - callee.nargs) * 8));
-                    Li(25, Host.MethodSlot(o.method));
+                    Li(25, Host.MethodSlot(extra.method));
                     Emit(I(35, 25, 25, 0));
                     Emit(R(25, 0, 31, 0, 9));
                     Emit(0);
@@ -737,7 +771,7 @@ public static partial class VM
             }
             else if (code == 0x72)
             {
-                StoreVal(sp, o.literal);
+                StoreVal(sp, extra.literal);
             }
             else if (code == 0x94 || code == 0x95 || code == 0x9a || code == 0xa3)
             {
@@ -776,7 +810,6 @@ public static partial class VM
             }
             else if (code == 0x8e)
             {
-                FlushCache();
                 Check(sp - 1, 3);
                 Lw(4, sp - 1, 4);
                 CallHelper(7);
@@ -824,13 +857,13 @@ public static partial class VM
                     Branch(5, 2, 0, map[a]);
                 }
 
-                if ((code >= 0x5b && code <= 0x5e) || (code >= 0x65 && code <= 0x69) || code == 0xd1 || code == 0xd2 || code == 0xfe01 || ((code == 0x28 || code == 0x6f) && IntType(o.resultType)))
+                if ((code >= 0x5b && code <= 0x5e) || (code >= 0x65 && code <= 0x69) || code == 0xd1 || code == 0xd2 || code == 0xfe01 || ((code == 0x28 || code == 0x6f) && IntType(extra.resultType)))
                 {
                     resultKnown = 1;
                 }
             }
 
-            int pop = Pop(o, b.returns), push = Push(o);
+            int pop = o.flags & PlanPopMask, push = (o.flags >> PlanPushShift) & PlanPushMask;
             if (push > 0)
             {
                 known[d - pop + push - 1] = resultKnown;
@@ -840,7 +873,6 @@ public static partial class VM
         FlushCache();
         Bind(map[b.count]);
         Host.ReleaseInts(map);
-        Host.ReleaseInts(targets);
         Host.ReleaseInts(known);
     }
 
@@ -853,14 +885,14 @@ public static partial class VM
         {
             for (int pc = 0; pc < bodies[mid].count; pc++)
             {
-                ref Op op = ref bodies[mid].ops[pc];
-                if (op.code == 0x28 && op.method >= 0)
+                ref PlanOp op = ref bodies[mid].plan[pc];
+                ColdOp extra = bodies[mid].cold[op.cold];
+                if (op.code == 0x28 && extra.method >= 0)
                 {
-                    ref Body c = ref bodies[op.method];
-                    if (c.nargs == 0 && c.count == 2 && Constant(c.ops[0]) && c.ops[1].code == 0x2a)
+                    ref Body c = ref bodies[extra.method];
+                    if (c.nargs == 0 && c.count == 2 && Constant(c.plan[0]) && c.plan[1].code == 0x2a)
                     {
-                        op.code = 0x20;
-                        op.operand = ConstantValue(c.ops[0]);
+                        FoldConstantCall(ref op, ConstantValue(c.plan[0]));
                     }
                 }
             }
@@ -875,11 +907,12 @@ public static partial class VM
                 int maximum = b.maxstack;
                 for (int pc = 0; pc < b.count; pc++)
                 {
-                    ref Op op = ref b.ops[pc];
-                    if (op.code == 0x28 && op.method >= 0 && Leaf(op.method, 0))
+                    ref PlanOp op = ref b.plan[pc];
+                    ColdOp extra = b.cold[op.cold];
+                    if (op.code == 0x28 && extra.method >= 0 && Leaf(extra.method, 0))
                     {
-                        ref Body c = ref bodies[op.method];
-                        int n = op.depth + c.nlocals + c.maxstack;
+                        ref Body c = ref bodies[extra.method];
+                        int n = op.stack - b.nargs - b.nlocals + c.nlocals + c.maxstack;
                         if (n > maximum)
                         {
                             maximum = n;

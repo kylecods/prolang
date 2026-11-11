@@ -16,7 +16,7 @@ try {
     New-Item -ItemType Directory -Force $portable | Out-Null
     Copy-Item -LiteralPath $Emulator -Destination "$portable/PPSSPPWindows64.exe" -Force
     Copy-Item -LiteralPath (Join-Path (Split-Path -Parent $Emulator) 'assets') -Destination $portable -Recurse -Force
-    $cases = if ($Fixtures) { @('smoke','arithmetic','boxed','structs','psp_api','div_zero','assert_fail','call_depth','unsupported','array_bounds','gc_roots') } else { @('cube') }
+    $cases = if ($Fixtures) { @('smoke','arithmetic','boxed','structs','psp_api','div_zero','assert_fail','call_depth','unsupported','array_bounds','gc_roots','cache_effects') } else { @('cube') }
     foreach ($case in $cases) {
         $out = "$repo/artifacts/mips-cs/psp-tests/$(if ($NoJit) {'interpreter'} else {'jit'})/$case"
         New-Item -ItemType Directory -Force $out | Out-Null
@@ -64,7 +64,7 @@ try {
             if ($log -notmatch 'RUNTIME csharp-portable') { throw 'Wrong runtime' }
             $expectedEngine = if ($NoJit) { 'interpreter' } else { 'jit' }
             if ($log -notmatch "ENGINE $expectedEngine") { throw "Expected $expectedEngine engine" }
-            if ($case -in 'smoke','arithmetic','boxed','structs','gc_roots') {
+            if ($case -in 'smoke','arithmetic','boxed','structs','gc_roots','cache_effects') {
                 $expectedOutput = (& dotnet "$out/program.dll" | Out-String).Replace("`r`n","`n").Trim()
                 if ($LASTEXITCODE -or !$log.Replace("`r`n","`n").Contains($expectedOutput)) { throw "PSP output differs from .NET: $case" }
             }

@@ -54,6 +54,7 @@ public static partial class VM
         Console.WriteLine("PASS portable loader bounds");
         TestValueOperations();
         TestHeap();
+        TestPlan();
     }
 
     static void TestValueOperations()

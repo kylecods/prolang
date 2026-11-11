@@ -1,0 +1,35 @@
+import "io"
+import "test"
+
+struct Cell { value: int, data: array<int> }
+global shared: Cell = Cell { value: 9, data: [4, 8, 12, 16] }
+
+func nested(value: int): int {
+    return value * 2 + 1
+}
+
+func main() {
+    let values: array<int> = shared.data
+    let sum: int = 0
+    for (let i = 0 to 2999) {
+        let index: int = (i + 1) % 4
+        let before: int = 13 + values[index]
+        values[index] = before + i % 3
+        let after: int = 7 + values[index] + values.length()
+        sum = sum + after
+        let text: string = "temporary-" + string(i)
+        sum = sum + text.length()
+        if (i % 100 == 0) {
+            shared.value = nested(shared.value)
+        }
+    }
+    assert(shared.data[0] == values[0], "global array alias")
+    assert(shared.value == 2147483647, "nested calls and managed address writes")
+    print(sum)
+    print(values[0])
+    print(values[1])
+    print(values[2])
+    print(values[3])
+    print(shared.value)
+    print("CACHE EFFECTS PASS")
+}

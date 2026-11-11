@@ -51,7 +51,7 @@ try {
             Write-Host "PASS $engine : $case"
         }
     }
-    foreach ($case in 'array_bounds', 'gc_roots') {
+    foreach ($case in 'array_bounds', 'gc_roots', 'cache_effects') {
         $dir = "$repo/artifacts/mips-cs/tests/$case"
         New-Item -ItemType Directory -Force $dir | Out-Null
         & dotnet src/ProLang/bin/Release/net10.0/ProLang.dll "$PSScriptRoot/fixtures/$case.prl" -o "$dir/program.dll"

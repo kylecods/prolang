@@ -571,5 +571,7 @@ public static partial class VM
                 Visit(b, pc + 1, next, queue, ref tail);
             }
         }
+        Host.ReleaseInts(queue);
+        BuildPlan(method);
     }
 }

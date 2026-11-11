@@ -43,6 +43,7 @@ static void pvm_code_ready(int mid, int name, uint32_t *words, int count, const 
 static void Host_ReleaseVals(void *values) { pvm_array_free(values); }
 static void Host_ReleaseChars(void *chars) { pvm_array_free(chars); }
 static void Host_ReleaseInts(void *values) { pvm_array_free(values); }
+static void Host_ReleaseOps(void *values) { pvm_array_free(values); }
 static void Host_ReleaseWords(void *values) { pvm_array_free(values); }
 static void Host_Collected(int count) { (void)count; pvm_collections++; }
 static void Host_Reset(void) {

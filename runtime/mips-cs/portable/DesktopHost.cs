@@ -20,6 +20,7 @@ public static partial class Host
     public static void CodeReady(int mid, int name, uint[] code, int count) => throw new PlatformNotSupportedException("MIPS code executes only on PSP");
     public static void Call(int mid, int frame, ref Val result) => throw new PlatformNotSupportedException("MIPS code executes only on PSP");
     public static void ReleaseInts(int[] values) { }
+    public static void ReleaseOps(Op[] values) { }
     public static void ReleaseWords(uint[] values) { }
     public static void ReleaseVals(Val[] values) { }
     public static void ReleaseChars(ushort[] chars) { }
