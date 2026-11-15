@@ -2,43 +2,23 @@
 
 ## On-device PSP runtime
 
-`portable/` is the C# IL interpreter and MIPS JIT that **runs on the PSP**. The EBOOT
-loads `program.dll`, reads its PE/CLI metadata and IL, verifies stack depths, compiles
-methods to native MIPS at load, maintains the PSP instruction/data caches, and executes
-them directly. Use `jit-off.txt` beside the EBOOT to select the interpreter. The cube,
-UI toolkit, structs, globals and delegates run through this path. Programs are replaceable
-without rebuilding the EBOOT.
+`portable/` is the C# IL interpreter and MIPS JIT that **runs on the PSP**. The EBOOT loads an
+ordinary ProLang `program.dll`, decodes, verifies and plans every method, compiles them to MIPS
+(or interprets them, with `jit-off.txt` beside the EBOOT), and drives the GU and controller.
+Programs are replaceable without rebuilding the EBOOT.
 
 ```text
-portable core → Roslyn type check → restricted C#→C → PSPSDK → EBOOT.PBP
-                                                              ↓ on PSP
-ProLang → program.dll → PE/CLI loader → IL interpreter + MIPS JIT → GU/controller
+portable/*.cs → cs-to-c → runtime.c + psp/*.h → psp-gcc → EBOOT.PBP
+ProLang → program.dll ─────────────────────────────────────↓ on the PSP
+          PE/CLI loader → decode · verify · plan → MIPS JIT or interpreter → Host API → GU/controller
 ```
 
-NativeAOT cannot target PSP/MIPS. The portable core is safe C#; `cs-to-c/` translates
-the same checked array, index and reference operations to C and rejects unsupported syntax.
-This is not a general C# compiler. C platform glue supplies file I/O, graphics/input,
-executable code allocation, cache maintenance and failure handling. The renderer is shared
-with `psp-v`; the loader, collector, IL semantics and MIPS compiler are portable C#.
-
-Guest references are integer handles into a fixed table. The collector traces guest value
-slots, permanent metadata objects, managed-address chains and output; it reuses unreachable
-handles only at instruction boundaries, after the JIT has flushed cached slots. Frames and
-image readers use checked array indices. PSP-native pointers remain inside the C platform
-boundary and generated code; they are never stored as guest values. The desktop-only
-files, marked in the [source layout](#source-layout), are type-checked but not translated.
-After decoding and verification, both engines use an exact-length instruction plan with
-precomputed stack locations, stack effects, operation categories and control-flow
-boundaries. Call, type and literal information lives in a separate sparse table. Original
-IL offsets remain available in the plan; the temporary decoder records and verifier queue
-are released. The interpreter still charges each original instruction, and the JIT keeps
-its existing block charging and folding rules.
-
-JIT helper calls declare whether they read or write the frame, allocate, collect or never
-return. Checked array, field and length helpers preserve cached integer registers. Helpers
-that can observe or change the frame, allocate or collect publish the cache first; unknown
-helpers do so conservatively. Control-flow joins also flush when their incoming states can
-differ.
+NativeAOT cannot target PSP/MIPS, so the runtime is safe C# in a restricted subset that
+`cs-to-c/` translates to C (see [Portable C# rules](#portable-c-rules)). **The full path, from
+ProLang source to pixels, is documented with diagrams in
+[`docs/architecture/psp-runtime.md`](../../docs/architecture/psp-runtime.md)**: the build, boot,
+loading, planning, the JIT's registers, frame and helper contract, execution, the collector, the
+host layers, and the failure path.
 
 ```powershell
 ./runtime/mips-cs/build-psp.ps1
@@ -73,12 +53,6 @@ selects natural collection in the older baseline runtime; it does not change the
 collector's policy. See the [benchmark guide](benchmarks/README.md) for reproducible
 desktop and PSP comparisons.
 
-The portable core uses eight-byte guest values, immutable metadata roots, bounded transitive
-inlining, constant folding, a six-register integer cache, integer facts with checked boundaries,
-and fixed-point division strength
-reduction. Collection is requested after 16 KiB of guest allocations or 1024 allocations,
-and runs at the next safe instruction boundary. The table holds at most 16,383 live guest
-objects; arrays are also subject to a live element limit. Collection stops the world.
 It is an experimental compatibility profile, not a security sandbox.
 
 ### Source layout
