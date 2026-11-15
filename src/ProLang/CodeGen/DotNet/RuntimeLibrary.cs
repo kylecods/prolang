@@ -40,6 +40,8 @@ internal static class RuntimeLibrary
     /// <summary>Metadata full name of the monotonic clock behind <c>time_millis</c>.</summary>
     public const string TimeOps = "ProLang.Runtime.TimeOps";
 
+    public const string PspOps = "ProLang.Runtime.PspOps";
+
     /// <summary>
     /// Finds <c>ProLang.Runtime.dll</c> on disk.
     /// </summary>

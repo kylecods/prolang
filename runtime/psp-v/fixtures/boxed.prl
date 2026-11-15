@@ -1,0 +1,13 @@
+import "io"
+import "test"
+func main() {
+    let a: any = 42
+    let alias = a
+    assert(int(alias) == 42, "unbox int32")
+    let flag: any = true
+    let c: any = 'V'
+    print(a)
+    print(flag)
+    print(c)
+    print("BOXED PASS")
+}

@@ -1,0 +1,6 @@
+import "io"
+import "test"
+func main() {
+    print("before failure")
+    assert(false, "expected failure")
+}

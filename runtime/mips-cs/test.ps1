@@ -1,0 +1,72 @@
+param([switch]$SkipBuild, [string]$NativeExe)
+$ErrorActionPreference = 'Stop'
+$repo = [IO.Path]::GetFullPath("$PSScriptRoot/../..")
+Push-Location $repo
+try {
+    if (!$SkipBuild) {
+        & dotnet build src/ProLang/ProLang.csproj -c Release --nologo -v quiet
+        if ($LASTEXITCODE) { throw 'Compiler build failed' }
+        & dotnet build "$PSScriptRoot/ProLang.Mips.csproj" -c Release -p:NuGetAudit=false --nologo -v quiet
+        if ($LASTEXITCODE) { throw 'Runtime build failed' }
+        & dotnet build "$PSScriptRoot/portable/Portable.csproj" -c Release -p:NuGetAudit=false --nologo -v quiet
+        if ($LASTEXITCODE) { throw 'Portable runtime build failed' }
+    }
+    & dotnet "$PSScriptRoot/portable/bin/Release/net10.0/Portable.dll" --self-test
+    if ($LASTEXITCODE) { throw 'Portable loader self-test failed' }
+    $runtime = "$PSScriptRoot/bin/Release/net10.0/ProLang.Mips.dll"
+    function Invoke-Runtime([string[]]$RuntimeArgs) {
+        if ($NativeExe) { & $NativeExe @RuntimeArgs } else { & dotnet $runtime @RuntimeArgs }
+        if ($LASTEXITCODE) { throw "Runtime failed: $RuntimeArgs" }
+    }
+    Invoke-Runtime @('self-test')
+    foreach ($case in 'smoke', 'arithmetic', 'boxed', 'structs', 'psp_api', 'assert_fail', 'unsupported', 'div_zero', 'call_depth') {
+        $dir = "$repo/artifacts/mips-cs/tests/$case"
+        New-Item -ItemType Directory -Force $dir | Out-Null
+        & dotnet src/ProLang/bin/Release/net10.0/ProLang.dll "$repo/runtime/psp-v/fixtures/$case.prl" -o "$dir/program.dll"
+        if ($LASTEXITCODE) { throw "Fixture compilation failed: $case" }
+        if ($case -eq 'smoke') {
+            $single = (& dotnet "$PSScriptRoot/portable/bin/Release/net10.0/Portable.dll" "$dir/program.dll" | Out-String).Replace("`r`n", "`n").Replace("PROLANG OK`n", '')
+            $twice = (& dotnet "$PSScriptRoot/portable/bin/Release/net10.0/Portable.dll" --repeat "$dir/program.dll" | Out-String).Replace("`r`n", "`n")
+            if ($LASTEXITCODE -or $twice -cne ($single + $single)) { throw 'Portable same-process rerun differs' }
+            Write-Host 'PASS portable same-process rerun'
+            $reset = & dotnet "$PSScriptRoot/portable/bin/Release/net10.0/Portable.dll" --reset-test "$dir/program.dll" | Out-String
+            if ($LASTEXITCODE -or $reset -notmatch 'PASS portable malformed second load') { throw 'Portable malformed second load failed' }
+        }
+        foreach ($engine in 'il', 'mips', 'optimized') {
+            $programArgs = if ($case -eq 'smoke') { @('alpha', 'beta') } else { @() }
+            $commandArgs = @('run', "$dir/program.dll", "--engine=$engine", '--') + $programArgs
+            $actual = if ($NativeExe) { & $NativeExe @commandArgs 2>&1 | Out-String } else { & dotnet $runtime @commandArgs 2>&1 | Out-String }
+            $status = $LASTEXITCODE
+            if ($case -in 'smoke', 'arithmetic', 'boxed', 'structs') {
+                $expected = & dotnet "$dir/program.dll" @programArgs | Out-String
+                if ($LASTEXITCODE) { throw ".NET oracle failed: $case" }
+                $actual = $actual.Replace("`r`n", "`n").Replace("PROLANG OK`n", '').TrimEnd()
+                if ($status -or $actual -cne $expected.Replace("`r`n", "`n").TrimEnd()) { throw "$engine differs from .NET on $case`n$actual`nExpected:`n$expected" }
+            } elseif ($case -eq 'psp_api') {
+                if ($status -or $actual -notmatch 'PROLANG OK' -or $actual -notmatch 'FRAME 1 lines=1 rects=1 texts=1') { throw "PSP bridge failed: $engine`n$actual" }
+            } else {
+                $diagnostic = @{ assert_fail = 'assertion failed: expected failure'; unsupported = 'unsupported signature type'; div_zero = 'division by zero'; call_depth = 'call depth limit exceeded' }[$case]
+                if (!$status -or $actual -notmatch $diagnostic) { throw "Missing $engine diagnostic for ${case}: $actual" }
+            }
+            Write-Host "PASS $engine : $case"
+        }
+    }
+    foreach ($case in 'array_bounds', 'gc_roots', 'cache_effects') {
+        $dir = "$repo/artifacts/mips-cs/tests/$case"
+        New-Item -ItemType Directory -Force $dir | Out-Null
+        & dotnet src/ProLang/bin/Release/net10.0/ProLang.dll "$PSScriptRoot/fixtures/$case.prl" -o "$dir/program.dll"
+        if ($LASTEXITCODE) { throw "Fixture compilation failed: $case" }
+        $actual = & dotnet "$PSScriptRoot/portable/bin/Release/net10.0/Portable.dll" "$dir/program.dll" 2>&1 | Out-String
+        $status = $LASTEXITCODE
+        if ($case -eq 'array_bounds') {
+            if (!$status -or $actual -notmatch 'array index out of bounds') { throw "Portable bounds check failed: $actual" }
+        } else {
+            $expected = & dotnet "$dir/program.dll" | Out-String
+            if ($LASTEXITCODE) { throw "Portable fixture oracle failed: $case" }
+            $actual = $actual.Replace("`r`n", "`n").Replace("PROLANG OK`n", '').TrimEnd()
+            if ($status -or $actual -cne $expected.Replace("`r`n", "`n").TrimEnd()) { throw "Portable $case differs from .NET: $actual" }
+        }
+        Write-Host "PASS portable $case"
+    }
+    $global:LASTEXITCODE = 0
+} finally { Pop-Location }

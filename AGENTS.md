@@ -1101,6 +1101,7 @@ Output: [result]
 - `docs/architecture/dotnet-backend.md` - How source becomes a .NET assembly
 - `docs/architecture/language-server.md` - How `prolang lsp` answers an editor from the compiler
 - `docs/architecture/ui-toolkit.md` - The framework-independent widget toolkit and its display list
+- `docs/architecture/psp-runtime.md` - How a ProLang program runs on the PSP through the C# runtime (`runtime/mips-cs`)
 - `docs/contributing/adding-a-builtin.md` - Worked example of adding a builtin function
 - `docs/perf/baseline-2026-08-15.md` - Compiler performance baseline and methodology
 

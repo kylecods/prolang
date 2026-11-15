@@ -1,0 +1,79 @@
+ProLang on-device C# IL interpreter + MIPS JIT
+
+The EBOOT contains the portable C# runtime compiled through a restricted, type-checked
+C#->C backend and PSPSDK. It reads program.dll and emits executable MIPS on the PSP.
+No ProLang program is statically transpiled into this EBOOT. The same EBOOT passed all
+nine fixtures by replacing only program.dll. NativeAOT does not support the PSP;
+the earlier NativeAOT desktop experiment is a separate project and measurement.
+
+MEASURED IN PPSSPP, Direct3D 11, normal emulation speed. This is not physical hardware.
+The clock is the emulated PSP clock. Work starts after one present and ends before
+the next GPU sync/vblank. Initialization and first frame are excluded. Both forced
+GC every 30 frames and a separate automatic-GC production run are included below.
+No collection frames are filtered from p99/max or frame-budget misses.
+EBOOT SHA256: 60905835F99DDBD4A4FB6BA7E68C6BDDF1A0D9C71A50A80930DCE7AF9216B832
+Test assembly SHA256: 4D8418DC70013D694EE48DF6DD4AA71F3922E88D41FDAC3E3CC13D7DB937E092
+
+
+Engine              Frames P50_us P99_us   Max_us Over_16_7ms
+------              ------ ------ ------   ------ -----------
+Initial C# JIT         120   3651   8871  8955.00           0
+C# interpreter         120  31180  36485 36865.00         120
+C# JIT forced GC       600   2847   8351  9019.00           0
+C# JIT automatic GC   2400   2848   8219  8464.00           0
+Direct C (-O3)         790    564    580   581.00           0
+
+
+Correctness: 791 frames have identical hashes AND draw counts between direct C and
+the MIPS JIT. The first 61 frames also matched the historical V reference.
+
+CPU work ratio JIT / direct C: 5.05x. Smooth 60 fps
+does not mean C-equivalent throughput. The 'almost as fast as C' CPU-work target is
+not yet achieved. The run demonstrates display-budget headroom without collector
+frames crossing that budget; physical PSP validation remains required.
+Automatic-GC run: 70 total collections; managed heap peak 78160 bytes.
+This excludes permanent image/metadata and JIT code, not total process memory.
+Initial/final emitted code: 363544 / 513332 bytes. Inlining spends code size
+to reduce steady calls from about 514 to 226 per frame.
+
+OPTIMIZATIONS
+The initial C# JIT already used 8-byte values, permanent metadata, verified fixed
+offsets, constant folding/fusion and one-level 40-operation inlining. Subsequent
+changes added the integer facts/register cache, fast comparisons/division and
+two-level 80-operation inlining. Median work fell from 3651 to 2848 us.
+
+* Eight-byte values on PSP instead of the V runtime's sixteen-byte slots.
+* Immutable decoder/image/code data outside the managed heap, with explicit live VM
+  roots. Collections trace managed objects rather than the entire loader working set.
+* A 16 KiB managed-allocation growth interval bounds automatic collection work for
+  this workload, instead of accumulating seconds of temporary strings. The V
+  runtime's default collector growth interval remains unchanged.
+* Fixed frame offsets from verified stack depths, constant folding, fused immediates.
+* Bounded transitive inlining (80 IL operations, two levels), including UI helpers.
+* Integer facts with checks at typed argument/store/return boundaries.
+* Six callee-saved registers cache integer slots across straight-line operations.
+* Power-of-two signed division/remainder preserve truncation toward zero; fixed-point
+  cube multiplication divides by 4096 using shifts/bias rather than a slow bridge.
+* Common integer comparisons execute directly in MIPS.
+
+The initial C# JIT observation and final observation have different run lengths and
+were not interleaved randomized trials. Raw logs and frame CSVs are included. GC is
+still stop-the-world; this is a bounded stress result, not a guarantee of zero jank.
+
+INSTRUCTIONS
+cube-il.txt: actual IL loaded by the runtime.
+jit-mips.txt: actual MIPS code emitted on-device, disassembled from jit-mips.bin.
+jit-methods.txt: method names and byte offsets into that JIT binary.
+runtime-mips.txt: native MIPS of the C# interpreter/compiler itself (C#->C->PSPSDK).
+The earlier desktop report's x64 JIT is not the PSP's MIPS JIT.
+
+REPRODUCE
+./runtime/mips-cs/build-psp.ps1
+./runtime/mips-cs/test-psp.ps1 -SkipBuild -Frames 600
+Copy the forced-GC runtime.log into artifacts/mips-cs/psp-forced-final/runtime.log.
+./runtime/mips-cs/test-psp.ps1 -SkipBuild -Frames 2400 -NaturalGc -TimeoutSeconds 120
+./runtime/mips-cs/test-psp.ps1 -SkipBuild -Fixtures
+./runtime/mips-cs/test-psp.ps1 -SkipBuild -NoJit -Frames 120
+./runtime/mips-cs/test-psp.ps1 -SkipBuild -NoJit -Fixtures
+./runtime/mips-cs/profile-c.ps1 -Frames 600
+./runtime/mips-cs/report-psp.ps1

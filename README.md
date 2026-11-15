@@ -3,6 +3,9 @@
 A statically typed programming language that compiles to .NET MSIL, with additional backends that
 transpile to C99 for native and PlayStation Portable targets.
 
+An experimental [PSP MSIL interpreter written in V](runtime/psp-v/README.md) can also load
+and execute a supported subset of the normal compiled `.dll` directly from a homebrew EBOOT.
+
 ```prolang
 import "io"
 
@@ -246,4 +249,5 @@ PROLANG_UPDATE_SNAPSHOTS=1 dotnet test src/ProLang.Tests/ProLang.Tests.csproj -c
 - [The language server](docs/architecture/language-server.md) — how the editor asks the compiler
 - [Adding a builtin](docs/contributing/adding-a-builtin.md)
 - [Performance baseline](docs/perf/baseline-2026-08-15.md)
+- [C# IL runtime](runtime/mips-cs/README.md) — on-device PSP MIPS JIT, desktop NativeAOT reference, cube profiling and instruction listings
 - [AGENTS.md](AGENTS.md) — language reference and PSP toolchain setup

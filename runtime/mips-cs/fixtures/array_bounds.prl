@@ -1,0 +1,7 @@
+import "io"
+
+func main() {
+    let values: array<int> = [42]
+    let index: int = 1
+    print(values[index])
+}
