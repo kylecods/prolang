@@ -2,99 +2,105 @@ using System;
 
 namespace ProLang.Portable;
 
-// Desktop-only tests of verifier-to-plan conversion.
-public static partial class VM
+/// <summary>Desktop-only tests of verifier-to-plan conversion.</summary>
+internal static class PlanTests
 {
-    static void TestPlan()
+    /// <summary>
+    /// Checks that no opcode is both hot and cold; that verifying a small method gives the expected plan (absolute
+    /// stack slots, pop and push counts, categories, block starts and cold records) and the expected helper
+    /// effects; that folding a constant call keeps its plan flags; that an invalid evaluation stack is refused; and
+    /// that the instruction budget is enforced.
+    /// </summary>
+    internal static void TestPlan()
     {
         for (int code = 0; code <= 0xffff; code++)
         {
-            if (HasColdMetadata(code) && PlanCategory(code) != PlanOther)
+            if (Planner.HasColdMetadata(code) && Planner.PlanCategory(code) != Planner.PlanOther)
             {
                 throw new Exception("cold metadata overlaps a hot plan category");
             }
         }
-        bodies = new Body[1];
-        bodies[0].nargs = 1;
-        bodies[0].nlocals = 1;
-        bodies[0].returns = 8;
-        bodies[0].maxstack = 1;
-        bodies[0].count = 7;
-        bodies[0].ops = new Op[7];
+        Loader.Bodies = new MethodBody[1];
+        Loader.Bodies[0].ArgCount = 1;
+        Loader.Bodies[0].LocalCount = 1;
+        Loader.Bodies[0].ReturnType = 8;
+        Loader.Bodies[0].MaxStack = 1;
+        Loader.Bodies[0].OpCount = 7;
+        Loader.Bodies[0].Ops = new DecodedOp[7];
         int[] codes = [0x02, 0x2c, 0x17, 0x2a, 0x72, 0x2a, 0x17];
         int[] offsets = [0, 1, 3, 4, 5, 10, 11];
         for (int i = 0; i < codes.Length; i++)
         {
-            bodies[0].ops[i].code = codes[i];
-            bodies[0].ops[i].offset = offsets[i];
-            bodies[0].ops[i].depth = -1;
-            bodies[0].ops[i].method = -1;
+            Loader.Bodies[0].Ops[i].Code = codes[i];
+            Loader.Bodies[0].Ops[i].Offset = offsets[i];
+            Loader.Bodies[0].Ops[i].StackDepth = -1;
+            Loader.Bodies[0].Ops[i].MethodIndex = -1;
         }
-        bodies[0].ops[1].operand = 4;
-        bodies[0].ops[4].literal = Integer(42);
-        Verify(0);
-        Body body = bodies[0];
-        if (body.ops != null || body.plan.Length != 7 || body.cold.Length != 2 ||
-            body.plan[1].operand != 4 || body.plan[4].offset != 5 || body.plan[6].stack != -1 ||
-            body.plan[0].stack != 2 || body.plan[1].stack != 3 || body.plan[4].stack != 2 ||
-            (body.plan[0].flags & PlanBlockStart) == 0 || (body.plan[2].flags & PlanBlockStart) == 0 ||
-            (body.plan[4].flags & PlanBlockStart) == 0 || (body.plan[1].flags & PlanBlockStart) != 0 ||
-            (body.plan[1].flags & PlanPopMask) != 1 ||
-            ((body.plan[0].flags >> PlanPushShift) & PlanPushMask) != 1 ||
-            body.cold[body.plan[4].cold].literal.data != 42 ||
-            ((body.plan[0].flags >> PlanCategoryShift) & PlanCategoryMask) != PlanLoadArgument ||
-            HelperEffects(4) != NoReturn || (HelperEffects(99) & NeedsPublishedFrame) != NeedsPublishedFrame)
+        Loader.Bodies[0].Ops[1].Operand = 4;
+        Loader.Bodies[0].Ops[4].Literal = Arithmetic.MakeInt32(42);
+        Verifier.Verify(0);
+        MethodBody body = Loader.Bodies[0];
+        if (body.Ops != null || body.Plan.Length != 7 || body.Cold.Length != 2 ||
+            body.Plan[1].Operand != 4 || body.Plan[4].Offset != 5 || body.Plan[6].StackSlot != -1 ||
+            body.Plan[0].StackSlot != 2 || body.Plan[1].StackSlot != 3 || body.Plan[4].StackSlot != 2 ||
+            (body.Plan[0].Flags & Planner.PlanBlockStart) == 0 || (body.Plan[2].Flags & Planner.PlanBlockStart) == 0 ||
+            (body.Plan[4].Flags & Planner.PlanBlockStart) == 0 || (body.Plan[1].Flags & Planner.PlanBlockStart) != 0 ||
+            (body.Plan[1].Flags & Planner.PlanPopMask) != 1 ||
+            ((body.Plan[0].Flags >> Planner.PlanPushShift) & Planner.PlanPushMask) != 1 ||
+            body.Cold[body.Plan[4].ColdIndex].Literal.Data != 42 ||
+            ((body.Plan[0].Flags >> Planner.PlanCategoryShift) & Planner.PlanCategoryMask) != Planner.PlanLoadArgument ||
+            Jit.HelperEffects(4) != Jit.NoReturn || (Jit.HelperEffects(99) & Jit.NeedsPublishedFrame) != Jit.NeedsPublishedFrame)
         {
             throw new Exception("verified execution plan failed");
         }
-        bodies = new Body[1];
-        bodies[0].returns = 8;
-        bodies[0].maxstack = 1;
-        bodies[0].count = 2;
-        bodies[0].ops = new Op[2];
-        bodies[0].ops[0].code = 0x28;
-        bodies[0].ops[0].returns = 1;
-        bodies[0].ops[0].depth = -1;
-        bodies[0].ops[1].code = 0x2a;
-        bodies[0].ops[1].depth = -1;
-        Verify(0);
-        int flags = bodies[0].plan[0].flags;
-        FoldConstantCall(ref bodies[0].plan[0], 42);
-        if (bodies[0].plan[0].flags != flags || (flags & PlanPopMask) != 0 ||
-            ((flags >> PlanPushShift) & PlanPushMask) != 1 ||
-            ((flags >> PlanCategoryShift) & PlanCategoryMask) != PlanOther ||
-            PlanCategory(0x20) != PlanOther || bodies[0].plan[0].operand != 42)
+        Loader.Bodies = new MethodBody[1];
+        Loader.Bodies[0].ReturnType = 8;
+        Loader.Bodies[0].MaxStack = 1;
+        Loader.Bodies[0].OpCount = 2;
+        Loader.Bodies[0].Ops = new DecodedOp[2];
+        Loader.Bodies[0].Ops[0].Code = 0x28;
+        Loader.Bodies[0].Ops[0].ReturnsValue = 1;
+        Loader.Bodies[0].Ops[0].StackDepth = -1;
+        Loader.Bodies[0].Ops[1].Code = 0x2a;
+        Loader.Bodies[0].Ops[1].StackDepth = -1;
+        Verifier.Verify(0);
+        int flags = Loader.Bodies[0].Plan[0].Flags;
+        Jit.FoldConstantCall(ref Loader.Bodies[0].Plan[0], 42);
+        if (Loader.Bodies[0].Plan[0].Flags != flags || (flags & Planner.PlanPopMask) != 0 ||
+            ((flags >> Planner.PlanPushShift) & Planner.PlanPushMask) != 1 ||
+            ((flags >> Planner.PlanCategoryShift) & Planner.PlanCategoryMask) != Planner.PlanOther ||
+            Planner.PlanCategory(0x20) != Planner.PlanOther || Loader.Bodies[0].Plan[0].Operand != 42)
         {
             throw new Exception("constant call folding changed plan effects");
         }
 
-        bodies = new Body[1];
-        bodies[0].returns = 8;
-        bodies[0].maxstack = 1;
-        bodies[0].count = 1;
-        bodies[0].ops = new Op[1];
-        bodies[0].ops[0].code = 0x2a;
-        bodies[0].ops[0].depth = -1;
+        Loader.Bodies = new MethodBody[1];
+        Loader.Bodies[0].ReturnType = 8;
+        Loader.Bodies[0].MaxStack = 1;
+        Loader.Bodies[0].OpCount = 1;
+        Loader.Bodies[0].Ops = new DecodedOp[1];
+        Loader.Bodies[0].Ops[0].Code = 0x2a;
+        Loader.Bodies[0].Ops[0].StackDepth = -1;
         try
         {
-            Verify(0);
+            Verifier.Verify(0);
             throw new Exception("invalid stack was accepted");
         }
         catch (InvalidOperationException e) when (e.Message == "invalid evaluation stack")
         {
         }
 
-        steps = 0;
-        Charge(10000000);
+        Interpreter.Steps = 0;
+        Interpreter.Charge(10000000);
         try
         {
-            Charge(1);
+            Interpreter.Charge(1);
             throw new Exception("instruction budget was exceeded without an error");
         }
         catch (InvalidOperationException e) when (e.Message == "instruction budget exceeded")
         {
         }
-        steps = 0;
+        Interpreter.Steps = 0;
         Console.WriteLine("PASS verified execution plan");
     }
 }

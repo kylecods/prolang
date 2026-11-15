@@ -2,77 +2,82 @@ using System;
 
 namespace ProLang.Portable;
 
-// Desktop-only checks of the portable collector and managed addresses.
-public static partial class VM
+/// <summary>Desktop-only checks of the portable collector and managed addresses.</summary>
+internal static class HeapTests
 {
-    static void TestHeap()
+    /// <summary>
+    /// Checks that the collector keeps what is reachable from the value stack, permanent objects, address chains
+    /// and the output buffer, frees the rest and reuses its handles, and that array and field validation and
+    /// address reads and writes behave as the interpreter and the JIT's helpers expect.
+    /// </summary>
+    internal static void TestHeap()
     {
-        totalElements = 0;
-        output = 0;
-        ResetHeap();
-        memory = new Val[16];
-        int text = NewText(1, 0);
-        objects[text].chars[0] = 'X';
-        Val array = NewArray(14, 1);
-        if (ValidateArray(array.data, 0) != array.data || ArrayLength(array.data) != 1)
+        Objects.TotalArrayElements = 0;
+        Natives.OutputHandle = 0;
+        Heap.Reset();
+        Interpreter.Memory = new Value[16];
+        int text = Objects.NewText(1, 0);
+        Heap.HandleTable[text].Chars[0] = 'X';
+        Value array = Objects.NewArray(14, 1);
+        if (Objects.ValidateArray(array.Data, 0) != array.Data || Objects.ArrayLength(array.Data) != 1)
         {
             throw new Exception("portable array validation failed");
         }
         try
         {
-            ValidateArray(array.data, 1);
+            Objects.ValidateArray(array.Data, 1);
             throw new Exception("invalid array index was accepted");
         }
         catch (InvalidOperationException e) when (e.Message == "array index out of bounds")
         {
         }
-        objects[array.data].values[0] = Ref(2, text);
-        memory[0] = ArrayAddress(array, 0);
-        int permanent = NewObject(1, 1, 1);
-        objects[permanent].values[0] = Ref(2, text);
-        int dead = NewText(10, 0);
-        Collect();
-        if (objects[dead].kind != 0 || ReadAddress(memory[0].data, 0).data != text ||
-            objects[text].chars[0] != 'X' || objects[permanent].values[0].data != text)
+        Heap.HandleTable[array.Data].Values[0] = Objects.MakeReference(2, text);
+        Interpreter.Memory[0] = Objects.ArrayAddress(array, 0);
+        int permanent = Objects.NewObject(1, 1, 1);
+        Heap.HandleTable[permanent].Values[0] = Objects.MakeReference(2, text);
+        int dead = Objects.NewText(10, 0);
+        Heap.Collect();
+        if (Heap.HandleTable[dead].Kind != 0 || Objects.ReadAddress(Interpreter.Memory[0].Data, 0).Data != text ||
+            Heap.HandleTable[text].Chars[0] != 'X' || Heap.HandleTable[permanent].Values[0].Data != text)
         {
             throw new Exception("portable collector roots failed");
         }
 
-        Val replacement = Integer(7);
-        WriteAddress(memory[0].data, replacement, 0);
-        if (Int(objects[array.data].values[0]) != 7)
+        Value replacement = Arithmetic.MakeInt32(7);
+        Objects.WriteAddress(Interpreter.Memory[0].Data, replacement, 0);
+        if (Arithmetic.ExpectInt32(Heap.HandleTable[array.Data].Values[0]) != 7)
         {
             throw new Exception("portable array address failed");
         }
 
-        int record = NewObject(0x100001, 1, 0);
-        fieldCount = 1;
-        fieldOwners = new int[1];
-        fieldSlots = new int[1];
-        fieldStatic = new int[1];
-        fieldOwners[0] = 1;
-        if (ValidateField(record, 0) != 0)
+        int record = Objects.NewObject(0x100001, 1, 0);
+        TypeSystem.FieldCount = 1;
+        TypeSystem.FieldOwners = new int[1];
+        TypeSystem.FieldSlots = new int[1];
+        TypeSystem.FieldIsStatic = new int[1];
+        TypeSystem.FieldOwners[0] = 1;
+        if (Objects.ValidateField(record, 0) != 0)
         {
             throw new Exception("portable field validation failed");
         }
-        fieldStatic[0] = 1;
+        TypeSystem.FieldIsStatic[0] = 1;
         try
         {
-            ValidateField(record, 0);
+            Objects.ValidateField(record, 0);
             throw new Exception("invalid field was accepted");
         }
         catch (InvalidOperationException e) when (e.Message == "invalid field owner")
         {
         }
-        fieldStatic[0] = 0;
-        objects[record].values[0] = Integer(4);
-        memory[1] = Ref(4, record);
-        memory[2] = FieldAddress(SlotAddress(1), 0);
-        memory[3] = Ref(7, 42); // Delegate values are method indices, not heap handles.
-        output = NewText(1, 0);
-        Collect();
-        WriteAddress(memory[2].data, Integer(9), 0);
-        if (Int(ReadAddress(memory[2].data, 0)) != 9 || memory[3].data != 42 || objects[output].kind != 2)
+        TypeSystem.FieldIsStatic[0] = 0;
+        Heap.HandleTable[record].Values[0] = Arithmetic.MakeInt32(4);
+        Interpreter.Memory[1] = Objects.MakeReference(4, record);
+        Interpreter.Memory[2] = Objects.FieldAddress(Objects.SlotAddress(1), 0);
+        Interpreter.Memory[3] = Objects.MakeReference(7, 42); // Delegate values are method indices, not heap handles.
+        Natives.OutputHandle = Objects.NewText(1, 0);
+        Heap.Collect();
+        Objects.WriteAddress(Interpreter.Memory[2].Data, Arithmetic.MakeInt32(9), 0);
+        if (Arithmetic.ExpectInt32(Objects.ReadAddress(Interpreter.Memory[2].Data, 0)) != 9 || Interpreter.Memory[3].Data != 42 || Heap.HandleTable[Natives.OutputHandle].Kind != 2)
         {
             throw new Exception("portable nested address or output root failed");
         }
@@ -81,11 +86,11 @@ public static partial class VM
         {
             for (int i = 0; i < 500; i++)
             {
-                NewText(8, 0);
+                Objects.NewText(8, 0);
             }
-            Collect();
+            Heap.Collect();
         }
-        if (objects[memory[0].data].kind != 5 || objects[array.data].kind != 3)
+        if (Heap.HandleTable[Interpreter.Memory[0].Data].Kind != 5 || Heap.HandleTable[array.Data].Kind != 3)
         {
             throw new Exception("portable collector lost a live address");
         }

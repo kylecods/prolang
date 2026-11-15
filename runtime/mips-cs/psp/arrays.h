@@ -31,7 +31,11 @@ static int32_t pvm_length(const void *array) {
     if (!array) { Host_Fail("null array"); }
     return ((const pvm_array_header *)array - 1)->info.length;
 }
-static void *pvm_at(void *array, int32_t index, size_t element_size) {
+/* The checked accessor behind every translated array access, including the interpreter's hot path.
+ * Translated methods are emitted with external linkage, so GCC's unit-growth inlining budget is
+ * spent on cold load-time code. Without the attribute, ordinary refactors of that code changed
+ * whether ExecuteResolved inlined this function, and the interpreter's speed moved by about 6%. */
+static inline __attribute__((always_inline)) void *pvm_at(void *array, int32_t index, size_t element_size) {
     if ((uint32_t)index >= (uint32_t)pvm_length(array)) { Host_Fail("array index out of bounds"); }
     return (unsigned char *)array + (size_t)index * element_size;
 }

@@ -1,36 +1,44 @@
 using System;
 
 namespace ProLang.Portable;
-// Desktop-only checks for the portable loader's pointer and offset boundaries.
-public static partial class VM
+/// <summary>
+/// Desktop-only checks for the portable loader's pointer and offset boundaries. It is also the entry point of the
+/// whole self-test: it runs the value, heap and plan suites after its own checks.
+/// </summary>
+internal static class LoaderTests
 {
+    /// <summary>
+    /// Checks that <c>Metadata.Rva</c>, <c>TypeSystem.CheckFieldRange</c> and <c>Metadata.ReadCString</c> accept
+    /// the boundary cases and reject out-of-range ones with the expected messages, then runs
+    /// <c>TestValueOperations</c>, <c>HeapTests.TestHeap</c> and <c>PlanTests.TestPlan</c>.
+    /// </summary>
     internal static void TestLoaderBounds()
     {
-        Section section = new()
+        PeSection section = new()
         {
-            rva = 0x1000,
-            raw = 0xfffffff0,
-            size = 0x100
+            Rva = 0x1000,
+            RawOffset = 0xfffffff0,
+            RawSize = 0x100
         };
-        sections = new Section[1];
-        sections[0] = section;
-        sectionCount = 1;
-        imageLength = 128;
-        ExpectBoundsFailure(() => Rva(0x1020, 4));
-        ExpectBoundsFailure(() => Rva(0x1000, -1));
-        sections[0].raw = 96;
-        if (Rva(0x101c, 4) != 124)
+        Metadata.Sections = new PeSection[1];
+        Metadata.Sections[0] = section;
+        Metadata.SectionCount = 1;
+        Metadata.ImageLength = 128;
+        ExpectBoundsFailure(() => Metadata.Rva(0x1020, 4));
+        ExpectBoundsFailure(() => Metadata.Rva(0x1000, -1));
+        Metadata.Sections[0].RawOffset = 96;
+        if (Metadata.Rva(0x101c, 4) != 124)
         {
             throw new Exception("valid RVA boundary rejected");
         }
 
-        fieldCount = 3;
-        CheckFieldRange(1, 4);
+        TypeSystem.FieldCount = 3;
+        TypeSystem.CheckFieldRange(1, 4);
         foreach (var (first, last) in new[] { (0, 1), (3, 2), (1, 5) })
         {
             try
             {
-                CheckFieldRange(first, last);
+                TypeSystem.CheckFieldRange(first, last);
             }
             catch (InvalidOperationException e) when (e.Message == "invalid field range")
             {
@@ -40,36 +48,40 @@ public static partial class VM
             throw new Exception("expected field range failure");
         }
 
-        image = new byte[1];
-        Reader reader = Read(0, 1);
-        if (Z(ref reader) != 0)
+        Metadata.Image = new byte[1];
+        ByteReader reader = Metadata.CreateReader(0, 1);
+        if (Metadata.ReadCString(ref reader) != 0)
         {
             throw new Exception("empty string rejected");
         }
 
-        reader.pos = -1;
+        reader.Position = -1;
         ExpectStringBoundsFailure(ref reader);
-        reader.pos = 2;
+        reader.Position = 2;
         ExpectStringBoundsFailure(ref reader);
         Console.WriteLine("PASS portable loader bounds");
         TestValueOperations();
-        TestHeap();
-        TestPlan();
+        HeapTests.TestHeap();
+        PlanTests.TestPlan();
     }
 
-    static void TestValueOperations()
+    /// <summary>
+    /// Checks <c>Arithmetic</c> (wrap-around, <c>int.MinValue % -1</c>, unsigned shift, division by zero) and the
+    /// <c>MipsAssembler</c> encoders against known instruction words.
+    /// </summary>
+    private static void TestValueOperations()
     {
-        if (Int(Integer(-42)) != -42 || Truth(Integer(0)) || !Truth(Integer(-1)) ||
-            Binary(0x58, int.MaxValue, 1) != int.MinValue ||
-            Binary(0x5d, int.MinValue, -1) != 0 || Binary(0x64, -1, 1) != int.MaxValue ||
-            R(8, 9, 8, 0, 33) != 0x01094021 || I(9, 0, 8, -1) != 0x2408ffff)
+        if (Arithmetic.ExpectInt32(Arithmetic.MakeInt32(-42)) != -42 || Arithmetic.IsTruthy(Arithmetic.MakeInt32(0)) || !Arithmetic.IsTruthy(Arithmetic.MakeInt32(-1)) ||
+            Arithmetic.Binary(0x58, int.MaxValue, 1) != int.MinValue ||
+            Arithmetic.Binary(0x5d, int.MinValue, -1) != 0 || Arithmetic.Binary(0x64, -1, 1) != int.MaxValue ||
+            MipsAssembler.EncodeR(8, 9, 8, 0, 33) != 0x01094021 || MipsAssembler.EncodeI(9, 0, 8, -1) != 0x2408ffff)
         {
             throw new Exception("portable value operations failed");
         }
 
         try
         {
-            Binary(0x5b, 1, 0);
+            Arithmetic.Binary(0x5b, 1, 0);
         }
         catch (InvalidOperationException e) when (e.Message == "division by zero")
         {
@@ -80,7 +92,8 @@ public static partial class VM
         throw new Exception("expected division by zero failure");
     }
 
-    static void ExpectBoundsFailure(Action action)
+    /// <summary>Requires <c>action</c> to fail with 'RVA outside image'.</summary>
+    private static void ExpectBoundsFailure(Action action)
     {
         try
         {
@@ -94,11 +107,12 @@ public static partial class VM
         throw new Exception("expected RVA bounds failure");
     }
 
-    static void ExpectStringBoundsFailure(ref Reader reader)
+    /// <summary>Requires reading a string from <c>reader</c> to fail with 'binary read outside image'.</summary>
+    private static void ExpectStringBoundsFailure(ref ByteReader reader)
     {
         try
         {
-            Z(ref reader);
+            Metadata.ReadCString(ref reader);
         }
         catch (InvalidOperationException e) when (e.Message == "binary read outside image")
         {

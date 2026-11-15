@@ -7,7 +7,7 @@
 #include "../../psp-v/host.h"
 static jmp_buf pvm_failure;
 static int pvm_code_bytes;
-static int32_t VM_steps;
+static int32_t Interpreter_Steps;
 static void Host_Fail(const char *s) {
     prl_host_write(s, (int)strlen(s)); prl_host_write("\n", 1);
     longjmp(pvm_failure, 1);
@@ -21,7 +21,7 @@ static int32_t Host_MethodSlot(int mid) {
     if ((unsigned)mid >= PVM_METHOD_LIMIT) { Host_Fail("method index out of bounds"); }
     return (int32_t)(intptr_t)&pvm_methods[mid];
 }
-static int32_t Host_Counter(void) { return (int32_t)(intptr_t)&VM_steps; }
+static int32_t Host_Counter(void) { return (int32_t)(intptr_t)&Interpreter_Steps; }
 static void pvm_code_ready(int mid, int name, uint32_t *words, int count, const uint8_t *image) {
     if ((unsigned)mid >= PVM_METHOD_LIMIT || count < 0 || count > pvm_length(words) ||
         name < 0 || name >= pvm_length(image)) { Host_Fail("invalid generated code"); }
@@ -39,7 +39,7 @@ static void pvm_code_ready(int mid, int name, uint32_t *words, int count, const 
     FILE *f = prl_test_frames ? fopen("jit-mips.bin", mid == 0 ? "wb" : "ab") : NULL;
     if (f) { fwrite(code, 1, bytes, f); fclose(f); }
 }
-#define Host_CodeReady(mid, name, words, count) pvm_code_ready((mid), (name), (words), (count), VM_image)
+#define Host_CodeReady(mid, name, words, count) pvm_code_ready((mid), (name), (words), (count), Metadata_Image)
 static void Host_ReleaseVals(void *values) { pvm_array_free(values); }
 static void Host_ReleaseChars(void *chars) { pvm_array_free(chars); }
 static void Host_ReleaseInts(void *values) { pvm_array_free(values); }
@@ -53,10 +53,14 @@ static void Host_Reset(void) {
     for (int i = 0; i < PVM_METHOD_LIMIT; i++) { free(pvm_methods[i]); pvm_methods[i] = NULL; }
     pvm_code_bytes = 0;
 }
+/* Trap reasons, as passed by generated code to the trap helper. This file is included before the generated
+ * definitions, so the generated names are not visible here and the numbers stay literals. Each must equal the
+ * JitAbi constant named beside it (portable/JitAbi.cs); AbiTests pins the values. Reasons 1 and 3 are also the
+ * value kinds ValueKind.Int32 and ValueKind.Array, because Jit.EmitKindCheck passes the expected kind as the reason. */
 static void pvm_trap(int reason) {
-    Host_Fail(reason == 1 ? "expected an int32 value" : reason == 3 ? "expected non-null array" : reason == 10 ? "instruction budget exceeded" : reason == 11 ? "array index out of bounds" : reason == 12 ? "division by zero" : reason == 13 ? "int32 division overflow" : "JIT value kind check failed");
+    Host_Fail(reason == 1 /* JitAbi.TrapExpectedInt32 */ ? "expected an int32 value" : reason == 3 /* JitAbi.TrapExpectedArray */ ? "expected non-null array" : reason == 10 /* JitAbi.TrapBudget */ ? "instruction budget exceeded" : reason == 11 /* JitAbi.TrapIndexOutOfRange */ ? "array index out of bounds" : reason == 12 /* JitAbi.TrapDivideByZero */ ? "division by zero" : reason == 13 /* JitAbi.TrapDivisionOverflow */ ? "int32 division overflow" : "JIT value kind check failed");
 }
-/* Implemented after generated definitions, where Val and VM_memory are known. */
+/* Implemented after generated definitions, where Value and Interpreter_Memory are known. */
 static int32_t Host_Helper(int number);
 static int32_t Host_GlobalSlot(int index);
 static void Host_Call(int mid, int frame, void *result);
